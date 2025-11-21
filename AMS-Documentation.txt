@@ -1,0 +1,216 @@
+============================================================
+             APM MODULE SYSTEM (AMS) OVERVIEW
+============================================================
+
+Author: Matthew DaLuz (RedHead Industries)
+Last Updated: November 18th, 2025
+
+This document explains what the APM Module System (AMS) is, how it integrates
+with APM/apmd, and how to create, package, and install a custom AMS module.
+
+============================================================
+1. WHAT IS AMS?
+============================================================
+
+AMS is a Magisk-style overlay framework built directly into APM. Instead of
+patching boot images, AMS relies on OverlayFS mounts managed by the daemon
+(apmd) to merge module-provided files on top of /system, /vendor, and /product.
+AMS targets rooted devices (or ROMs that ship apmd as a privileged daemon) and
+provides a safe, reversible way to customize Android without touching the base
+partitions. Examples include:
+  • Audio engines (Viper4Android, Dolby)
+  • UI themes, fonts, boot animations
+  • hosts/prop overrides
+  • Custom binaries or scripts
+
+Key properties:
+  • Modules live under /data/apm/modules/<name>
+  • Each module carries module-info.json metadata plus overlay/ contents
+  • apmd controls overlay mounts, scripts, and state tracking
+  • Users interact via `apm module-*` commands
+
+============================================================
+2. FILESYSTEM LAYOUT
+============================================================
+
+/data/apm/modules/
+  └── <module_name>/
+        ├── module-info.json   (metadata)
+        ├── overlay/           (files to layer onto system/vendor/product)
+        │     ├── system/
+        │     ├── vendor/
+        │     └── product/
+        ├── workdir/           (daemon scratch space for OverlayFS workdirs)
+        │     ├── system/
+        │     ├── vendor/
+        │     └── product/
+        ├── post-fs-data.sh    (optional early boot script)
+        ├── service.sh         (optional long-running script)
+        └── state.json         (daemon-maintained status info)
+
+Runtime overlay staging lives in /data/apm/modules/.runtime/ so all modules can
+share upper/work directories safely. Log output for individual modules is
+stored under /data/apm/logs/modules/<module>.log.
+
+============================================================
+3. MODULE METADATA (module-info.json)
+============================================================
+
+Example:
+{
+  "name": "v4a-driver",
+  "version": "1.0",
+  "author": "Matthew",
+  "description": "Viper4Android audio engine",
+  "mount": true,
+  "post_fs_data": true,
+  "service": false
+}
+
+Fields:
+  • name: unique ID (letters/numbers/_-.) used for paths and CLI commands
+  • version, author, description: informational strings shown by `apm module-list`
+  • mount: whether the overlay directories should be mounted (set false for
+           script-only modules)
+  • post_fs_data: run post-fs-data.sh immediately after mounting (blocking)
+  • service: run service.sh in the background after startup (non-blocking)
+
+============================================================
+4. STATE TRACKING (state.json)
+============================================================
+
+apmd updates state.json automatically. Example:
+{
+  "enabled": true,
+  "installed_at": "2025-11-18T19:51:00Z",
+  "updated_at": "2025-11-18T19:51:00Z",
+  "last_error": null
+}
+
+• enabled controls whether the module participates in overlay mounts
+• last_error stores the latest failure message (mount/script errors)
+• installed_at/updated_at are ISO8601 timestamps for auditing
+
+============================================================
+5. MODULE LIFECYCLE
+============================================================
+
+Commands (CLI → daemon actions):
+  • `apm module-list`          – Enumerate installed modules & status
+  • `apm module-install <zip>` – Validate ZIP, extract to modules dir, enable
+  • `apm module-enable <name>` – Toggle enabled flag + rebuild overlays
+  • `apm module-disable <name>`– Disable overlays + scripts
+  • `apm module-remove <name>` – Disable, delete directory, rebuild overlays
+
+During apmd start:
+  1. ModuleManager scans /data/apm/modules
+  2. Enabled modules with mount=true contribute overlay layers
+  3. apmd rebuilds OverlayFS mounts for /system,/vendor,/product
+  4. post-fs-data/service scripts run for each enabled module
+
+Overlay mount algorithm:
+  • Statement order matches filesystem order (alphabetical) – last module wins
+  • Each target (system/vendor/product) uses lowerdir=<modules...>:<original>
+    so the real partition is always at lowest priority
+  • upper/work dirs live under /data/apm/modules/.runtime/{upper,work}
+
+============================================================
+6. CREATING AN AMS MODULE
+============================================================
+
+Step-by-step guide:
+
+1. Prepare working tree
+   ```
+   mkdir -p my-module/overlay/system
+   mkdir -p my-module/overlay/vendor
+   mkdir -p my-module/overlay/product
+   ```
+   Copy files you want to override into the appropriate overlay paths while
+   maintaining absolute layout (e.g., overlay/system/etc/hosts).
+
+2. Add optional scripts
+   - post-fs-data.sh: executed once after overlays mount (place in module root)
+   - service.sh: started in background (use loops/sleep responsibly)
+   Mark scripts executable (`chmod 0755`).
+
+3. Create module-info.json (see Section 3). Ensure the `name` matches the folder
+   name and uses safe characters.
+
+4. (Optional) Initialize workdir/ subfolders (apmd creates them if missing).
+
+5. Validate structure
+   ```
+   tree my-module
+   my-module/
+     module-info.json
+     overlay/
+       system/... etc.
+     post-fs-data.sh (optional)
+     service.sh      (optional)
+   ```
+
+============================================================
+7. PACKAGING INTO A ZIP
+============================================================
+
+AMS expects a flat ZIP with module-info.json at the root. From within the
+module directory:
+
+```
+cd my-module
+zip -r ../my-module.zip .
+```
+
+Important notes:
+  • Avoid extra parent folders. `zip -r` from inside the module directory so
+    module-info.json sits at ZIP root. If your tooling produces `my-module/my-module/...`
+    AMS still handles it (it detects single nested directory), but keeping it flat
+    simplifies debugging.
+  • Use standard ZIP compression (no encryption). `unzip` must be able to extract
+    the archive via `/system/bin/unzip`.
+
+============================================================
+8. INSTALLING AND TESTING A MODULE
+============================================================
+
+1. Push the ZIP to device (adb push or copy).
+2. Run: `apm module-install /path/to/my-module.zip`
+   - apmd extracts, validates module-info.json, creates workdir/, and marks it
+     enabled. Overlay mounts refresh immediately.
+3. Verify: `apm module-list` – check Enabled=yes, Last-Error=null.
+4. If the module includes scripts or binaries, confirm behavior (logs live in
+   `/data/apm/logs/modules/<name>.log`).
+5. Disable/re-enable to test toggling: `apm module-disable <name>`, then
+   `apm module-enable <name>`.
+
+============================================================
+9. TROUBLESHOOTING
+============================================================
+
+Symptom: module-list shows Last-Error
+  • Inspect `/data/apm/logs/modules/<module>.log`
+  • Ensure overlay paths exist and you’re not missing required directories
+  • Confirm post-fs-data/service scripts exit cleanly (non-zero RC marks error)
+
+Symptom: Files not applied
+  • Verify mount=true
+  • Confirm overlay/system paths match target (case sensitive)
+  • Remember later modules override earlier ones; rename with alphabetical order
+
+============================================================
+10. ADVANCED NOTES
+============================================================
+
+• Module priority: alphabetical by directory name. Prefix with numbers if you
+  need deterministic ordering (e.g., `10-corefix`, `20-theme`).
+• Scripts run as root inside /data context. Build in safety checks before
+  modifying system properties.
+• When writing modules for redistribution, include README instructions and keep
+  module-info.json descriptive.
+• Future roadmap includes signed modules, dependency declarations, and repo
+  distribution – design your modules with clear versioning to ease upgrades.
+
+============================================================
+END OF DOCUMENT
+============================================================

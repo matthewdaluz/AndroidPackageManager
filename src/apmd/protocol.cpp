@@ -1,0 +1,386 @@
+/*
+ * APM - Android Package Manager
+ *
+ * RedHead Industries - Technologies Branch
+ * Copyright (C) 2025 RedHead Industries
+ *
+ * File: protocol.cpp
+ * Purpose: Implement IPC request/response parsing plus serialization utilities.
+ * Last Modified: November 18th, 2025. - 3:00 PM Eastern Time.
+ * Author: Matthew DaLuz - RedHead Founder
+ *
+ * APM is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * APM is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with APM. If not, see <https://www.gnu.org/licenses/>.
+ *
+ */
+
+#include "protocol.hpp"
+#include "logger.hpp"
+
+#include <algorithm>
+#include <cctype>
+#include <sstream>
+
+namespace apm::ipc {
+
+// -------------------------------------------------------------
+// Helpers
+// -------------------------------------------------------------
+
+// Uppercase helper used for canonicalizing command types.
+static inline std::string upper(const std::string &s) {
+  std::string out;
+  out.reserve(s.size());
+  for (unsigned char c : s)
+    out.push_back(static_cast<char>(std::toupper(c)));
+  return out;
+}
+
+// Trim whitespace from both ends of a string in-place.
+static inline void trim(std::string &s) {
+  s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) {
+            return !std::isspace(ch);
+          }));
+  s.erase(std::find_if(s.rbegin(), s.rend(),
+                       [](unsigned char ch) { return !std::isspace(ch); })
+              .base(),
+          s.end());
+}
+
+// Parse RFC822-style key:value lines until a blank line and return them.
+static std::unordered_map<std::string, std::string>
+parseKeyValueLines(const std::string &raw, std::string *errorMsg) {
+  std::unordered_map<std::string, std::string> fields;
+
+  std::istringstream in(raw);
+  std::string line;
+
+  while (std::getline(in, line)) {
+    if (!line.empty() && line.back() == '\r')
+      line.pop_back();
+
+    if (line.empty())
+      break;
+
+    auto pos = line.find(':');
+    if (pos == std::string::npos) {
+      if (errorMsg)
+        *errorMsg = "Malformed line: " + line;
+      apm::logger::error("parseKeyValueLines: malformed line: " + line);
+      fields.clear();
+      return fields;
+    }
+
+    std::string key = line.substr(0, pos);
+    std::string value = line.substr(pos + 1);
+
+    trim(key);
+    trim(value);
+
+    if (key.empty()) {
+      if (errorMsg)
+        *errorMsg = "Empty key in line: " + line;
+      fields.clear();
+      return fields;
+    }
+
+    fields[key] = value;
+  }
+
+  return fields;
+}
+
+// -------------------------------------------------------------
+// Type parsing
+// -------------------------------------------------------------
+
+// Map a textual request type (e.g. "INSTALL") to the enum variant.
+RequestType parseType(const std::string &sRaw) {
+  std::string s = upper(sRaw);
+
+  if (s == "PING")
+    return RequestType::Ping;
+  if (s == "UPDATE")
+    return RequestType::Update;
+  if (s == "INSTALL")
+    return RequestType::Install;
+  if (s == "REMOVE")
+    return RequestType::Remove;
+  if (s == "AUTOREMOVE")
+    return RequestType::Autoremove;
+  if (s == "UPGRADE")
+    return RequestType::Upgrade;
+  if (s == "APK_INSTALL")
+    return RequestType::ApkInstall;
+  if (s == "APK_UNINSTALL")
+    return RequestType::ApkUninstall;
+  if (s == "MODULE_LIST")
+    return RequestType::ModuleList;
+  if (s == "MODULE_INSTALL")
+    return RequestType::ModuleInstall;
+  if (s == "MODULE_ENABLE")
+    return RequestType::ModuleEnable;
+  if (s == "MODULE_DISABLE")
+    return RequestType::ModuleDisable;
+  if (s == "MODULE_REMOVE")
+    return RequestType::ModuleRemove;
+
+  return RequestType::Unknown;
+}
+
+// Convert a RequestType enum into the canonical uppercase token.
+std::string typeToString(RequestType t) {
+  switch (t) {
+  case RequestType::Ping:
+    return "PING";
+  case RequestType::Update:
+    return "UPDATE";
+  case RequestType::Install:
+    return "INSTALL";
+  case RequestType::Remove:
+    return "REMOVE";
+  case RequestType::Autoremove:
+    return "AUTOREMOVE";
+  case RequestType::Upgrade:
+    return "UPGRADE";
+  case RequestType::ApkInstall:
+    return "APK_INSTALL";
+  case RequestType::ApkUninstall:
+    return "APK_UNINSTALL";
+  case RequestType::ModuleList:
+    return "MODULE_LIST";
+  case RequestType::ModuleInstall:
+    return "MODULE_INSTALL";
+  case RequestType::ModuleEnable:
+    return "MODULE_ENABLE";
+  case RequestType::ModuleDisable:
+    return "MODULE_DISABLE";
+  case RequestType::ModuleRemove:
+    return "MODULE_REMOVE";
+  default:
+    return "UNKNOWN";
+  }
+}
+
+// -------------------------------------------------------------
+// Request Parsing
+// -------------------------------------------------------------
+
+// Parse a raw IPC frame into a Request object, validating required fields for
+// each command.
+bool parseRequest(const std::string &raw, Request &out, std::string *errorMsg) {
+  out = Request{};
+
+  auto fields = parseKeyValueLines(raw, errorMsg);
+  if (fields.empty())
+    return false;
+
+  out.rawFields = fields;
+
+  auto get = [&](const std::string &k) -> std::string {
+    auto it = fields.find(k);
+    return (it != fields.end()) ? it->second : "";
+  };
+
+  std::string typeStr = get("type");
+  if (typeStr.empty()) {
+    if (errorMsg)
+      *errorMsg = "Request missing type field";
+    return false;
+  }
+
+  out.type = parseType(typeStr);
+  if (out.type == RequestType::Unknown) {
+    if (errorMsg)
+      *errorMsg = "Unknown request type: " + typeStr;
+    return false;
+  }
+
+  out.id = get("id");
+
+  // Commands that require packageName
+  // Install/Remove use packageName
+  if (out.type == RequestType::Install || out.type == RequestType::Remove ||
+      out.type == RequestType::ApkUninstall) {
+
+    out.packageName = get("package");
+    if (out.packageName.empty()) {
+      if (errorMsg)
+        *errorMsg = "Missing 'package' field";
+      return false;
+    }
+  }
+
+  // ApkInstall uses apkPath instead of packageName
+  if (out.type == RequestType::ApkInstall) {
+    out.apkPath = get("apkPath");
+    std::string sysFlag = get("installAsSystem");
+
+    out.installAsSystem =
+        (!sysFlag.empty() &&
+         (sysFlag == "1" || sysFlag == "true" || sysFlag == "yes"));
+
+    if (out.apkPath.empty()) {
+      if (errorMsg)
+        *errorMsg = "Missing 'apkPath' field";
+      return false;
+    }
+  }
+
+  if (out.type == RequestType::ModuleInstall) {
+    out.modulePath = get("module_path");
+    if (out.modulePath.empty()) {
+      if (errorMsg)
+        *errorMsg = "Missing 'module_path' field";
+      return false;
+    }
+  }
+
+  if (out.type == RequestType::ModuleEnable ||
+      out.type == RequestType::ModuleDisable ||
+      out.type == RequestType::ModuleRemove) {
+    out.moduleName = get("module");
+    if (out.moduleName.empty())
+      out.moduleName = get("package");
+    if (out.moduleName.empty()) {
+      if (errorMsg)
+        *errorMsg = "Missing 'module' field";
+      return false;
+    }
+  }
+
+  return true;
+}
+
+// -------------------------------------------------------------
+// Request Serialization
+// -------------------------------------------------------------
+
+// Convert a Request struct back into the newline-delimited format understood
+// by apmd/apm.
+std::string serializeRequest(const Request &req) {
+  std::ostringstream out;
+
+  out << "type:" << typeToString(req.type) << "\n";
+
+  if (!req.id.empty())
+    out << "id:" << req.id << "\n";
+
+  if (!req.packageName.empty())
+    out << "package:" << req.packageName << "\n";
+
+  if (!req.apkPath.empty())
+    out << "apkPath:" << req.apkPath << "\n";
+
+  if (req.installAsSystem)
+    out << "installAsSystem:1\n";
+
+  if (!req.modulePath.empty())
+    out << "module_path:" << req.modulePath << "\n";
+  if (!req.moduleName.empty())
+    out << "module:" << req.moduleName << "\n";
+
+  for (const auto &kv : req.rawFields) {
+    if (kv.first == "type" || kv.first == "id" || kv.first == "package")
+      continue;
+    out << kv.first << ":" << kv.second << "\n";
+  }
+
+  out << "\n";
+  return out.str();
+}
+
+// -------------------------------------------------------------
+// Response Parsing
+// -------------------------------------------------------------
+
+// Parse a response frame (ok/error/progress) and retain any additional key/value
+// metadata for higher-level handlers.
+bool parseResponse(const std::string &raw, Response &out,
+                   std::string *errorMsg) {
+  out = Response{};
+
+  auto fields = parseKeyValueLines(raw, errorMsg);
+  if (fields.empty())
+    return false;
+
+  out.rawFields = fields;
+
+  auto get = [&](const std::string &k) -> std::string {
+    auto it = fields.find(k);
+    return (it != fields.end()) ? it->second : "";
+  };
+
+  std::string status = get("status");
+  if (status == "ok") {
+    out.status = ResponseStatus::Ok;
+    out.success = true;
+  } else if (status == "error") {
+    out.status = ResponseStatus::Error;
+    out.success = false;
+  } else if (status == "progress") {
+    out.status = ResponseStatus::Progress;
+    out.success = false;
+  } else {
+    if (errorMsg)
+      *errorMsg = "Unknown status in response";
+    return false;
+  }
+
+  out.id = get("id");
+  out.message = get("message");
+  out.rawFields.erase("status");
+  out.rawFields.erase("id");
+  out.rawFields.erase("message");
+
+  return true;
+}
+
+// -------------------------------------------------------------
+// Response Serialization
+// -------------------------------------------------------------
+
+// Convert a Response struct into the wire format understood by CLI clients.
+std::string serializeResponse(const Response &resp) {
+  std::ostringstream out;
+
+  std::string statusStr;
+  switch (resp.status) {
+  case ResponseStatus::Ok:
+    statusStr = "ok";
+    break;
+  case ResponseStatus::Error:
+    statusStr = "error";
+    break;
+  case ResponseStatus::Progress:
+    statusStr = "progress";
+    break;
+  default:
+    statusStr = resp.success ? "ok" : "error";
+    break;
+  }
+
+  out << "status:" << statusStr << "\n";
+  if (!resp.id.empty())
+    out << "id:" << resp.id << "\n";
+  if (!resp.message.empty())
+    out << "message:" << resp.message << "\n";
+  for (const auto &kv : resp.rawFields) {
+    out << kv.first << ":" << kv.second << "\n";
+  }
+
+  out << "\n";
+  return out.str();
+}
+
+} // namespace apm::ipc

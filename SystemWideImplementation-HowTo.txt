@@ -1,0 +1,200 @@
+# APM + AMS TRUE SYSTEM-WIDE (TSW) REFACTOR SPECIFICATION
+
+OBJECTIVE:
+Convert APM and AMS from a Magisk-only environment into a fully integrated system-wide AOSP component that runs from the actual `/system` partition and does not depend on Magisk at all.
+
+This refactor must make APM and AMS compatible with Pure AOSP and future CoreDroid builds.
+
+---
+
+1. SYSTEM-WIDE MODE OVERVIEW
+
+---
+
+A new operating mode must be added:
+
+APM_MODE_SYSTEM     (True system-wide, inside /system)
+APM_MODE_MAGISK     (Legacy Magisk module mode)
+APM_MODE_AOSP_CORE  (System-wide optimized mode for CoreDroid)
+
+APM must detect the mode automatically.
+
+Detection rule:
+If the canonical real path of the running binary is /system/bin/apm,
+then enable SYSTEM MODE. Otherwise use MAGISK mode.
+
+SYSTEM MODE changes path handling, overlay handling, and boot behavior.
+
+---
+
+2. BINARY AND EXECUTABLE LOCATIONS
+
+---
+
+In system-wide mode, APM executables must live in:
+
+/system/bin/apm
+/system/bin/apmd
+
+Executables must NOT be placed in:
+
+/data/apm/bin
+/data/adb/modules/*/system/bin
+
+All Magisk-specific binary locations should be disabled in SYSTEM mode.
+
+---
+
+3. PERSISTENT DATA DIRECTORIES
+
+---
+
+System-wide APM must use these writable directories:
+
+/data/apm/
+/data/apm/cache
+/data/apm/lists
+/data/apm/keys
+/data/apm/pkgs
+/data/apm/installed
+/data/apm/logs
+/data/apm/status
+
+AMS directories:
+
+/data/ams/
+/data/ams/modules
+/data/ams/overlays
+
+These directories must always be used for runtime data and never /system.
+
+---
+
+4. REMOVE ALL MAGISK-SPECIFIC LOGIC
+
+---
+
+In SYSTEM mode, remove or disable all logic that references:
+
+/data/adb
+/data/adb/modules
+/data/adb/service.d
+/data/adb/post-fs-data.d
+resetprop
+magiskpolicy
+Magisk mount namespaces
+Magisk boot stages
+
+APM and AMS must rely only on native AOSP behavior and Linux APIs.
+
+---
+
+5. APMD AS A TRUE AOSP SYSTEM SERVICE
+
+---
+
+APMD must be compatible with Android init instead of Magisk.
+
+APMD must:
+
+* Run via /system/etc/init/apmd.rc
+* Use the "late_start" class
+* Not depend on Magisk service scripts
+* Not use su
+* Not read or write Magisk directories
+* Create its socket at: /data/apm/apmd.sock
+
+APMD must retry socket creation and directory initialization if /data is not ready.
+
+---
+
+6. AMS OVERLAY ARCHITECTURE (SYSTEM-WIDE EDITION)
+
+---
+
+AMS must use OverlayFS exclusively. No code may write physically to /system.
+
+For each module:
+
+lowerdir=/system
+upperdir=/data/ams/modules/<module>/upper
+workdir=/data/ams/modules/<module>/work
+merged=/data/ams/merged/<module>
+
+AMS must:
+
+* Stack multiple overlays correctly
+* Dynamically mount and unmount overlays
+* Never modify /system directly
+* Never rely on Magisk overlay behavior
+
+---
+
+7. PATHS THAT MUST BE UPDATED
+
+---
+
+Any code referencing:
+
+/data/apm/bin
+/data/adb
+/data/adb/modules
+
+must be updated.
+
+System-wide executables must always resolve to:
+
+/system/bin/apm
+/system/bin/apmd
+
+All writable paths must be under /data/apm or /data/ams.
+
+---
+
+8. SYSTEM-WIDE BEHAVIOR FLAGS
+
+---
+
+When running in SYSTEM mode:
+
+* Disable all Magisk logic automatically.
+* Enable OverlayFS-only mounting.
+* Use system service behavior for apmd.
+* Print a log message indicating SYSTEM MODE ENABLED.
+* Store state only under /data/apm and /data/ams.
+
+---
+
+9. DO NOT MODIFY THESE COMPONENTS
+
+---
+
+The following parts of APM must not be changed during this refactor:
+
+* SHA256 verification code
+* GPG signature verification code
+* Repository index parser (repo_index.cpp)
+* Dependency solver
+* Manual package installer behavior
+* JSON formats: module-info.json and package-info.json
+* Existing CLI commands
+
+Only modify path handling and boot behavior.
+
+---
+
+10. GOALS OF THIS REFACTOR
+
+---
+
+After completing the system-wide refactor:
+
+* APM runs natively on Pure AOSP (no Magisk needed)
+* APM and APMD live in /system/bin
+* All runtime data lives in /data/apm
+* AMS uses OverlayFS and never touches /system physically
+* APMD starts cleanly via Android init
+* CoreDroid can use APM as a built-in package manager
+* APM can function fully unrooted, as long as APMD has service permissions
+
+This establishes the foundation for system-wide APM integration in Pure AOSP and the future CoreDroid ROM.

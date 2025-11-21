@@ -1,0 +1,17 @@
+CompileFlags:
+  Add:
+    - -std=c++17
+    - -Wall
+    - -Wextra
+    - -Wno-unused-parameter
+    - -Wno-unused-variable
+
+# Make Clangd use compile_commands.json
+# (CMake will generate this automatically)
+
+Diagnostics:
+  Suppress:
+    - unused-variable
+    - unused-parameter
+    - missing-prototypes
+

@@ -1,0 +1,35 @@
+# Build directories and generated binaries
+build/
+build-*/
+cmake-build-*/
+bin/
+lib/
+obj/
+out/
+
+# CMake-generated artifacts
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+CTestTestfile.cmake
+install_manifest.txt
+Makefile
+
+# IDE and editor settings
+.vscode/
+.idea/
+.vs/
+*.code-workspace
+
+# OS and editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Python virtual environments or caches if scripts are added
+.venv/
+venv/
+__pycache__/
