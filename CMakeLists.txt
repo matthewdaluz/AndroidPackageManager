@@ -380,3 +380,18 @@ target_link_libraries(apmd PRIVATE
     ZLIB::ZLIB
     ${APM_BUNDLED_TLS_LIBS}
 )
+
+if(TARGET mbedcrypto)
+  add_dependencies(apm mbedcrypto)
+  add_dependencies(apmd mbedcrypto)
+endif()
+
+if(TARGET mbedx509)
+  add_dependencies(apm mbedx509)
+  add_dependencies(apmd mbedx509)
+endif()
+
+if(TARGET mbedtls)
+  add_dependencies(apm mbedtls)
+  add_dependencies(apmd mbedtls)
+endif()
