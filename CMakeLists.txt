@@ -97,6 +97,7 @@ if(NOT ZLIB_FOUND)
 
     # Build as static library
     set(BUILD_SHARED_LIBS OFF)
+    set(SKIP_INSTALL_ALL ON)
 
     # Add zlib subdirectory
     add_subdirectory(${zlib_SOURCE_DIR} ${zlib_BINARY_DIR})
