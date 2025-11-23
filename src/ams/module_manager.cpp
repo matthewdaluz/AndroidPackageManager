@@ -35,6 +35,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <limits.h>
 #include <map>
 #include <sstream>
 #include <string>
@@ -68,6 +69,20 @@ constexpr OverlayTarget kOverlayTargets[] = {
 
 std::string baseMirrorPath(const OverlayTarget &target) {
   return apm::fs::joinPath(apm::config::MODULE_RUNTIME_BASE_DIR, target.name);
+}
+
+std::string normalizeMountPath(const std::string &p) {
+  if (p.size() > 1 && p.back() == '/')
+    return p.substr(0, p.size() - 1);
+  return p;
+}
+
+std::string resolveForMount(const std::string &path) {
+  char resolvedBuf[PATH_MAX];
+  if (::realpath(path.c_str(), resolvedBuf)) {
+    return normalizeMountPath(resolvedBuf);
+  }
+  return normalizeMountPath(path);
 }
 
 bool isRegularFile(const std::string &path) { return apm::fs::isFile(path); }
@@ -116,6 +131,21 @@ bool readMountType(const std::string &path, std::string &type) {
   if (!mounts.is_open())
     return false;
 
+  std::string resolved = resolveForMount(path);
+
+  auto isWithinMount = [](const std::string &p,
+                          const std::string &mountPoint) {
+    if (mountPoint == "/")
+      return true;
+    if (p.size() < mountPoint.size())
+      return false;
+    if (p.compare(0, mountPoint.size(), mountPoint) != 0)
+      return false;
+    return p.size() == mountPoint.size() || p[mountPoint.size()] == '/';
+  };
+
+  std::string bestType;
+  size_t bestMatchLen = 0;
   std::string line;
   while (std::getline(mounts, line)) {
     std::istringstream iss(line);
@@ -124,12 +154,19 @@ bool readMountType(const std::string &path, std::string &type) {
     std::string fsType;
     if (!(iss >> source >> target >> fsType))
       continue;
-    if (target == path) {
-      type = fsType;
-      return true;
+    target = resolveForMount(target);
+    if (!isWithinMount(resolved, target))
+      continue;
+    if (target.size() > bestMatchLen) {
+      bestMatchLen = target.size();
+      bestType = fsType;
     }
   }
-  return false;
+  if (bestMatchLen == 0)
+    return false;
+
+  type = bestType;
+  return true;
 }
 
 bool isOverlayMounted(const OverlayTarget &target) {
@@ -140,8 +177,23 @@ bool isOverlayMounted(const OverlayTarget &target) {
 }
 
 bool isPathMounted(const std::string &path) {
-  std::string type;
-  return readMountType(path, type);
+  std::ifstream mounts("/proc/self/mounts");
+  if (!mounts.is_open())
+    return false;
+
+  std::string resolved = resolveForMount(path);
+  std::string line;
+  while (std::getline(mounts, line)) {
+    std::istringstream iss(line);
+    std::string source;
+    std::string target;
+    std::string fsType;
+    if (!(iss >> source >> target >> fsType))
+      continue;
+    if (resolveForMount(target) == resolved)
+      return true;
+  }
+  return false;
 }
 
 bool ensureBaseMirrorForTarget(const OverlayTarget &target,
