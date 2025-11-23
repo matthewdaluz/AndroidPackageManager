@@ -75,6 +75,55 @@ if(ANDROID)
   set(ANDROID_NDK "${ANDROID_NDK_PATH}" CACHE PATH "Path to Android NDK" FORCE)
 endif()
 
+# ======================================================
+# ZLIB Setup - Simplified Approach
+# ======================================================
+find_package(ZLIB QUIET)
+if(NOT ZLIB_FOUND)
+  message(STATUS "ZLIB not found, downloading and building...")
+  include(FetchContent)
+
+  # Use a known version that has good CMake support
+  FetchContent_Declare(
+    zlib
+    GIT_REPOSITORY https://github.com/madler/zlib.git
+    GIT_TAG v1.3.1
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  )
+
+  FetchContent_GetProperties(zlib)
+  if(NOT zlib_POPULATED)
+    FetchContent_Populate(zlib)
+
+    # Build as static library
+    set(BUILD_SHARED_LIBS OFF)
+
+    # Add zlib subdirectory
+    add_subdirectory(${zlib_SOURCE_DIR} ${zlib_BINARY_DIR})
+
+    # Create the alias target
+    if(TARGET zlibstatic AND NOT TARGET ZLIB::ZLIB)
+      add_library(ZLIB::ZLIB ALIAS zlibstatic)
+    elseif(TARGET zlib AND NOT TARGET ZLIB::ZLIB)
+      add_library(ZLIB::ZLIB ALIAS zlib)
+    endif()
+
+    if(TARGET ZLIB::ZLIB)
+      # Help any downstream find_package(ZLIB) invocations (e.g. from curl)
+      set(ZLIB_LIBRARY ZLIB::ZLIB CACHE STRING "Bundled ZLIB target" FORCE)
+      set(ZLIB_LIBRARIES ZLIB::ZLIB CACHE STRING "Bundled ZLIB target" FORCE)
+      set(ZLIB_INCLUDE_DIR "${zlib_SOURCE_DIR}" CACHE PATH "Bundled ZLIB include" FORCE)
+      set(ZLIB_INCLUDE_DIRS "${ZLIB_INCLUDE_DIR};${zlib_BINARY_DIR}" CACHE STRING "Bundled ZLIB include dirs" FORCE)
+      set(ZLIB_FOUND TRUE CACHE BOOL "Bundled ZLIB built" FORCE)
+      message(STATUS "ZLIB built successfully")
+    else()
+      message(FATAL_ERROR "Failed to create ZLIB::ZLIB target")
+    endif()
+  endif()
+else()
+  message(STATUS "ZLIB found: ${ZLIB_VERSION}")
+endif()
+
 set(APM_USE_SYSTEM_CURL_DEFAULT ON)
 if(ANDROID)
   set(APM_USE_SYSTEM_CURL_DEFAULT OFF)
@@ -218,50 +267,6 @@ if(NOT CURL_FOUND)
   unset(_APM_PREV_BUILD_SHARED_LIBS)
   unset(_APM_PREV_BUILD_SHARED_LIBS_DEFINED)
   unset(_APM_MBEDTLS_LIBDIR)
-endif()
-
-# ======================================================
-# ZLIB Setup - Simplified Approach
-# ======================================================
-find_package(ZLIB QUIET)
-if(NOT ZLIB_FOUND)
-  message(STATUS "ZLIB not found, downloading and building...")
-  include(FetchContent)
-  
-  # Use a known version that has good CMake support
-  FetchContent_Declare(
-    zlib
-    GIT_REPOSITORY https://github.com/madler/zlib.git
-    GIT_TAG v1.3.1
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-  )
-  
-  FetchContent_GetProperties(zlib)
-  if(NOT zlib_POPULATED)
-    FetchContent_Populate(zlib)
-    
-    # Build as static library
-    set(BUILD_SHARED_LIBS OFF)
-    set(SKIP_INSTALL_ALL ON)
-    
-    # Add zlib subdirectory
-    add_subdirectory(${zlib_SOURCE_DIR} ${zlib_BINARY_DIR})
-    
-    # Create the alias target
-    if(TARGET zlibstatic AND NOT TARGET ZLIB::ZLIB)
-      add_library(ZLIB::ZLIB ALIAS zlibstatic)
-    elseif(TARGET zlib AND NOT TARGET ZLIB::ZLIB)
-      add_library(ZLIB::ZLIB ALIAS zlib)
-    endif()
-    
-    if(TARGET ZLIB::ZLIB)
-      message(STATUS "ZLIB built successfully")
-    else()
-      message(FATAL_ERROR "Failed to create ZLIB::ZLIB target")
-    endif()
-  endif()
-else()
-  message(STATUS "ZLIB found: ${ZLIB_VERSION}")
 endif()
 
 # ======================================================
