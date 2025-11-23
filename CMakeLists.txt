@@ -5,10 +5,21 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+include(FetchContent)
+
 if(POLICY CMP0077)
   cmake_policy(SET CMP0077 NEW)
   set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
 endif()
+
+find_package(Git QUIET)
+find_program(PATCH_EXECUTABLE patch)
+
+function(apm_require_program program_path pretty_name reason)
+  if(NOT program_path)
+    message(FATAL_ERROR "${pretty_name} is required ${reason}. Install the prerequisites listed in README.md.")
+  endif()
+endfunction()
 
 # ======================================================
 # Android NDK Setup
@@ -81,7 +92,7 @@ endif()
 find_package(ZLIB QUIET)
 if(NOT ZLIB_FOUND)
   message(STATUS "ZLIB not found, downloading and building...")
-  include(FetchContent)
+  apm_require_program("${GIT_EXECUTABLE}" "git" "to fetch the bundled zlib source")
 
   # Use a known version that has good CMake support
   FetchContent_Declare(
@@ -135,10 +146,12 @@ if(APM_USE_SYSTEM_CURL)
   find_package(CURL QUIET)
 endif()
 
+set(APM_BUNDLED_TLS_LIBS "")
 if(NOT CURL_FOUND)
   message(STATUS "Falling back to bundled libcurl and mbedTLS")
   set(APM_USE_SYSTEM_CURL OFF CACHE BOOL "Prefer system-installed libcurl" FORCE)
-  include(FetchContent)
+  apm_require_program("${GIT_EXECUTABLE}" "git" "to fetch the bundled curl/mbedTLS sources")
+  apm_require_program("${PATCH_EXECUTABLE}" "patch" "to apply bundled curl/mbedTLS patches")
 
   set(_APM_PREV_ENABLE_TESTING_DEFINED FALSE)
   set(_APM_PREV_ENABLE_TESTING_CACHE FALSE)
@@ -194,6 +207,7 @@ if(NOT CURL_FOUND)
   set(MBEDX509_LIBRARY "${_APM_MBEDTLS_LIBDIR}/libmbedx509.a" CACHE FILEPATH "Bundled mbedx509 library" FORCE)
   set(MBEDCRYPTO_LIBRARY "${_APM_MBEDTLS_LIBDIR}/libmbedcrypto.a" CACHE FILEPATH "Bundled mbedcrypto library" FORCE)
   set(MBEDTLS_LIBRARIES "${MBEDTLS_LIBRARY};${MBEDX509_LIBRARY};${MBEDCRYPTO_LIBRARY}" CACHE STRING "Bundled mbedTLS libraries" FORCE)
+  set(APM_BUNDLED_TLS_LIBS ${MBEDTLS_LIBRARIES})
 
   set(BUILD_CURL_EXE OFF)
   set(ENABLE_ARES OFF)
@@ -318,9 +332,7 @@ target_include_directories(apm PRIVATE
 target_link_libraries(apm PRIVATE
     CURL::libcurl
     ZLIB::ZLIB
-    ${MBEDTLS_LIBRARY}
-    ${MBEDX509_LIBRARY}
-    ${MBEDCRYPTO_LIBRARY}
+    ${APM_BUNDLED_TLS_LIBS}
 )
 
 # ======================================================
@@ -366,8 +378,5 @@ target_include_directories(apmd PRIVATE
 target_link_libraries(apmd PRIVATE
     CURL::libcurl
     ZLIB::ZLIB
-    ${MBEDTLS_LIBRARY}
-    ${MBEDX509_LIBRARY}
-    ${MBEDCRYPTO_LIBRARY}
+    ${APM_BUNDLED_TLS_LIBS}
 )
-

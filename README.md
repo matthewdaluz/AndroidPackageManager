@@ -46,7 +46,25 @@ src/
 
 ## Building
 
-Requirements: CMake ≥ 3.14, C++17 toolchain, zlib, and libcurl (or set `-DAPM_USE_SYSTEM_CURL=OFF` to fetch curl 8.7.1 + mbedTLS 3.6.0).
+### Dependencies
+
+APM is a CMake/C++17 project. If zlib or libcurl are missing, the build will fetch zlib 1.3.1 plus curl 8.7.1 with mbedTLS 3.6.0 (pass `-DAPM_USE_SYSTEM_CURL=OFF` to force the bundled stack).
+
+Needed tools:
+- CMake ≥ 3.14
+- C++17 compiler + make/ninja
+- git + patch (FetchContent + bundled patches)
+- `zlib` headers; `libcurl` headers if you want to link against the system copy
+
+Distro-friendly install hints:
+- **Ubuntu/Debian:** `sudo apt update && sudo apt install build-essential cmake pkg-config git patch zlib1g-dev libcurl4-openssl-dev`
+- **Fedora/RHEL:** `sudo dnf groupinstall "Development Tools" && sudo dnf install cmake git patch zlib-devel libcurl-devel`
+- **Arch/Manjaro:** `sudo pacman -S --needed base-devel cmake git patch zlib curl`
+- **openSUSE:** `sudo zypper install -t pattern devel_C_C++ && sudo zypper install cmake git patch zlib-devel libcurl-devel`
+
+If you skip the curl/zlib dev packages, CMake will transparently build the bundled versions.
+
+### Build on Linux (host)
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -59,6 +77,18 @@ Outputs under `build/`:
 | ------ | ----------- |
 | `apm`  | CLI (can run unprivileged if it can reach the daemon socket). |
 | `apmd` | Root daemon that writes under `/data/apm`. |
+
+### Build for Android
+
+Use the helper script to target a specific ABI with the NDK toolchain:
+
+```bash
+./build_android.sh        # prompts for ABI, uses $ANDROID_NDK or ~/Android/NDK
+```
+
+Notes:
+- Script expects NDK r27d at `$ANDROID_NDK`, `$ANDROID_NDK_HOME`, or `~/Android/NDK`. When configuring manually with `-DANDROID=ON`, CMake will attempt to download r27d if it cannot find one.
+- Outputs land in `build/` just like the host build.
 
 
 ## Deploying on-device
