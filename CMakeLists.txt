@@ -315,7 +315,13 @@ target_include_directories(apm PRIVATE
     include
 )
 
-target_link_libraries(apm PRIVATE CURL::libcurl ZLIB::ZLIB)
+target_link_libraries(apm PRIVATE
+    CURL::libcurl
+    ZLIB::ZLIB
+    ${MBEDTLS_LIBRARY}
+    ${MBEDX509_LIBRARY}
+    ${MBEDCRYPTO_LIBRARY}
+)
 
 # ======================================================
 # APM Daemon Binary
@@ -357,4 +363,11 @@ target_include_directories(apmd PRIVATE
     include
 )
 
-target_link_libraries(apmd PRIVATE CURL::libcurl ZLIB::ZLIB)
+target_link_libraries(apmd PRIVATE
+    CURL::libcurl
+    ZLIB::ZLIB
+    ${MBEDTLS_LIBRARY}
+    ${MBEDX509_LIBRARY}
+    ${MBEDCRYPTO_LIBRARY}
+)
+
