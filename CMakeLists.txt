@@ -10,6 +10,71 @@ if(POLICY CMP0077)
   set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
 endif()
 
+# ======================================================
+# Android NDK Setup
+# ======================================================
+if(ANDROID)
+  set(ANDROID_NDK_PATH "$ENV{HOME}/Android/NDK" CACHE PATH "Path to Android NDK")
+  
+  if(NOT EXISTS "${ANDROID_NDK_PATH}")
+    message(STATUS "Android NDK not found at ${ANDROID_NDK_PATH}, downloading...")
+    
+    set(ANDROID_NDK_URL "https://dl.google.com/android/repository/android-ndk-r27d-linux.zip")
+    set(ANDROID_NDK_ZIP "${CMAKE_BINARY_DIR}/android-ndk-r27d-linux.zip")
+    set(ANDROID_NDK_EXTRACT_DIR "$ENV{HOME}/Android")
+    
+    # Create Android directory if it doesn't exist
+    file(MAKE_DIRECTORY "${ANDROID_NDK_EXTRACT_DIR}")
+    
+    # Download NDK
+    file(DOWNLOAD
+      ${ANDROID_NDK_URL}
+      ${ANDROID_NDK_ZIP}
+      SHOW_PROGRESS
+      STATUS download_status
+    )
+    
+    list(GET download_status 0 status_code)
+    list(GET download_status 1 status_message)
+    
+    if(NOT status_code EQUAL 0)
+      message(FATAL_ERROR "Failed to download Android NDK: ${status_message}")
+    endif()
+    
+    # Extract NDK
+    execute_process(
+      COMMAND ${CMAKE_COMMAND} -E tar xzf "${ANDROID_NDK_ZIP}"
+      WORKING_DIRECTORY "${ANDROID_NDK_EXTRACT_DIR}"
+      RESULT_VARIABLE extract_result
+    )
+    
+    if(NOT extract_result EQUAL 0)
+      message(FATAL_ERROR "Failed to extract Android NDK")
+    endif()
+    
+    # Rename extracted folder to NDK
+    execute_process(
+      COMMAND ${CMAKE_COMMAND} -E rename "android-ndk-r27d" "NDK"
+      WORKING_DIRECTORY "${ANDROID_NDK_EXTRACT_DIR}"
+      RESULT_VARIABLE rename_result
+    )
+    
+    if(NOT rename_result EQUAL 0)
+      message(FATAL_ERROR "Failed to rename Android NDK directory")
+    endif()
+    
+    # Clean up downloaded zip
+    file(REMOVE "${ANDROID_NDK_ZIP}")
+    
+    message(STATUS "Android NDK successfully installed to ${ANDROID_NDK_PATH}")
+  else()
+    message(STATUS "Android NDK found at ${ANDROID_NDK_PATH}")
+  endif()
+  
+  # Set NDK path for CMake
+  set(ANDROID_NDK "${ANDROID_NDK_PATH}" CACHE PATH "Path to Android NDK" FORCE)
+endif()
+
 set(APM_USE_SYSTEM_CURL_DEFAULT ON)
 if(ANDROID)
   set(APM_USE_SYSTEM_CURL_DEFAULT OFF)
@@ -155,7 +220,49 @@ if(NOT CURL_FOUND)
   unset(_APM_MBEDTLS_LIBDIR)
 endif()
 
-find_package(ZLIB REQUIRED)
+# ======================================================
+# ZLIB Setup - Simplified Approach
+# ======================================================
+find_package(ZLIB QUIET)
+if(NOT ZLIB_FOUND)
+  message(STATUS "ZLIB not found, downloading and building...")
+  include(FetchContent)
+  
+  # Use a known version that has good CMake support
+  FetchContent_Declare(
+    zlib
+    GIT_REPOSITORY https://github.com/madler/zlib.git
+    GIT_TAG v1.3.1
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  )
+  
+  FetchContent_GetProperties(zlib)
+  if(NOT zlib_POPULATED)
+    FetchContent_Populate(zlib)
+    
+    # Build as static library
+    set(BUILD_SHARED_LIBS OFF)
+    set(SKIP_INSTALL_ALL ON)
+    
+    # Add zlib subdirectory
+    add_subdirectory(${zlib_SOURCE_DIR} ${zlib_BINARY_DIR})
+    
+    # Create the alias target
+    if(TARGET zlibstatic AND NOT TARGET ZLIB::ZLIB)
+      add_library(ZLIB::ZLIB ALIAS zlibstatic)
+    elseif(TARGET zlib AND NOT TARGET ZLIB::ZLIB)
+      add_library(ZLIB::ZLIB ALIAS zlib)
+    endif()
+    
+    if(TARGET ZLIB::ZLIB)
+      message(STATUS "ZLIB built successfully")
+    else()
+      message(FATAL_ERROR "Failed to create ZLIB::ZLIB target")
+    endif()
+  endif()
+else()
+  message(STATUS "ZLIB found: ${ZLIB_VERSION}")
+endif()
 
 # ======================================================
 # APM Client Binary
@@ -186,7 +293,6 @@ add_executable(apm
     src/ams/module_manager.cpp
     src/util/crypto/sha256.cpp
     src/util/crypto/gpg_verify.cpp
-
 
     src/util/fs.cpp
     src/util/crypto/sha256.cpp
@@ -230,7 +336,6 @@ add_executable(apmd
     src/ams/module_manager.cpp
     src/util/crypto/sha256.cpp
     src/util/crypto/gpg_verify.cpp
-
 
     src/util/fs.cpp
     src/util/crypto/sha256.cpp
