@@ -6,7 +6,7 @@
  *
  * File: install_manager.hpp
  * Purpose: Declare orchestration APIs for installing, removing, and upgrading Debian-style packages.
- * Last Modified: November 18th, 2025. - 3:00 PM Eastern Time.
+ * Last Modified: November 22nd, 2025. - 10:30 PM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -61,6 +61,7 @@ using InstallProgressCallback = std::function<void(const InstallProgress &)>;
 struct InstallOptions {
   bool simulate = false;
   bool reinstall = false;
+  bool isTermuxPackage = false;
 };
 
 struct InstallResult {

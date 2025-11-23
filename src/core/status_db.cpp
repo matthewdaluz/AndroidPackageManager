@@ -6,7 +6,7 @@
  *
  * File: status_db.cpp
  * Purpose: Implement reading/writing of the dpkg-style status database.
- * Last Modified: November 18th, 2025. - 3:00 PM Eastern Time.
+ * Last Modified: November 22nd, 2025. - 10:30 PM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -235,6 +235,7 @@ bool loadStatusFile(const std::string &path, InstalledDb &out,
     pkg.repoUri = getField("Repo");
     pkg.repoDist = getField("Repo-Dist");
     pkg.repoComponent = getField("Repo-Component");
+    pkg.installPrefix = getField("Install-Prefix");
 
     std::string dependsRaw = getField("Depends");
     if (!dependsRaw.empty()) {
@@ -246,6 +247,11 @@ bool loadStatusFile(const std::string &path, InstalledDb &out,
       pkg.autoInstalled = parseBool(autoRaw);
     } else {
       pkg.autoInstalled = false;
+    }
+
+    std::string termuxRaw = getField("Termux-Package");
+    if (!termuxRaw.empty()) {
+      pkg.termuxPackage = parseBool(termuxRaw);
     }
 
     if (pkg.name.empty()) {
@@ -291,6 +297,11 @@ bool writeStatusFile(const std::string &path, const InstalledDb &db,
       out << "Repo-Dist: " << pkg.repoDist << "\n";
     if (!pkg.repoComponent.empty())
       out << "Repo-Component: " << pkg.repoComponent << "\n";
+    if (!pkg.installPrefix.empty())
+      out << "Install-Prefix: " << pkg.installPrefix << "\n";
+    if (pkg.termuxPackage) {
+      out << "Termux-Package: yes\n";
+    }
 
     if (!pkg.depends.empty()) {
       out << "Depends: ";

@@ -6,7 +6,7 @@
  *
  * File: dependency.cpp
  * Purpose: Implement dependency resolution and cycle/missing detection for packages.
- * Last Modified: November 18th, 2025. - 3:00 PM Eastern Time.
+ * Last Modified: November 22nd, 2025. - 10:30 PM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -149,6 +149,114 @@ bool resolveDependencies(const apm::repo::PackageList &repoPackages,
   apm::logger::info("resolveDependencies: resolved '" + rootPackage +
                     "' with " + std::to_string(out.installOrder.size()) +
                     " packages in install order");
+
+  return true;
+}
+
+bool resolveTermuxDependencies(const apm::repo::PackageList &repoPackages,
+                               const std::string &rootPackage,
+                               ResolutionResult &out,
+                               const std::vector<std::string> &alreadyInstalled,
+                               std::string *errorMsg) {
+  out = ResolutionResult{};
+
+  if (rootPackage.empty()) {
+    if (errorMsg)
+      *errorMsg = "Root package name is empty";
+    apm::logger::error("resolveTermuxDependencies: root package is empty");
+    return false;
+  }
+
+  std::unordered_set<std::string> installedSet;
+  for (const auto &name : alreadyInstalled) {
+    installedSet.insert(name);
+  }
+
+  std::unordered_set<std::string> missingSet;
+  std::vector<const apm::repo::PackageEntry *> order;
+
+  auto findPkg =
+      [&](const std::string &name) -> const apm::repo::PackageEntry * {
+    for (const auto &pkg : repoPackages) {
+      if (!pkg.isTermuxPackage)
+        continue;
+      if (pkg.packageName == name)
+        return &pkg;
+    }
+    return nullptr;
+  };
+
+  const apm::repo::PackageEntry *rootPkg = findPkg(rootPackage);
+  if (!rootPkg) {
+    std::string msg = "Package not found in Termux repositories: " + rootPackage;
+    if (errorMsg)
+      *errorMsg = msg;
+    apm::logger::error("resolveTermuxDependencies: " + msg);
+    return false;
+  }
+
+  std::unordered_set<std::string> queuedDeps;
+  for (const auto &depNameRaw : rootPkg->depends) {
+    if (depNameRaw.empty())
+      continue;
+
+    std::string depName = depNameRaw;
+    auto colonPos = depName.find(':');
+    if (colonPos != std::string::npos) {
+      depName = depName.substr(0, colonPos);
+    }
+
+    if (depName.empty() || depName == rootPackage)
+      continue;
+
+    if (!queuedDeps.insert(depName).second)
+      continue;
+
+    if (installedSet.find(depName) != installedSet.end())
+      continue;
+
+    const apm::repo::PackageEntry *depPkg = findPkg(depName);
+    if (!depPkg) {
+      if (missingSet.insert(depName).second) {
+        apm::logger::warn("resolveTermuxDependencies: missing dependency: " +
+                          depName);
+      }
+      continue;
+    }
+
+    order.push_back(depPkg);
+  }
+
+  if (installedSet.find(rootPackage) == installedSet.end()) {
+    order.push_back(rootPkg);
+  }
+
+  out.installOrder = std::move(order);
+  out.missing.reserve(missingSet.size());
+  for (const auto &m : missingSet) {
+    out.missing.push_back(m);
+  }
+  out.cycles.clear();
+
+  if (!out.success()) {
+    std::ostringstream ss;
+    if (!out.missing.empty()) {
+      ss << "Missing dependencies:";
+      for (const auto &m : out.missing) {
+        ss << " " << m;
+      }
+    }
+    if (errorMsg) {
+      *errorMsg = ss.str();
+    }
+    apm::logger::error("resolveTermuxDependencies: " + ss.str());
+    return false;
+  }
+
+  apm::logger::info(
+      "resolveTermuxDependencies: resolved '" + rootPackage +
+      "' with " + std::to_string(out.installOrder.size()) +
+      " packages in install order (Termux mode)");
 
   return true;
 }

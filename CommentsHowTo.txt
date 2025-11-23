@@ -8,7 +8,7 @@ Below is what the top of every file should have.
  *
  * File: <File name here>
  * Purpose: <Short description of what the code file does here>
- * Last Modified: November 18th, 2025. - 3:00 PM Eastern Time.
+ * Last Modified: <Insert current date and time here>
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify

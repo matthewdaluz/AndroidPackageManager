@@ -6,7 +6,7 @@
  *
  * File: repo_index.cpp
  * Purpose: Implement sources.list parsing, repository index downloads, and Packages parsing.
- * Last Modified: November 18th, 2025. - 3:00 PM Eastern Time.
+ * Last Modified: November 22nd, 2025. - 10:30 PM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -199,6 +199,19 @@ static RepoFormat detectRepoFormat(const RepoSource &src,
   return RepoFormat::Debian;
 }
 
+static bool detectTermuxRepo(const RepoSource &src,
+                             const std::string &rawLine) {
+  if (containsCaseInsensitive(src.uri, "packages.termux.dev")) {
+    return true;
+  }
+
+  if (containsCaseInsensitive(rawLine, "data/data/com.termux/files/usr")) {
+    return true;
+  }
+
+  return false;
+}
+
 static std::string mapArchToTermux(const std::string &arch) {
   if (arch.empty())
     return arch;
@@ -226,7 +239,7 @@ static std::string resolveRepoArch(const RepoSource &src,
                                    const std::string &defaultArch) {
   std::string arch = src.arch.empty() ? defaultArch : src.arch;
 
-  if (src.format == RepoFormat::Termux) {
+  if (src.format == RepoFormat::Termux || src.isTermuxRepo) {
     std::string termuxArch = mapArchToTermux(arch);
     if (termuxArch != arch) {
       apm::logger::info("resolveRepoArch: mapping Debian arch '" + arch +
@@ -304,6 +317,33 @@ parseDependsField(const std::string &dependsRaw) {
   }
 
   return result;
+}
+
+static bool hasTermuxDependency(const std::vector<std::string> &deps) {
+  static const std::vector<std::string> kTermuxDeps = {
+      "libandroid-glob", "libandroid-support", "termux-tools"};
+
+  for (const auto &dep : deps) {
+    for (const auto &needle : kTermuxDeps) {
+      if (containsCaseInsensitive(dep, needle)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+static bool detectTermuxPackage(const PackageEntry &pkg) {
+  if (containsCaseInsensitive(pkg.filename, "data/data/com.termux/files/usr")) {
+    return true;
+  }
+
+  if (hasTermuxDependency(pkg.depends)) {
+    return true;
+  }
+
+  return false;
 }
 
 // ---------------------------------------------------------
@@ -408,6 +448,7 @@ bool parsePackagesString(const std::string &content, PackageList &out,
 
     const std::string dependsRaw = getField("Depends");
     pkg.depends = parseDependsField(dependsRaw);
+    pkg.isTermuxPackage = detectTermuxPackage(pkg);
 
     if (pkg.packageName.empty()) {
       continue;
@@ -585,8 +626,13 @@ static bool parseSingleSourcesFile(const std::string &path,
     }
 
     src.format = detectRepoFormat(src, trimmed);
+    src.isTermuxRepo = (src.format == RepoFormat::Termux) ||
+                       detectTermuxRepo(src, trimmed);
     if (src.format == RepoFormat::Termux) {
       apm::logger::info("loadSourcesList: detected Termux repository: " +
+                        src.uri);
+    } else if (src.isTermuxRepo) {
+      apm::logger::info("loadSourcesList: flagged Termux repository: " +
                         src.uri);
     }
 
@@ -1249,11 +1295,20 @@ bool buildRepoIndices(const std::string &sourcesPath,
       }
 
       // Fill repo metadata for each package
+      bool anyTermuxPkg = false;
       for (auto &pkg : idx.packages) {
         pkg.repoUri = src.uri;
         pkg.repoDist = src.dist;
         pkg.repoComponent = comp;
+        if (src.format == RepoFormat::Termux || src.isTermuxRepo) {
+          pkg.isTermuxPackage = true;
+        }
+        if (pkg.isTermuxPackage) {
+          anyTermuxPkg = true;
+        }
       }
+
+      idx.source.isTermuxRepo = src.isTermuxRepo || anyTermuxPkg;
 
       out.push_back(std::move(idx));
     }

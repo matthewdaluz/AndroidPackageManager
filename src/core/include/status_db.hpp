@@ -6,7 +6,7 @@
  *
  * File: status_db.hpp
  * Purpose: Declare dpkg-style status database helpers for installed packages.
- * Last Modified: November 18th, 2025. - 3:00 PM Eastern Time.
+ * Last Modified: November 22nd, 2025. - 10:30 PM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -48,6 +48,9 @@ struct InstalledPackage {
 
   // Whether this package was auto-installed as a dependency
   bool autoInstalled = false;
+
+  bool termuxPackage = false;
+  std::string installPrefix;
 };
 
 using InstalledDb = std::unordered_map<std::string, InstalledPackage>;

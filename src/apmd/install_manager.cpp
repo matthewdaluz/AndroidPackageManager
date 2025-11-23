@@ -6,7 +6,7 @@
  *
  * File: install_manager.cpp
  * Purpose: Implement package downloading, dependency resolution, and install/remove/upgrade workflows.
- * Last Modified: November 18th, 2025. - 3:00 PM Eastern Time.
+ * Last Modified: November 22nd, 2025. - 10:30 PM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -43,6 +43,7 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <fstream>
 #include <cstring>
 #include <sstream>
 #include <string>
@@ -246,6 +247,356 @@ static void removeDirRecursive(const std::string &path) {
   ::rmdir(path.c_str());
 }
 
+static bool ensureTermuxRuntimeDirs() {
+  bool ok = true;
+  ok = apm::fs::createDirs(apm::config::TERMUX_ROOT) && ok;
+  ok = apm::fs::createDirs(apm::config::TERMUX_PREFIX) && ok;
+  ok = apm::fs::createDirs(apm::fs::joinPath(apm::config::TERMUX_PREFIX,
+                                             "bin")) &&
+       ok;
+  ok = apm::fs::createDirs(apm::fs::joinPath(apm::config::TERMUX_PREFIX,
+                                             "lib")) &&
+       ok;
+  ok = apm::fs::createDirs(apm::fs::joinPath(apm::config::TERMUX_PREFIX,
+                                             "share")) &&
+       ok;
+  ok = apm::fs::createDirs(apm::config::TERMUX_HOME_DIR) && ok;
+  ok = apm::fs::createDirs(apm::config::TERMUX_TMP_DIR) && ok;
+  ok = apm::fs::createDirs(apm::config::APM_BIN_DIR) && ok;
+  return ok;
+}
+
+static bool createTermuxEnvFileIfMissing() {
+  if (apm::fs::pathExists(apm::config::TERMUX_ENV_FILE)) {
+    return true;
+  }
+
+  std::ostringstream env;
+  env << "export PREFIX=" << apm::config::TERMUX_PREFIX << "\n";
+  env << "export HOME=" << apm::config::TERMUX_HOME_DIR << "\n";
+  env << "export PATH=$PREFIX/bin:$PATH\n";
+  env << "export LD_LIBRARY_PATH=$PREFIX/lib\n";
+  env << "export TMPDIR=" << apm::config::TERMUX_TMP_DIR << "\n";
+  env << "export TERM=xterm-256color\n";
+  env << "export LANG=en_US.UTF-8\n";
+  env << "export SHELL=/system/bin/sh\n";
+
+  if (!apm::fs::writeFile(apm::config::TERMUX_ENV_FILE, env.str(), true)) {
+    apm::logger::warn("install_manager: failed to write Termux env file");
+    return false;
+  }
+
+  ::chmod(apm::config::TERMUX_ENV_FILE, 0644);
+  return true;
+}
+
+static bool copyFilePreserveMode(const std::string &src,
+                                 const std::string &dst) {
+  std::ifstream in(src, std::ios::binary);
+  if (!in.is_open()) {
+    apm::logger::warn("install_manager: cannot open source file " + src);
+    return false;
+  }
+
+  auto pos = dst.find_last_of('/');
+  if (pos != std::string::npos) {
+    std::string parent = dst.substr(0, pos);
+    if (!parent.empty()) {
+      apm::fs::createDirs(parent);
+    }
+  }
+
+  std::ofstream out(dst, std::ios::binary | std::ios::trunc);
+  if (!out.is_open()) {
+    apm::logger::warn("install_manager: cannot open destination file " + dst);
+    return false;
+  }
+
+  out << in.rdbuf();
+  if (!out.good()) {
+    apm::logger::warn("install_manager: failed to copy file " + src);
+    return false;
+  }
+
+  struct stat st{};
+  if (::stat(src.c_str(), &st) == 0) {
+    ::chmod(dst.c_str(), st.st_mode & 07777);
+  }
+
+  return true;
+}
+
+static bool copySymlink(const std::string &src, const std::string &dst) {
+  std::vector<char> buf(4096, 0);
+  ssize_t len = ::readlink(src.c_str(), buf.data(), buf.size() - 1);
+  if (len < 0) {
+    apm::logger::warn("install_manager: readlink failed for " + src);
+    return false;
+  }
+  buf[static_cast<std::size_t>(len)] = '\0';
+
+  auto pos = dst.find_last_of('/');
+  if (pos != std::string::npos) {
+    std::string parent = dst.substr(0, pos);
+    if (!parent.empty()) {
+      apm::fs::createDirs(parent);
+    }
+  }
+
+  ::unlink(dst.c_str());
+  if (::symlink(buf.data(), dst.c_str()) != 0) {
+    apm::logger::warn("install_manager: symlink failed for " + dst);
+    return false;
+  }
+
+  return true;
+}
+
+static bool copyTermuxTree(const std::string &srcDir, const std::string &dstDir,
+                           const std::string &relativeBase,
+                           std::vector<std::string> &installedPaths) {
+  if (!apm::fs::createDirs(dstDir)) {
+    apm::logger::warn("install_manager: failed to create Termux dest " +
+                      dstDir);
+    return false;
+  }
+
+  DIR *dir = ::opendir(srcDir.c_str());
+  if (!dir) {
+    apm::logger::warn("install_manager: cannot open Termux source " + srcDir);
+    return false;
+  }
+
+  struct dirent *ent;
+  while ((ent = ::readdir(dir)) != nullptr) {
+    std::string name = ent->d_name;
+    if (name == "." || name == "..")
+      continue;
+
+    std::string srcPath = apm::fs::joinPath(srcDir, name);
+    std::string dstPath = apm::fs::joinPath(dstDir, name);
+    std::string relPath =
+        relativeBase.empty() ? name : relativeBase + "/" + name;
+
+    struct stat st{};
+    if (::lstat(srcPath.c_str(), &st) != 0) {
+      continue;
+    }
+
+    if (S_ISDIR(st.st_mode)) {
+      if (!copyTermuxTree(srcPath, dstPath, relPath, installedPaths)) {
+        ::closedir(dir);
+        return false;
+      }
+      continue;
+    }
+
+    bool ok = false;
+    if (S_ISLNK(st.st_mode)) {
+      ok = copySymlink(srcPath, dstPath);
+    } else {
+      ok = copyFilePreserveMode(srcPath, dstPath);
+    }
+
+    if (!ok) {
+      ::closedir(dir);
+      return false;
+    }
+
+    installedPaths.push_back(relPath);
+  }
+
+  ::closedir(dir);
+  return true;
+}
+
+static bool writeTermuxManifest(const std::string &installRoot,
+                                const std::vector<std::string> &paths) {
+  std::ostringstream ss;
+  for (const auto &p : paths) {
+    ss << p << "\n";
+  }
+  return apm::fs::writeFile(apm::fs::joinPath(installRoot, "files.list"),
+                            ss.str(), true);
+}
+
+static bool readTermuxManifest(const std::string &installRoot,
+                               std::vector<std::string> &paths) {
+  std::string content;
+  if (!apm::fs::readFile(apm::fs::joinPath(installRoot, "files.list"),
+                         content)) {
+    return false;
+  }
+
+  std::istringstream in(content);
+  std::string line;
+  while (std::getline(in, line)) {
+    if (!line.empty() && line.back() == '\r') {
+      line.pop_back();
+    }
+    if (line.empty())
+      continue;
+    paths.push_back(line);
+  }
+  return true;
+}
+
+static bool createTermuxWrapper(const std::string &commandName) {
+  if (commandName.empty())
+    return false;
+
+  if (!apm::fs::createDirs(apm::config::APM_BIN_DIR)) {
+    apm::logger::warn("install_manager: failed to create wrapper dir");
+    return false;
+  }
+
+  std::string target =
+      apm::fs::joinPath(apm::config::APM_BIN_DIR, commandName);
+  std::ostringstream script;
+  script << "#!/system/bin/sh\n";
+  script << ". " << apm::config::TERMUX_ENV_FILE << "\n";
+  script << "exec " << apm::config::TERMUX_PREFIX << "/bin/" << commandName
+         << " \"$@\"\n";
+
+  if (!apm::fs::writeFile(target, script.str())) {
+    apm::logger::warn("install_manager: failed to write wrapper " + target);
+    return false;
+  }
+
+  if (::chmod(target.c_str(), 0755) != 0) {
+    apm::logger::warn("install_manager: chmod failed for wrapper " + target);
+  }
+
+  return true;
+}
+
+static bool removeTermuxWrapper(const std::string &commandName) {
+  if (commandName.empty())
+    return true;
+  std::string target =
+      apm::fs::joinPath(apm::config::APM_BIN_DIR, commandName);
+  return apm::fs::removeFile(target);
+}
+
+static bool detectTermuxLayout(const std::string &dataDir) {
+  std::string termuxUsr =
+      apm::fs::joinPath(dataDir, "data/data/com.termux/files/usr");
+  return apm::fs::isDirectory(termuxUsr);
+}
+
+static bool rewriteTermuxPathsDuringExtraction(
+    const std::string &dataDir, const std::string &installRoot,
+    std::vector<std::string> &installedPaths, std::string *errorMsg) {
+  installedPaths.clear();
+
+  std::string termuxUsr =
+      apm::fs::joinPath(dataDir, "data/data/com.termux/files/usr");
+  if (!apm::fs::isDirectory(termuxUsr)) {
+    if (errorMsg) {
+      *errorMsg = "Termux layout not found in package payload";
+    }
+    return false;
+  }
+
+  if (!ensureTermuxRuntimeDirs() || !createTermuxEnvFileIfMissing()) {
+    if (errorMsg)
+      *errorMsg = "Failed to prepare Termux runtime directories";
+    return false;
+  }
+
+  apm::fs::removeDirRecursive(installRoot);
+  if (!apm::fs::createDirs(installRoot)) {
+    if (errorMsg)
+      *errorMsg = "Failed to prepare Termux install root: " + installRoot;
+    return false;
+  }
+
+  if (!copyTermuxTree(termuxUsr, apm::config::TERMUX_PREFIX, "usr",
+                      installedPaths)) {
+    if (errorMsg)
+      *errorMsg = "Failed to rewrite Termux paths during extraction";
+    return false;
+  }
+
+  if (!writeTermuxManifest(installRoot, installedPaths)) {
+    if (errorMsg)
+      *errorMsg = "Failed to write Termux manifest";
+    return false;
+  }
+
+  return true;
+}
+
+static bool pruneEmptyDirs(const std::string &root, bool keepRoot = true) {
+  DIR *dir = ::opendir(root.c_str());
+  if (!dir) {
+    return false;
+  }
+
+  bool empty = true;
+  struct dirent *ent;
+  while ((ent = ::readdir(dir)) != nullptr) {
+    std::string name = ent->d_name;
+    if (name == "." || name == "..")
+      continue;
+
+    std::string child = apm::fs::joinPath(root, name);
+    struct stat st{};
+    if (::lstat(child.c_str(), &st) != 0) {
+      continue;
+    }
+
+    if (S_ISDIR(st.st_mode)) {
+      bool childEmpty = pruneEmptyDirs(child, false);
+      if (!childEmpty) {
+        empty = false;
+      }
+    } else {
+      empty = false;
+    }
+  }
+
+  ::closedir(dir);
+
+  if (empty && !keepRoot) {
+    ::rmdir(root.c_str());
+  }
+
+  return empty;
+}
+
+static bool removeTermuxPackageFiles(const apm::status::InstalledPackage &ip,
+                                     std::string *errorMsg) {
+  std::vector<std::string> manifest;
+  if (!readTermuxManifest(ip.installRoot, manifest)) {
+    apm::logger::warn("removeTermuxPackageFiles: missing manifest at " +
+                      ip.installRoot);
+  }
+
+  for (const auto &rel : manifest) {
+    std::string full =
+        apm::fs::joinPath(apm::config::TERMUX_ROOT, rel);
+    apm::fs::removeFile(full);
+
+    static const std::string kBinPrefix = "usr/bin/";
+    if (rel.compare(0, kBinPrefix.size(), kBinPrefix) == 0) {
+      std::string cmd = rel.substr(kBinPrefix.size());
+      auto slash = cmd.find('/');
+      if (slash == std::string::npos && !cmd.empty()) {
+        removeTermuxWrapper(cmd);
+      }
+    }
+  }
+
+  pruneEmptyDirs(apm::fs::joinPath(apm::config::TERMUX_ROOT, "usr"), true);
+  apm::fs::removeDirRecursive(ip.installRoot);
+
+  if (errorMsg) {
+    *errorMsg = "";
+  }
+  return true;
+}
+
 // Install a single package from a .deb into INSTALLED_DIR.
 static bool installSinglePackage(const PackageEntry &pkg,
                                  const std::string &debPath,
@@ -254,8 +605,6 @@ static bool installSinglePackage(const PackageEntry &pkg,
                                  std::string *errorMsg) {
   apm::logger::info("installSinglePackage: installing " + pkg.packageName +
                     " from " + debPath);
-
-  (void)opts; // reserved for future options
 
   std::string tmpRoot =
       apm::fs::joinPath(apm::config::CACHE_DIR,
@@ -360,12 +709,57 @@ static bool installSinglePackage(const PackageEntry &pkg,
   }
 
   if (apm::fs::pathExists(installRoot)) {
-    if (errorMsg)
-      *errorMsg = "Install root already exists: " + installRoot;
-    apm::logger::error("installSinglePackage: install root exists: " +
-                       installRoot);
+    if (!opts.reinstall) {
+      if (errorMsg)
+        *errorMsg = "Install root already exists: " + installRoot;
+      apm::logger::error("installSinglePackage: install root exists: " +
+                         installRoot);
+      removeDirRecursive(tmpRoot);
+      return false;
+    }
+    apm::fs::removeDirRecursive(installRoot);
+  }
+
+  const bool termuxLayout = detectTermuxLayout(dataDir);
+  const bool termuxMode = opts.isTermuxPackage || termuxLayout;
+
+  if (termuxMode) {
+    if (!termuxLayout) {
+      if (errorMsg)
+        *errorMsg = "Termux package flag set but layout not detected";
+      apm::logger::error(
+          "installSinglePackage: Termux flag set but no Termux layout found");
+      removeDirRecursive(tmpRoot);
+      return false;
+    }
+
+    std::vector<std::string> installedPaths;
+    if (!rewriteTermuxPathsDuringExtraction(dataDir, installRoot,
+                                            installedPaths, errorMsg)) {
+      if (errorMsg && errorMsg->empty()) {
+        *errorMsg = "Failed to install Termux payload";
+      }
+      removeDirRecursive(tmpRoot);
+      return false;
+    }
+
+    for (const auto &rel : installedPaths) {
+      static const std::string kBinPrefix = "usr/bin/";
+      if (rel.compare(0, kBinPrefix.size(), kBinPrefix) != 0) {
+        continue;
+      }
+      std::string cmd = rel.substr(kBinPrefix.size());
+      auto slashPos = cmd.find('/');
+      if (slashPos != std::string::npos || cmd.empty())
+        continue;
+      createTermuxWrapper(cmd);
+    }
+
     removeDirRecursive(tmpRoot);
-    return false;
+    apm::logger::info("installSinglePackage: installed Termux payload for " +
+                      pkg.packageName + " into " +
+                      std::string(apm::config::TERMUX_PREFIX));
+    return true;
   }
 
   if (::rename(dataDir.c_str(), installRoot.c_str()) < 0) {
@@ -481,9 +875,64 @@ bool installWithDeps(const RepoIndexList &repoIndices,
     totalPkgs += idx.packages.size();
   }
   repoPkgs.reserve(totalPkgs);
+
   for (const auto &idx : repoIndices) {
+    bool idxTermux =
+        idx.source.isTermuxRepo || idx.source.format == apm::repo::RepoFormat::Termux;
     for (const auto &pkg : idx.packages) {
-      repoPkgs.push_back(pkg);
+      PackageEntry copy = pkg;
+      if (idxTermux) {
+        copy.isTermuxPackage = true;
+      }
+      repoPkgs.push_back(copy);
+    }
+  }
+
+  int rootDebIndex = -1;
+  int rootTermuxIndex = -1;
+  for (std::size_t i = 0; i < repoPkgs.size(); ++i) {
+    if (repoPkgs[i].packageName != rootPackage)
+      continue;
+    if (repoPkgs[i].isTermuxPackage) {
+      if (rootTermuxIndex < 0)
+        rootTermuxIndex = static_cast<int>(i);
+    } else {
+      if (rootDebIndex < 0)
+        rootDebIndex = static_cast<int>(i);
+    }
+  }
+
+  const apm::repo::PackageEntry *rootDeb =
+      (rootDebIndex >= 0) ? &repoPkgs[static_cast<std::size_t>(rootDebIndex)]
+                          : nullptr;
+  const apm::repo::PackageEntry *rootTermux =
+      (rootTermuxIndex >= 0)
+          ? &repoPkgs[static_cast<std::size_t>(rootTermuxIndex)]
+          : nullptr;
+
+  bool termuxMode = opts.isTermuxPackage;
+  if (!termuxMode && rootTermux && !rootDeb) {
+    termuxMode = true;
+  }
+
+  if (!(termuxMode ? rootTermux : rootDeb)) {
+    result.ok = false;
+    result.message = "Package not found in " +
+                     std::string(termuxMode ? "Termux" : "Debian") +
+                     " repositories: " + rootPackage;
+    apm::logger::error("installWithDeps: " + result.message);
+    return false;
+  }
+
+  PackageList resolverPkgs;
+  resolverPkgs.reserve(repoPkgs.size());
+  for (const auto &pkg : repoPkgs) {
+    if (termuxMode) {
+      if (pkg.isTermuxPackage)
+        resolverPkgs.push_back(pkg);
+    } else {
+      if (!pkg.isTermuxPackage)
+        resolverPkgs.push_back(pkg);
     }
   }
 
@@ -498,18 +947,33 @@ bool installWithDeps(const RepoIndexList &repoIndices,
   std::vector<std::string> alreadyInstalled;
   alreadyInstalled.reserve(installedDb.size());
   for (const auto &kv : installedDb) {
-    alreadyInstalled.push_back(kv.first);
+    if (kv.second.termuxPackage == termuxMode) {
+      alreadyInstalled.push_back(kv.first);
+    }
   }
 
   apm::dep::ResolutionResult res;
   std::string err;
 
-  if (!apm::dep::resolveDependencies(repoPkgs, rootPackage, arch, res,
-                                     alreadyInstalled, &err)) {
-    result.ok = false;
-    result.message = "Dependency resolution failed: " + err;
-    apm::logger::error("installWithDeps: " + result.message);
-    return false;
+  InstallOptions effectiveOpts = opts;
+  effectiveOpts.isTermuxPackage = termuxMode;
+
+  if (termuxMode) {
+    if (!apm::dep::resolveTermuxDependencies(resolverPkgs, rootPackage, res,
+                                             alreadyInstalled, &err)) {
+      result.ok = false;
+      result.message = "Dependency resolution failed: " + err;
+      apm::logger::error("installWithDeps: " + result.message);
+      return false;
+    }
+  } else {
+    if (!apm::dep::resolveDependencies(resolverPkgs, rootPackage, arch, res,
+                                       alreadyInstalled, &err)) {
+      result.ok = false;
+      result.message = "Dependency resolution failed: " + err;
+      apm::logger::error("installWithDeps: " + result.message);
+      return false;
+    }
   }
 
   if (opts.simulate) {
@@ -540,11 +1004,16 @@ bool installWithDeps(const RepoIndexList &repoIndices,
       continue;
 
     auto existing = installedDb.find(pkg->packageName);
-    if (!opts.reinstall && existing != installedDb.end()) {
+    if (!effectiveOpts.reinstall && existing != installedDb.end() &&
+        existing->second.termuxPackage == termuxMode) {
       apm::logger::info("installWithDeps: skipping already installed " +
                         pkg->packageName);
       result.skippedPackages.push_back(pkg->packageName);
       continue;
+    }
+    if (effectiveOpts.reinstall && existing != installedDb.end() &&
+        termuxMode && existing->second.termuxPackage) {
+      removeTermuxPackageFiles(existing->second, nullptr);
     }
 
     std::string debPath;
@@ -564,11 +1033,19 @@ bool installWithDeps(const RepoIndexList &repoIndices,
         "SHA256 verification DISABLED (dev mode): accepting .deb " + debPath);
 
     bool installAsDependency = (pkg->packageName != rootPackage);
-    const char *baseDir = installAsDependency ? apm::config::DEPENDENCIES_DIR
-                                              : apm::config::COMMANDS_DIR;
-    std::string installRoot = apm::fs::joinPath(baseDir, pkg->packageName);
+    std::string installRoot;
+    if (termuxMode) {
+      installRoot =
+          apm::fs::joinPath(apm::config::TERMUX_INSTALLED_DIR, pkg->packageName);
+    } else {
+      const char *baseDir = installAsDependency
+                                ? apm::config::DEPENDENCIES_DIR
+                                : apm::config::COMMANDS_DIR;
+      installRoot = apm::fs::joinPath(baseDir, pkg->packageName);
+    }
 
-    if (!installSinglePackage(*pkg, debPath, opts, installRoot, &err)) {
+    if (!installSinglePackage(*pkg, debPath, effectiveOpts, installRoot,
+                              &err)) {
       result.ok = false;
       result.message = "Failed to install " + pkg->packageName + ": " + err;
       apm::logger::error("installWithDeps: " + result.message);
@@ -587,6 +1064,10 @@ bool installWithDeps(const RepoIndexList &repoIndices,
     ip.repoComponent = pkg->repoComponent;
     ip.depends =
         pkg->depends; // store dependencies for reverse-dep + autoremove
+    ip.termuxPackage = termuxMode;
+    if (termuxMode) {
+      ip.installPrefix = apm::config::TERMUX_PREFIX;
+    }
 
     // Auto-Installed flag:
     //
@@ -689,6 +1170,9 @@ bool removePackage(const std::string &packageName, const RemoveOptions &opts,
       if (otherName == packageName) {
         continue;
       }
+      if (otherPkg.termuxPackage != it->second.termuxPackage) {
+        continue;
+      }
 
       for (const auto &depName : otherPkg.depends) {
         if (depName == packageName) {
@@ -723,18 +1207,35 @@ bool removePackage(const std::string &packageName, const RemoveOptions &opts,
 
   std::string installRoot = ip.installRoot;
   if (installRoot.empty()) {
-    installRoot = apm::fs::joinPath(apm::config::INSTALLED_DIR, packageName);
+    if (ip.termuxPackage) {
+      installRoot =
+          apm::fs::joinPath(apm::config::TERMUX_INSTALLED_DIR, packageName);
+    } else {
+      installRoot = apm::fs::joinPath(apm::config::INSTALLED_DIR, packageName);
+    }
   }
 
   apm::logger::info("removePackage: removing package '" + packageName +
                     "' from " + installRoot);
 
-  // Remove installed root directory tree
-  if (apm::fs::pathExists(installRoot)) {
-    removeDirRecursive(installRoot);
+  if (ip.termuxPackage) {
+    std::string removeErr;
+    if (!removeTermuxPackageFiles(ip, &removeErr)) {
+      result.ok = false;
+      result.message = removeErr.empty()
+                           ? "Failed to remove Termux package payload"
+                           : removeErr;
+      apm::logger::error("removePackage: " + result.message);
+      return false;
+    }
   } else {
-    apm::logger::warn("removePackage: installRoot does not exist: " +
-                      installRoot);
+    // Remove installed root directory tree
+    if (apm::fs::pathExists(installRoot)) {
+      removeDirRecursive(installRoot);
+    } else {
+      apm::logger::warn("removePackage: installRoot does not exist: " +
+                        installRoot);
+    }
   }
 
   // Remove from status DB
@@ -745,6 +1246,14 @@ bool removePackage(const std::string &packageName, const RemoveOptions &opts,
     // Non-fatal: files are gone, DB just slightly out of sync
   }
 
+  apm::daemon::path::refreshPathEnvironment();
+
+  result.ok = true;
+  result.removedPackages.push_back(packageName);
+  result.message = "Removed package: " + packageName;
+
+  apm::logger::info("removePackage: " + result.message);
+  return true;
   apm::daemon::path::refreshPathEnvironment();
 
   result.ok = true;
@@ -818,16 +1327,31 @@ bool upgradePackages(const apm::repo::RepoIndexList &repoIndices,
   }
 
   // Helper to find candidate package entry
-  auto findCandidate =
-      [&](const std::string &name) -> const apm::repo::PackageEntry * {
+  auto findCandidate = [&](const std::string &name,
+                           bool termux) -> const apm::repo::PackageEntry * {
     for (const auto &idx : repoIndices) {
-      const auto *p = apm::repo::findPackage(idx.packages, name, arch);
-      if (!p) {
-        // Allow "all" architecture packages
-        p = apm::repo::findPackage(idx.packages, name, "all");
+      bool idxTermux =
+          idx.source.isTermuxRepo ||
+          idx.source.format == apm::repo::RepoFormat::Termux;
+      if (idxTermux != termux) {
+        continue;
       }
-      if (p)
-        return p;
+
+      if (termux) {
+        for (const auto &pkg : idx.packages) {
+          if (!pkg.isTermuxPackage)
+            continue;
+          if (pkg.packageName == name)
+            return &pkg;
+        }
+      } else {
+        const auto *p = apm::repo::findPackage(idx.packages, name, arch);
+        if (!p) {
+          p = apm::repo::findPackage(idx.packages, name, "all");
+        }
+        if (p)
+          return p;
+      }
     }
     return nullptr;
   };
@@ -842,7 +1366,7 @@ bool upgradePackages(const apm::repo::RepoIndexList &repoIndices,
     }
 
     const auto &installedPkg = it->second;
-    const auto *candidate = findCandidate(name);
+    const auto *candidate = findCandidate(name, installedPkg.termuxPackage);
 
     if (!candidate) {
       result.skippedPackages.push_back(name + " (no candidate in repos)");
@@ -868,6 +1392,7 @@ bool upgradePackages(const apm::repo::RepoIndexList &repoIndices,
     InstallOptions iopts;
     iopts.simulate = false;
     iopts.reinstall = true;
+    iopts.isTermuxPackage = installedPkg.termuxPackage;
 
     InstallResult ires;
     if (!installWithDeps(repoIndices, name, iopts, ires)) {

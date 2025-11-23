@@ -69,4 +69,10 @@ bool resolveDependencies(const apm::repo::PackageList &repoPackages,
                          const std::vector<std::string> &alreadyInstalled = {},
                          std::string *errorMsg = nullptr);
 
+bool resolveTermuxDependencies(
+    const apm::repo::PackageList &repoPackages,
+    const std::string &rootPackage, ResolutionResult &out,
+    const std::vector<std::string> &alreadyInstalled = {},
+    std::string *errorMsg = nullptr);
+
 } // namespace apm::dep

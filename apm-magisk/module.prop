@@ -1,6 +1,6 @@
 id=apm
 name=APM (Android Package Manager)
-version=0.0.1
-versionCode=001
+version=v1.2b
+versionCode=120
 author=RedHead Industries
-description=Android Package Manager for ARM64 - Prototype Debugging Build v0.1a
+description=Android Package Manager for ARM64 - v1.2b [DEBUG]

@@ -1,84 +1,79 @@
 # APM — Android Package Manager
 
-APM is a GPLv3-licensed package manager tailored for rooted Android environments. It brings an APT-like workflow to `/data/apm`, making it easy to pull Debian/Termux repositories, install `.deb` payloads with dependency tracking, manage standalone tarballs, and even stage APKs as user or system apps through a long-running daemon.
+APM is a GPLv3-licensed package manager for rooted Android. It mirrors the APT workflow (sources lists, Packages indices, dependency tracking) while adding Android-specific features: a root daemon that performs filesystem changes, CLI helpers that work offline when possible, Termux compatibility, APK install/uninstall helpers, and a Magisk-inspired module system (AMS) for OverlayFS-based system customization.
 
 
-## Highlights
+## Components
 
-- **Client/Daemon split:** The `apm` CLI focuses on UX (interactive planning, progress bars, quick local queries) while `apmd` handles privileged filesystem work over a UNIX socket (`/data/apm/apmd.sock`).
-- **Repository support:** Parses traditional `deb ...` `sources.list` entries plus Termux style repos, downloads `Release`/`Packages.gz` pairs, and caches them under `/data/apm/lists`.
-- **Package orchestration:** Installs `.deb` archives into `/data/apm/installed/<pkg>`, records dpkg-style status metadata, enforces simple reverse-dependency rules, and can upgrade or autoremove packages.
-- **Manual payloads:** `apm package-install` understands standalone `.deb` or `.tar.*` drops that include a `package-info.json`, records every installed file, and lets `apm remove` clean them up without daemon help.
-- **APK workflows:** `apk-install` forwards to the daemon which either runs `pm install -r` (user app) or stages overlays under `/data/adb/modules/apm-system-apps` for Magisk-based system installs, plus matching uninstall support.
-- **Environment helpers:** `apmd` keeps `/data/apm/installed/commands` in sync, writes `apm-path.sh`/`export-path.sh`, and maintains `/data/local/tmp/.apm_profile` so shells can `source` a single file to pick up newly installed binaries.
-- **Portable build:** Standard CMake ≥3.14 project, C++17, libcurl, zlib. When system libcurl+TLS aren’t available, the build pulls curl 8.7.1 + mbedTLS 3.6.0 automatically.
+| Piece | Role |
+| ----- | ---- |
+| `apm` | User-facing CLI. Talks to the daemon over `/data/apm/apmd.sock`, renders progress, and runs local-only queries (`list`, `info`, `search`, manual installs). |
+| `apmd` | Root daemon. Downloads repo metadata, installs/upgrades/removes packages, maintains PATH helper scripts, and handles APK/system-overlay work. |
+| AMS | Built-in module system similar to Magisk. Modules live under `/data/apm/modules`, carry metadata + overlay payloads, and are mounted via OverlayFS by `apmd` at startup or on demand. |
+| Core | Shared plumbing for repo parsing, status DB, dependency resolution, tar/deb extraction, and download helpers (curl + zlib). |
 
-
-## Repository Layout
+Repository layout:
 
 ```
 src/
-  apm/        # CLI, IPC client, human-facing commands
-  apmd/       # Daemon, IPC server, install/upgrade/remove, APK helper
-  core/       # Shared plumbing (repo parsing, status DB, dependency logic…)
-  util/       # Filesystem helpers and crypto stubs (SHA-256, GPG hook)
-cmake/        # FetchContent + patch logic for bundled curl/mbedtls
+  apm/        # CLI + commands + IPC client
+  apmd/       # Daemon, IPC server, installers, PATH helpers
+  ams/        # AMS module manager + metadata/state helpers
+  core/       # Repo parsing, status DB, deb/tar extractors, downloader
+  util/       # Filesystem helpers, crypto stubs (SHA-256, GPG stub)
 ```
 
-The Android-facing filesystem layout is described in `src/core/include/config.hpp`:
+
+## Filesystem layout (Android)
+
+`src/core/include/config.hpp` defines the on-device directories:
 
 | Path | Purpose |
 | ---- | ------- |
 | `/data/apm/installed` | Package payloads unpacked from `.deb` and manual archives |
-| `/data/apm/installed/commands` | Symlinks/scripts exposed on `$PATH` |
-| `/data/apm/cache`, `/data/apm/pkgs` | Temporary downloads and cached `.deb` artifacts |
+| `/data/apm/installed/commands` | Root for CLI-exposed commands + PATH helper scripts |
+| `/data/apm/installed/dependencies` | Dependency payloads installed alongside root packages |
+| `/data/apm/installed/termux` | Termux compatibility tree (wrappers land in `/data/apm/bin`) |
+| `/data/apm/cache`, `/data/apm/pkgs` | Temp downloads and cached `.deb` artifacts |
 | `/data/apm/lists` | Cached `Release`/`Packages` indices |
 | `/data/apm/status` | dpkg-style status database |
 | `/data/apm/sources` | `sources.list` plus `sources.list.d/*.list` |
-| `/data/apm/keys` | Placeholder for trusted keyrings (GPG check is stubbed today) |
-| `/data/apm/apmd.sock` | Default UNIX socket used by the CLI |
-| `/data/apm/logs` | `apm`/`apmd` log files |
+| `/data/apm/keys` | Placeholder for trusted keyrings (GPG check currently stubbed) |
+| `/data/apm/apmd.sock` | Default UNIX socket |
+| `/data/apm/logs` | `apm`/`apmd` logs; module logs live under `/data/apm/logs/modules` |
+| `/data/apm/modules` | AMS modules; `.runtime` holds OverlayFS upper/work/base dirs |
 
 
 ## Building
 
-Requirements:
-
-- CMake ≥ 3.14
-- A C++17 toolchain
-- zlib development headers
-- libcurl development headers (optional: set `-DAPM_USE_SYSTEM_CURL=OFF` to always build the bundled one)
-
-Build steps:
+Requirements: CMake ≥ 3.14, C++17 toolchain, zlib, and libcurl (or set `-DAPM_USE_SYSTEM_CURL=OFF` to fetch curl 8.7.1 + mbedTLS 3.6.0).
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j$(nproc)
 ```
 
-The build produces two binaries under `build/`:
+Outputs under `build/`:
 
 | Binary | Description |
 | ------ | ----------- |
-| `apm`  | User-facing CLI (can run unprivileged as long as it can reach the daemon socket). |
-| `apmd` | Daemon that must run as root/rooted shell so it can write under `/data/apm`. |
-
-> **Tip:** Set `-DAPM_USE_SYSTEM_CURL=ON` if your build environment already ships libcurl + TLS. Otherwise, CMake uses `FetchContent` to pull curl + mbedTLS and applies the patches in `cmake/patches/`.
+| `apm`  | CLI (can run unprivileged if it can reach the daemon socket). |
+| `apmd` | Root daemon that writes under `/data/apm`. |
 
 
 ## Deploying on-device
 
-1. Copy `apm` and `apmd` to your device (e.g., `/data/local/tmp`).
-2. Create the runtime directories once: `su -c 'mkdir -p /data/apm/{installed,pkgs,lists,cache,logs,sources,sources.list.d,keys}'`.
-3. Start the daemon as root: `su -c "/data/local/tmp/apmd --socket /data/apm/apmd.sock"`. Keep it running (e.g., via `nohup` or an init script).
-4. From any shell, call the CLI. By default it talks to `/data/apm/apmd.sock`; override with `apm --socket <path> ...` if needed.
+1. Push `apm` and `apmd` (e.g., to `/data/local/tmp`).
+2. Initialize the layout once: `su -c 'mkdir -p /data/apm/{installed,pkgs,lists,cache,logs,sources,sources.list.d,keys}'`.
+3. Start the daemon as root: `su -c "/data/local/tmp/apmd --socket /data/apm/apmd.sock"`.
+4. Run CLI commands; override the socket with `apm --socket <path> ...` if needed.
 
 
-## Configuring repositories
+## Repositories
 
-APM reuses APT-style `sources.list` files. Place entries under `/data/apm/sources/sources.list` or drop individual `.list` files under `/data/apm/sources/sources.list.d/`.
+APM consumes standard `deb` lines. Place entries in `/data/apm/sources/sources.list` or `/data/apm/sources/sources.list.d/*.list`.
 
-Example (`/data/apm/sources/sources.list`):
+Example:
 
 ```
 deb [arch=arm64] https://deb.debian.org/debian bookworm main contrib non-free
@@ -87,39 +82,38 @@ deb https://packages.termux.dev/apt/termux-main stable main
 
 Notes:
 
-- `arch=` overrides the default (`arm64`); Termux repos are detected automatically and the code maps Debian architectures to Termux equivalents.
-- After editing your sources, run `apm update` to fetch Release/Packages metadata. Only `Packages` and `Packages.gz` are supported on-device; `.xz` indices are skipped on Android to avoid bundling liblzma.
-- Trusted keyrings should live in `/data/apm/keys`, but **Release GPG verification is currently stubbed out** (`src/util/crypto/gpg_verify.cpp`). SHA256 verification of Release/Packages contents is structured for future enablement.
-- Set `APM_CAINFO=/path/to/cacert.pem` if you need a custom CA bundle for libcurl.
+- Termux repos are detected automatically; Debian arches are mapped to Termux equivalents.
+- `apm update` downloads Release + Packages(.gz) into `/data/apm/lists` and parses them locally; `.xz` indices are intentionally skipped on Android.
+- GPG verification is stubbed (`src/util/crypto/gpg_verify.cpp`), but the download/verification pipeline is in place for future enforcement. SHA256 verification of Packages/Release is wired but currently bypassed for `.deb` payloads.
+- Set `APM_CAINFO=/path/to/cacert.pem` to point curl at a custom CA bundle; otherwise the downloader tries common Android/Linux locations or builds a bundle from `/system/etc/security/cacerts`.
 
 
-## Using the CLI
+## CLI overview
 
-```
-apm [--socket /custom/apmd.sock] <command> [args]
-```
-
-Most commands talk to the daemon; `list`, `info`, and `search` are local/offline operations. Key workflows:
+Most commands hit the daemon; `list`, `info`, and `search` operate offline.
 
 | Command | Summary |
 | ------- | ------- |
-| `apm ping` | Round-trip ping to confirm the daemon socket responds. |
-| `apm update` | Download Release/Packages metadata, showing per-stage progress bars. |
-| `apm install <pkg>` | Two-phase install: 1) simulated plan (lists packages to install) + confirmation, 2) actual download/install with live progress per file. |
-| `apm remove <pkg>` | Removes manual packages locally before falling back to daemon removal (with reverse dependency checks). |
-| `apm upgrade [pkg ...]` | Upgrade everything in the status DB or a provided subset. |
-| `apm autoremove` | Removes packages that were marked `autoInstalled`. |
-| `apm list` | List installed packages straight from `/data/apm/status`. |
-| `apm info <pkg>` | Show installed metadata plus the candidate version from cached repo indices. |
+| `apm ping` | Confirm daemon reachability. |
+| `apm update` | Refresh repo metadata with per-stage progress events. |
+| `apm install <pkg> [--simulate] [--reinstall]` | Resolve dependencies (first alternative only), download `.deb` files, and install them under `/data/apm/installed`/`dependencies`. Termux packages are detected and rewritten into `/data/apm/termux/usr` with PATH wrappers in `/data/apm/bin`. |
+| `apm remove <pkg>` | Removes manual packages locally first; otherwise asks the daemon, which protects reverse dependencies unless forced (force flag is future work). |
+| `apm upgrade [pkg ...]` | Upgrade all installed packages or a subset; uses the same resolver and installer as `install`. |
+| `apm autoremove` | Remove packages marked `Auto-Installed` in the status DB. |
+| `apm list` | Print installed packages from `/data/apm/status`. |
+| `apm info <pkg>` | Show installed metadata plus the candidate version from cached indices. |
 | `apm search <pattern ...>` | Case-insensitive search across cached repo descriptions. |
-| `apm package-install <file>` | Install a standalone `.deb` or `.tar.*` archive that ships a `package-info.json`. |
-| `apm apk-install <apk> [--install-as-system]` | Forward APK installs to the daemon (system installs require root/Magisk). |
-| `apm apk-uninstall <package>` | Remove an APK via `pm uninstall` (with `--user 0` fallback) plus Magisk overlay cleanup. |
+| `apm package-install <file>` | Local-only install of `.deb` or `.tar.*` archives that contain `package-info.json`; records manifests under `/data/apm/manual-packages`. |
+| `apm apk-install <apk> [--install-as-system]` | Ask the daemon to install an APK via `pm install -r` or stage it as a system app overlay under `/data/adb/modules/apm-system-apps`. |
+| `apm apk-uninstall <pkg>` | Uninstall via `pm uninstall`, fall back to `--user 0`, then clean any system overlay. |
+| `apm module-list` | List AMS modules and status. |
+| `apm module-install <zip>` | Install an AMS module ZIP. |
+| `apm module-enable/disable/remove <name>` | Toggle or remove modules and rebuild overlays. |
 
 
 ## Manual packages
 
-`apm package-install` lets you sideload content that is not present in any configured repo. The archive must contain a `package-info.json` descriptor similar to:
+`apm package-install` sideloads archives that ship a `package-info.json`:
 
 ```json
 {
@@ -130,71 +124,66 @@ Most commands talk to the daemon; `list`, `info`, and `search` are local/offline
 }
 ```
 
-Workflow:
-
-1. Run `apm package-install <path/to/file.[deb|tar.gz|tar.xz|tar]>`.
-2. The CLI extracts the archive locally, validates that the declared `prefix` lives under `/data/apm/installed`, moves the files into place, snapshots every installed file, and records the JSON under `/data/apm/manual-packages/<package>.json`.
-3. Later, `apm remove <package>` first checks the manual package registry. If present, it replays the recorded manifest to delete the files and metadata without involving the daemon.
-
-Manual installs cannot overlap with a repo-managed package (the CLI refuses to install if the name already exists in the status DB).
+The CLI validates the prefix, unpacks the archive, snapshots every file, and stores metadata under `/data/apm/manual-packages/<pkg>.json`. `apm remove` replays that manifest before falling back to daemon removal. Manual names cannot collide with repo-managed packages.
 
 
-## APK management
+## APK workflows
 
-The daemon module in `src/apmd/apk_installer.cpp` supports both user and system installs:
+- User apps: the daemon runs `pm install -r <apk>`.
+- System apps: `--install-as-system` stages the APK as `system/app/<name>/base.apk` inside the Magisk module `/data/adb/modules/apm-system-apps`, fixes ownership/permissions, and requires a reboot for Android to register the system app.
+- Uninstall: try `pm uninstall`, then `pm uninstall --user 0`, then scrub any staged overlay directory.
 
-- Default: calls `pm install -r <apk>`.
-- `--install-as-system`: requires root. The daemon prepares `/data/adb/modules/apm-system-apps`, copies the APK as `system/app/<name>/base.apk`, sets ownership/permissions, and logs a reminder that a reboot is required for Android to register the system app.
-- `apm apk-uninstall <pkg>` first tries `pm uninstall <pkg>`, then `pm uninstall --user 0 <pkg>`, and finally scrubs any Magisk overlay directory.
+
+## Termux compatibility
+
+If a repo package is marked as Termux (detected via repo URI, payload layout, or dependencies), `apmd` rewrites its payload into `/data/apm/termux/usr`, maintains a manifest of installed files, and drops shim wrappers into `/data/apm/bin` so commands are reachable on PATH. The daemon also writes `/data/apm/termux/env.sh` and basic HOME/TMP scaffolding.
 
 
 ## PATH integration
 
-`apmd` maintains helper scripts so that shells can automatically discover commands installed under `/data/apm/installed/commands`:
+`apmd` keeps helper scripts fresh whenever packages change:
 
-- `/data/apm/installed/commands/apm-path.sh`: Adds the global commands directory plus each package’s `bin/` and `usr/bin/` to `$PATH`.
-- `/data/apm/installed/commands/export-path.sh`: Writes `/data/local/tmp/.apm_profile`, marks when it was sourced, and refreshes the current shell (runs `hash -r` for busybox/ash compatibility).
+- `/data/apm/installed/commands/apm-path.sh` updates PATH with package `bin/` and `usr/bin` directories plus dependency/Termux shims.
+- `/data/apm/installed/commands/export-path.sh` writes and sources `/data/local/tmp/.apm_profile`, touches a sourced marker, and rehashes the current shell.
 
-Usage:
+Source `/data/local/tmp/.apm_profile` (or `export-path.sh`) in your shell startup to pick up new commands.
 
-```sh
-# Source the profile once per shell
-. /data/apm/installed/commands/export-path.sh
 
-# Or, if the profile file exists
-. /data/local/tmp/.apm_profile
-```
+## AMS (APM Module System)
 
-Whenever packages are installed/removed, the daemon refreshes these scripts so they remain current.
+AMS is a Magisk-style overlay framework baked into `apmd`. It targets rooted devices and uses OverlayFS (no boot image patching) to layer files over `/system`, `/vendor`, and `/product`.
+
+- **Layout:** `/data/apm/modules/<name>/` contains `module-info.json`, `overlay/{system,vendor,product}`, optional `post-fs-data.sh` and `service.sh`, `workdir/` (upper/work scratch dirs), and daemon-maintained `state.json`. Runtime state lives under `/data/apm/modules/.runtime/{upper,work,base}`; per-module logs land in `/data/apm/logs/modules/<name>.log`.
+- **Metadata:** `module-info.json` fields: `name`, `version`, `author`, `description`, `mount` (enable overlay), `post_fs_data` (run script after mount), `service` (background script). `state.json` tracks `enabled`, ISO8601 timestamps, and `last_error`.
+- **Lifecycle:** `apm module-install <zip>` extracts the ZIP (single nested dir tolerated), validates metadata, creates workdirs, marks the module enabled, rebuilds overlays, and runs lifecycle scripts. `module-enable/disable/remove` toggle state, rebuild overlays, and persist `state.json`. `module-list` prints module info + state.
+- **Overlay rules:** AMS snapshots base mounts for `/system`, `/vendor`, `/product` into `.runtime/base` and layers enabled modules alphabetically (last wins). Overlays use shared upper/work dirs under `.runtime`. If no modules remain, AMS remounts the base mirrors.
+- **Packaging:** ZIP contents should be flat (module-info.json at root). Packaging steps: create `overlay/{system,vendor,product}`, optional scripts, then `zip -r ../my-module.zip .` from inside the module dir.
+- **Troubleshooting:** Check `/data/apm/logs/modules/<name>.log`; `module-list` surfaces `Last-Error`. Ensure overlay paths exist and scripts exit cleanly. Alphabetical module order controls override priority.
 
 
 ## Logging & troubleshooting
 
-- CLI logs: `apm` writes `apm-cli.log` (current working directory) and mirrors logs to stderr when run interactively.
-- Daemon logs: `/data/apm/logs/apmd.log`.
-- curl CA bundle: set `APM_CAINFO=/path/to/cacert.pem` or drop PEM files under `/system/etc/security/cacerts` and the downloader will build a bundle automatically.
-- Socket overrides: use `apm --socket /tmp/custom.sock ...` and `apmd --socket /tmp/custom.sock` if `/data/apm/apmd.sock` is not suitable.
+- CLI log: `apm-cli.log` in the current working directory, mirrored to stderr.
+- Daemon log: `/data/apm/logs/apmd.log`.
+- Module logs: `/data/apm/logs/modules/<module>.log`.
+- Socket override: `apm --socket /tmp/custom.sock ...` / `apmd --socket /tmp/custom.sock`.
 
 
 ## Known limitations / roadmap
 
-- **GPG verification is disabled** (`src/util/crypto/gpg_verify.cpp`). Release signatures are currently accepted without verification; SHA256 plumbing exists but is not enforced. Only use trusted mirrors until verification is restored.
-- Dependency resolution considers *only the first alternative* in each `Depends:` stanza and resolves one level deep. Complex dependency graphs may require manual installs for missing pieces.
-- `Packages.xz` indices are rejected on Android builds to avoid shipping extra decompressors; ensure your repos provide `Packages` or `Packages.gz`.
-- System APK installs assume Magisk is managing `/data/adb/modules`; other overlay mechanisms are not yet supported.
-- There is no SELinux policy installer; devices in enforcing mode must already allow `/data/apm` modifications.
+- GPG verification is disabled; only use trusted mirrors. SHA256 verification for `.deb` payloads is also bypassed in dev mode.
+- Dependency resolution only follows the first alternative and goes one level deep.
+- `Packages.xz` indices are ignored on Android builds.
+- System APK install assumes Magisk-owned `/data/adb/modules`.
+- No SELinux policy installer; devices must already permit `/data/apm` writes and OverlayFS mounts.
+- AMS requires a clean base mount snapshot; if `/system` is already overlay-mounted, capture will fail until the device reboots cleanly.
 
 
 ## Contributing
 
-Issues and pull requests are welcome. When sending patches:
-
-1. Follow the project’s existing C++ style (see headers in `src/` for guidance).
-2. Keep comments concise and prefer ASCII text.
-3. Mention whether your change affects daemon/CLI, and include any manual test steps.
+Patches are welcome. Follow the existing C++ style, keep comments concise/ASCII, and mention whether your change affects the daemon, CLI, or AMS along with any manual test steps.
 
 
 ## License
 
-APM is distributed under the GNU General Public License v3.0 (or later). See the headers throughout `src/` for the precise notice.
-
+APM is distributed under the GNU General Public License v3.0 (or later). See the source headers for the exact notice.

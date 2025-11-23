@@ -6,7 +6,7 @@
  *
  * File: repo_index.hpp
  * Purpose: Declare repository source/index structures plus update and parsing APIs.
- * Last Modified: November 18th, 2025. - 3:00 PM Eastern Time.
+ * Last Modified: November 22nd, 2025. - 10:30 PM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -48,6 +48,7 @@ struct PackageEntry {
 
   std::vector<std::string> depends;
   std::unordered_map<std::string, std::string> rawFields;
+  bool isTermuxPackage = false;
 
   // Repository metadata filled when we build indices
   std::string repoUri;       // e.g. https://deb.debian.org/debian
@@ -73,6 +74,7 @@ struct RepoSource {
   std::string arch;
 
   RepoFormat format = RepoFormat::Debian;
+  bool isTermuxRepo = false;
 };
 
 using RepoSourceList = std::vector<RepoSource>;

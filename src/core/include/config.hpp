@@ -6,7 +6,7 @@
  *
  * File: config.hpp
  * Purpose: Declare filesystem layout constants used by both CLI and daemon.
- * Last Modified: November 18th, 2025. - 3:00 PM Eastern Time.
+ * Last Modified: November 22nd, 2025. - 10:30 PM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -35,6 +35,7 @@ inline constexpr const char *INSTALLED_DIR = "/data/apm/installed";
 inline constexpr const char *COMMANDS_DIR = "/data/apm/installed/commands";
 inline constexpr const char *DEPENDENCIES_DIR =
     "/data/apm/installed/dependencies";
+inline constexpr const char *TERMUX_INSTALLED_DIR = "/data/apm/installed/termux";
 inline constexpr const char *COMMANDS_PATH_HELPER =
     "/data/apm/installed/commands/apm-path.sh";
 inline constexpr const char *COMMANDS_EXPORT_SCRIPT =
@@ -48,6 +49,12 @@ inline constexpr const char *LISTS_DIR = "/data/apm/lists";
 inline constexpr const char *PKGS_DIR = "/data/apm/pkgs";
 inline constexpr const char *LOGS_DIR = "/data/apm/logs";
 inline constexpr const char *MANUAL_PACKAGES_DIR = "/data/apm/manual-packages";
+inline constexpr const char *APM_BIN_DIR = "/data/apm/bin";
+inline constexpr const char *TERMUX_ROOT = "/data/apm/termux";
+inline constexpr const char *TERMUX_PREFIX = "/data/apm/termux/usr";
+inline constexpr const char *TERMUX_ENV_FILE = "/data/apm/termux/env.sh";
+inline constexpr const char *TERMUX_HOME_DIR = "/data/apm/termux/home";
+inline constexpr const char *TERMUX_TMP_DIR = "/data/apm/termux/tmp";
 
 inline constexpr const char *MODULES_DIR = "/data/apm/modules";
 inline constexpr const char *MODULE_LOGS_DIR = "/data/apm/logs/modules";
