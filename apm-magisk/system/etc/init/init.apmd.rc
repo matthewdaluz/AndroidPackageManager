@@ -1,0 +1,57 @@
+# 
+# /*
+#  * APM - Android Package Manager
+#  *
+#  * RedHead Industries - Technologies Branch
+#  * Copyright (C) 2025 RedHead Industries
+#  *
+#  * File: init.apmd.rc
+#  * Purpose: Android init script that waits for /data readiness and repeatedly
+#  *          launches apmd until it is running.
+#  * Last Modified: 2025-11-23 10:57:52 EST
+#  * Author: Matthew DaLuz - RedHead Founder
+#  *
+#  * APM is free software: you can redistribute it and/or modify
+#  * it under the terms of the GNU General Public License as published by
+#  * the Free Software Foundation, either version 3 of the License, or
+#  * (at your option) any later version.
+#  *
+#  * APM is distributed in the hope that it will be useful,
+#  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  * GNU General Public License for more details.
+#  *
+#  * You should have received a copy of the GNU General Public License
+#  * along with APM. If not, see <https://www.gnu.org/licenses/>.
+#  *
+#  */
+# 
+# Android init script for apmd. Waits for /data to be mounted and writable,
+# then retries daemon startup every 5 seconds until it is running.
+
+on post-fs-data
+    mkdir /data/apm 0755 root root
+    mkdir /data/apm/logs 0755 root root
+    mkdir /data/ams 0755 root root
+    start apmd-bootstrap
+
+service apmd-bootstrap /system/bin/sh -c '\
+    while ! /system/bin/grep -q "[[:space:]]/data[[:space:]]" /proc/mounts; do \
+        /system/bin/sleep 1; \
+    done; \
+    while ! /system/bin/touch /data/.apmd-ready 2>/dev/null; do \
+        /system/bin/sleep 1; \
+    done; \
+    /system/bin/rm -f /data/.apmd-ready; \
+    /system/bin/mkdir -p /data/apm/logs /data/ams/modules /data/ams/overlays; \
+    while :; do \
+        if /system/bin/pidof apmd >/dev/null 2>&1; then \
+            exit 0; \
+        fi; \
+        /system/bin/apmd >> /data/apm/logs/apmd.log 2>&1 & \
+        /system/bin/sleep 5; \
+    done'
+    class late_start
+    oneshot
+    user root
+    group root system

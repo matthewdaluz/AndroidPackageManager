@@ -1,3 +1,32 @@
+#
+# /*
+#  * APM - Android Package Manager
+#  *
+#  * RedHead Industries - Technologies Branch
+#  * Copyright (C) 2025 RedHead Industries
+#  *
+#  * File: service.sh
+#  * Purpose: Magisk service hook to keep apmd running when Android init
+#  *          cannot load system-level init scripts (Magisk mode).
+#  * Last Modified: 2025-11-23 11:01:42 EST
+#  * Author: Matthew DaLuz - RedHead Founder
+#  *
+#  * APM is free software: you can redistribute it and/or modify
+#  * it under the terms of the GNU General Public License as published by
+#  * the Free Software Foundation, either version 3 of the License, or
+#  * (at your option) any later version.
+#  *
+#  * APM is distributed in the hope that it will be useful,
+#  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  * GNU General Public License for more details.
+#  *
+#  * You should have received a copy of the GNU General Public License
+#  * along with APM. If not, see <https://www.gnu.org/licenses/>.
+#  *
+#  */
+#
+
 #!/system/bin/sh
 MODDIR=${0%/*}
 
