@@ -499,3 +499,20 @@ if(TARGET mbedtls)
   add_dependencies(apm mbedtls)
   add_dependencies(apmd mbedtls)
 endif()
+
+# ======================================================
+# APM Policy Injector
+# ======================================================
+add_executable(apm-policy
+    src/selinux/apm_policy.cpp
+    src/selinux/policy_parser.cpp
+    src/selinux/te_parser.cpp
+    src/core/logger.cpp
+    src/util/fs.cpp
+)
+
+target_include_directories(apm-policy PRIVATE
+    src/selinux/include
+    src/core/include
+    src/util/include
+)
