@@ -6,7 +6,7 @@
  *
  * File: config.hpp
  * Purpose: Declare filesystem layout constants used by both CLI and daemon.
- * Last Modified: November 22nd, 2025. - 10:30 PM Eastern Time.
+ * Last Modified: November 23rd, 2025. - 12:06 PM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -91,5 +91,11 @@ inline constexpr const char *DEFAULT_ARCH = "arm64";
 
 // Directory containing trusted GPG keyring files (.gpg)
 inline constexpr const char *TRUSTED_KEYS_DIR = "/data/apm/keys";
+
+inline constexpr const char *SECURITY_DIR = "/data/apm/.security";
+inline constexpr const char *MASTER_KEY_FILE = "/data/apm/.security/masterkey.bin";
+inline constexpr const char *PASS_PIN_FILE = "/data/apm/.security/passpin.bin";
+inline constexpr const char *SESSION_FILE = "/data/apm/.security/session.bin";
+inline constexpr const char *PASS_KEY_ALIAS = "apm_passkey";
 
 } // namespace apm::config

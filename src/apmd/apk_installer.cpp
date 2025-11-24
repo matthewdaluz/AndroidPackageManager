@@ -30,6 +30,7 @@
 #include "logger.hpp"
 
 #include <cerrno>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -37,6 +38,7 @@
 #include <string>
 
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 namespace apm::apk {
@@ -62,7 +64,13 @@ std::string exitCodeString(int rc) {
   if (rc == -1) {
     return "system() failed";
   }
-  return "exit code " + std::to_string(rc);
+  if (WIFEXITED(rc)) {
+    return "exit code " + std::to_string(WEXITSTATUS(rc));
+  }
+  if (WIFSIGNALED(rc)) {
+    return "signal " + std::to_string(WTERMSIG(rc));
+  }
+  return "status " + std::to_string(rc);
 }
 
 // ---------------------------------------------------------------------
@@ -73,6 +81,7 @@ static const char *kModuleId = "apm-system-apps";
 static const char *kModuleBaseDir = "/data/adb/modules/apm-system-apps";
 static const char *kModuleSystemAppRoot =
     "/data/adb/modules/apm-system-apps/system/app";
+static const char *kUserInstallStagingDir = "/data/local/tmp/apm-apk-staging";
 
 bool writeFileSimple(const std::string &path, const std::string &data,
                      std::string *err) {
@@ -167,8 +176,7 @@ bool ensureModuleSkeleton(std::string *err) {
 
 std::string basenameNoExt(const std::string &path) {
   std::string::size_type slash = path.find_last_of('/');
-  std::string base =
-      (slash == std::string::npos) ? path : path.substr(slash + 1);
+  std::string base = (slash == std::string::npos) ? path : path.substr(slash + 1);
 
   std::string::size_type dot = base.find_last_of('.');
   if (dot != std::string::npos) {
@@ -196,6 +204,59 @@ void cleanupSystemOverlay(const std::string &dirName) {
       apm::logger::warn("apk_uninstall: failed removing overlay dir " + cand);
     }
   }
+}
+
+// Return the basename (with extension) of a path; fallback to a stable name.
+std::string basenameWithExt(const std::string &path) {
+  if (path.empty()) {
+    return "apk.apk";
+  }
+  auto slash = path.find_last_of('/');
+  std::string base = (slash == std::string::npos) ? path : path.substr(slash + 1);
+  if (base.empty()) {
+    return "apk.apk";
+  }
+  return base;
+}
+
+// Stage APK under /data/local/tmp so pm (running as shell/system) can read it.
+bool stageApkForUserInstall(const std::string &srcPath, std::string &dstPath,
+                            std::string *err) {
+  if (!apm::fs::mkdirs(kUserInstallStagingDir)) {
+    if (err) {
+      *err = "failed to create staging dir: " + std::string(kUserInstallStagingDir);
+    }
+    return false;
+  }
+
+  dstPath = std::string(kUserInstallStagingDir) + "/" + basenameWithExt(srcPath);
+  apm::fs::removeFile(dstPath); // best effort
+
+  std::string cperr;
+  if (!copyFileSimple(srcPath, dstPath, &cperr)) {
+    if (err) {
+      *err = "failed to stage APK: " + cperr;
+    }
+    return false;
+  }
+
+  ::chmod(dstPath.c_str(), 0644);
+  return true;
+}
+
+// Run a shell command while capturing stdout/stderr.
+int runCommandCaptureOutput(const std::string &cmd, std::string &output) {
+  FILE *pipe = ::popen(cmd.c_str(), "r");
+  if (!pipe) {
+    return -1;
+  }
+
+  char buf[256];
+  while (fgets(buf, sizeof(buf), pipe)) {
+    output.append(buf);
+  }
+
+  return ::pclose(pipe);
 }
 
 } // namespace
@@ -232,22 +293,53 @@ bool installApk(const std::string &apkPath, const ApkInstallOptions &opts,
   }
 
   if (!opts.installAsSystem) {
-    std::string escaped = shellEscapeSingleQuotes(apkPath);
+    std::string stagedPath;
+    bool staged = false;
+
+    {
+      std::string stageErr;
+      if (!stageApkForUserInstall(apkPath, stagedPath, &stageErr)) {
+        result.ok = false;
+        result.message = stageErr;
+        apm::logger::error("apk_install (user): " + stageErr);
+        return false;
+      }
+      staged = true;
+    }
+
+    auto cleanupStage = [&]() {
+      if (staged && !stagedPath.empty()) {
+        apm::fs::removeFile(stagedPath);
+      }
+    };
+
+    std::string escaped = shellEscapeSingleQuotes(stagedPath);
     std::ostringstream cmd;
-    cmd << "pm install -r '" << escaped << "'";
+    cmd << "pm install --user 0 -r '" << escaped << "' 2>&1";
 
     apm::logger::info("apk_install (user): running: " + cmd.str());
 
-    int rc = ::system(cmd.str().c_str());
+    std::string output;
+    int rc = runCommandCaptureOutput(cmd.str(), output);
+    std::string exitStr = exitCodeString(rc);
+
     if (rc != 0) {
       std::ostringstream msg;
-      msg << "pm install failed with exit code " << rc;
+      msg << "pm install failed (" << exitStr << ")";
+      if (!output.empty()) {
+        if (output.back() == '\n') {
+          output.pop_back();
+        }
+        msg << ": " << output;
+      }
       result.ok = false;
       result.message = msg.str();
       apm::logger::error("apk_install (user): " + msg.str());
+      cleanupStage();
       return false;
     }
 
+    cleanupStage();
     result.ok = true;
     result.message = "APK installed as a user app";
     apm::logger::info("apk_install (user): success for " + apkPath);

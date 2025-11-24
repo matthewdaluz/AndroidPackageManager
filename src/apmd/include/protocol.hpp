@@ -6,7 +6,7 @@
  *
  * File: protocol.hpp
  * Purpose: Define request/response data structures and serialization helpers shared by the CLI and daemon.
- * Last Modified: November 18th, 2025. - 3:00 PM Eastern Time.
+ * Last Modified: November 23rd, 2025. - 12:06 PM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -34,6 +34,7 @@ namespace apm::ipc {
 enum class RequestType {
   Unknown = 0,
   Ping,
+  Authenticate,
   Update,
   Install,
   Remove,
@@ -54,6 +55,12 @@ struct Request {
 
   // Shared field for Install/Remove/ApkUninstall
   std::string packageName;
+
+  std::string sessionToken;
+
+  // Authentication specific fields
+  std::string authAction;
+  std::string authSecret;
 
   // ----------- NEW FIELDS FOR APK INSTALL -----------
   std::string apkPath;

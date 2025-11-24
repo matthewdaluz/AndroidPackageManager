@@ -1,0 +1,12 @@
+# ==========================================
+#  APM & AMS Data File Types
+# ==========================================
+
+type apm_data_file, file_type, data_file_type;
+type apm_data_dir, file_type, data_file_type;
+
+type ams_module_file, file_type, data_file_type;
+type ams_module_dir, file_type, data_file_type;
+
+type apmd_socket, file_type;
+

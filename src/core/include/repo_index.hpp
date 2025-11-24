@@ -39,6 +39,12 @@ enum class RepoFormat {
   Termux,
 };
 
+enum class RepoTrustPolicy {
+  Default, // verify unless explicitly skipped
+  Require, // verification must succeed
+  Skip     // explicitly trust without verification
+};
+
 struct PackageEntry {
   std::string packageName;
   std::string version;
@@ -75,6 +81,7 @@ struct RepoSource {
 
   RepoFormat format = RepoFormat::Debian;
   bool isTermuxRepo = false;
+  RepoTrustPolicy trustPolicy = RepoTrustPolicy::Default;
 };
 
 using RepoSourceList = std::vector<RepoSource>;

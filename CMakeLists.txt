@@ -284,6 +284,103 @@ if(NOT CURL_FOUND)
   unset(_APM_MBEDTLS_LIBDIR)
 endif()
 
+# Ensure mbedTLS is available even when using the system curl.
+if(NOT DEFINED MBEDTLS_LIBRARIES OR MBEDTLS_LIBRARIES STREQUAL "")
+  apm_require_program("${PATCH_EXECUTABLE}" "patch" "to apply bundled mbedTLS patches")
+
+  set(_APM_PREV_ENABLE_TESTING_CACHE FALSE)
+  set(_APM_PREV_ENABLE_TESTING_DEFINED FALSE)
+  if(DEFINED CACHE{ENABLE_TESTING})
+    set(_APM_PREV_ENABLE_TESTING_CACHE TRUE)
+    set(_APM_PREV_ENABLE_TESTING "${CACHE{ENABLE_TESTING}}")
+  elseif(DEFINED ENABLE_TESTING)
+    set(_APM_PREV_ENABLE_TESTING_DEFINED TRUE)
+    set(_APM_PREV_ENABLE_TESTING "${ENABLE_TESTING}")
+  endif()
+
+  set(_APM_PREV_ENABLE_PROGRAMS_CACHE FALSE)
+  set(_APM_PREV_ENABLE_PROGRAMS_DEFINED FALSE)
+  if(DEFINED CACHE{ENABLE_PROGRAMS})
+    set(_APM_PREV_ENABLE_PROGRAMS_CACHE TRUE)
+    set(_APM_PREV_ENABLE_PROGRAMS "${CACHE{ENABLE_PROGRAMS}}")
+  elseif(DEFINED ENABLE_PROGRAMS)
+    set(_APM_PREV_ENABLE_PROGRAMS_DEFINED TRUE)
+    set(_APM_PREV_ENABLE_PROGRAMS "${ENABLE_PROGRAMS}")
+  endif()
+
+  set(_APM_PREV_BUILD_SHARED_LIBS_CACHE FALSE)
+  set(_APM_PREV_BUILD_SHARED_LIBS_DEFINED FALSE)
+  if(DEFINED CACHE{BUILD_SHARED_LIBS})
+    set(_APM_PREV_BUILD_SHARED_LIBS_CACHE TRUE)
+    set(_APM_PREV_BUILD_SHARED_LIBS "${CACHE{BUILD_SHARED_LIBS}}")
+  elseif(DEFINED BUILD_SHARED_LIBS)
+    set(_APM_PREV_BUILD_SHARED_LIBS_DEFINED TRUE)
+    set(_APM_PREV_BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS}")
+  endif()
+
+  set(ENABLE_TESTING OFF)
+  set(ENABLE_PROGRAMS OFF)
+  set(BUILD_SHARED_LIBS OFF)
+  set(MBEDTLS_FATAL_WARNINGS OFF)
+  set(DISABLE_PACKAGE_CONFIG_AND_INSTALL OFF)
+
+  set(_APM_MBEDTLS_PATCH "${CMAKE_SOURCE_DIR}/cmake/patches/mbedtls-disable-tls13.patch")
+
+  FetchContent_Declare(
+    mbedtls
+    URL https://github.com/Mbed-TLS/mbedtls/releases/download/v3.6.0/mbedtls-3.6.0.tar.bz2
+    URL_HASH SHA256=3ecf94fcfdaacafb757786a01b7538a61750ebd85c4b024f56ff8ba1490fcd38
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    PATCH_COMMAND ${CMAKE_COMMAND} -E chdir <SOURCE_DIR>
+                  patch -p1 -N -i "${_APM_MBEDTLS_PATCH}"
+  )
+  FetchContent_MakeAvailable(mbedtls)
+  set(_APM_MBEDTLS_LIBDIR "${mbedtls_BINARY_DIR}/library")
+  set(MBEDTLS_INCLUDE_DIRS "${mbedtls_SOURCE_DIR}/include" CACHE PATH "Bundled mbedTLS includes" FORCE)
+  set(MBEDTLS_LIBRARY "${_APM_MBEDTLS_LIBDIR}/libmbedtls.a" CACHE FILEPATH "Bundled mbedtls library" FORCE)
+  set(MBEDX509_LIBRARY "${_APM_MBEDTLS_LIBDIR}/libmbedx509.a" CACHE FILEPATH "Bundled mbedx509 library" FORCE)
+  set(MBEDCRYPTO_LIBRARY "${_APM_MBEDTLS_LIBDIR}/libmbedcrypto.a" CACHE FILEPATH "Bundled mbedcrypto library" FORCE)
+  set(MBEDTLS_LIBRARIES "${MBEDTLS_LIBRARY};${MBEDX509_LIBRARY};${MBEDCRYPTO_LIBRARY}" CACHE STRING "Bundled mbedTLS libraries" FORCE)
+  if(NOT APM_BUNDLED_TLS_LIBS)
+    set(APM_BUNDLED_TLS_LIBS ${MBEDTLS_LIBRARIES})
+  endif()
+
+  if(_APM_PREV_ENABLE_TESTING_CACHE)
+    set(ENABLE_TESTING "${_APM_PREV_ENABLE_TESTING}" CACHE BOOL "" FORCE)
+  elseif(_APM_PREV_ENABLE_TESTING_DEFINED)
+    set(ENABLE_TESTING "${_APM_PREV_ENABLE_TESTING}")
+  else()
+    unset(ENABLE_TESTING CACHE)
+  endif()
+
+  if(_APM_PREV_ENABLE_PROGRAMS_CACHE)
+    set(ENABLE_PROGRAMS "${_APM_PREV_ENABLE_PROGRAMS}" CACHE BOOL "" FORCE)
+  elseif(_APM_PREV_ENABLE_PROGRAMS_DEFINED)
+    set(ENABLE_PROGRAMS "${_APM_PREV_ENABLE_PROGRAMS}")
+  else()
+    unset(ENABLE_PROGRAMS CACHE)
+  endif()
+
+  if(_APM_PREV_BUILD_SHARED_LIBS_CACHE)
+    set(BUILD_SHARED_LIBS "${_APM_PREV_BUILD_SHARED_LIBS}" CACHE BOOL "" FORCE)
+  elseif(_APM_PREV_BUILD_SHARED_LIBS_DEFINED)
+    set(BUILD_SHARED_LIBS "${_APM_PREV_BUILD_SHARED_LIBS}")
+  else()
+    unset(BUILD_SHARED_LIBS CACHE)
+  endif()
+
+  unset(_APM_PREV_ENABLE_TESTING_CACHE)
+  unset(_APM_PREV_ENABLE_TESTING)
+  unset(_APM_PREV_ENABLE_TESTING_DEFINED)
+  unset(_APM_PREV_ENABLE_PROGRAMS_CACHE)
+  unset(_APM_PREV_ENABLE_PROGRAMS)
+  unset(_APM_PREV_ENABLE_PROGRAMS_DEFINED)
+  unset(_APM_PREV_BUILD_SHARED_LIBS_CACHE)
+  unset(_APM_PREV_BUILD_SHARED_LIBS)
+  unset(_APM_PREV_BUILD_SHARED_LIBS_DEFINED)
+  unset(_APM_MBEDTLS_LIBDIR)
+endif()
+
 # ======================================================
 # APM Client Binary
 # ======================================================
@@ -309,6 +406,7 @@ add_executable(apm
     src/core/status_db.cpp
     src/core/manual_package.cpp
     src/core/release_parser.cpp
+    src/core/security.cpp
     src/ams/module_info.cpp
     src/ams/module_manager.cpp
     src/util/crypto/sha256.cpp
@@ -326,6 +424,7 @@ target_include_directories(apm PRIVATE
     src/util/include
     src/util/crypto
     src/apm/commands/include
+    ${MBEDTLS_INCLUDE_DIRS}
     include
 )
 
@@ -345,6 +444,7 @@ add_executable(apmd
     src/apmd/install_manager.cpp
     src/apmd/export_path.cpp
     src/apmd/apk_installer.cpp
+    src/apmd/mbedtls_client.cpp
 
     src/core/control_parser.cpp
     src/core/deb_extractor.cpp
@@ -356,6 +456,7 @@ add_executable(apmd
     src/core/status_db.cpp
     src/core/manual_package.cpp
     src/core/release_parser.cpp
+    src/core/security.cpp
     src/ams/module_info.cpp
     src/ams/module_manager.cpp
     src/util/crypto/sha256.cpp
@@ -363,6 +464,8 @@ add_executable(apmd
 
     src/util/fs.cpp
     src/util/crypto/sha256.cpp
+
+    src/apmd/security_manager.cpp
 )
 
 target_include_directories(apmd PRIVATE
@@ -372,6 +475,7 @@ target_include_directories(apmd PRIVATE
     src/util/include
     src/util/crypto
     src/apm/commands/include
+    ${MBEDTLS_INCLUDE_DIRS}
     include
 )
 

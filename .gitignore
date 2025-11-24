@@ -34,3 +34,6 @@ Thumbs.db
 .venv/
 venv/
 __pycache__/
+
+# Other temporary files
+ZIPSigning/

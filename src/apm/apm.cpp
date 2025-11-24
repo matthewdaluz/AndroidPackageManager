@@ -6,7 +6,7 @@
  *
  * File: apm.cpp
  * Purpose: Implement the apm CLI, including local commands and IPC-backed operations.
- * Last Modified: November 18th, 2025. - 3:00 PM Eastern Time.
+ * Last Modified: November 23rd, 2025. - 2:52 PM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -33,9 +33,11 @@
 #include "manual_package.hpp"
 #include "repo_index.hpp"
 #include "search.hpp"
+#include "gpg_verify.hpp"
 #include "status_db.hpp"
 #include "tar_extractor.hpp"
 #include "fs.hpp"
+#include "security.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -212,6 +214,136 @@ static std::uint64_t currentUnixTimestamp() {
   using namespace std::chrono;
   return static_cast<std::uint64_t>(
       duration_cast<seconds>(system_clock::now().time_since_epoch()).count());
+}
+
+// -----------------------------------------------------------------------------
+// Session + authentication helpers
+// -----------------------------------------------------------------------------
+
+static bool loadActiveSessionToken(std::string &tokenOut, bool &hadSession) {
+  hadSession = false;
+  apm::security::SessionState state;
+  if (!apm::security::loadSession(state, nullptr))
+    return false;
+
+  hadSession = true;
+  if (apm::security::isSessionExpired(state, apm::security::currentUnixSeconds()))
+    return false;
+
+  tokenOut = state.token;
+  return true;
+}
+
+static bool promptForSecret(const std::string &prompt,
+                            std::string &secretOut) {
+  std::cout << prompt << std::flush;
+  if (!std::getline(std::cin, secretOut))
+    return false;
+  return !secretOut.empty();
+}
+
+static bool promptForNewSecret(std::string &secretOut) {
+  std::string first;
+  if (!promptForSecret("Set a new APM password/PIN: ", first))
+    return false;
+
+  std::string confirm;
+  if (!promptForSecret("Confirm password/PIN: ", confirm))
+    return false;
+
+  if (first != confirm) {
+    std::cerr << "Entries did not match. Please try again.\n";
+    return false;
+  }
+
+  secretOut = first;
+  return true;
+}
+
+static bool requestSessionUnlock(const std::string &socketPath,
+                                 const std::string &action,
+                                 const std::string &secret,
+                                 std::string &sessionTokenOut) {
+  apm::ipc::Request req;
+  req.type = apm::ipc::RequestType::Authenticate;
+  req.id = "authenticate-1";
+  req.authAction = action;
+  req.authSecret = secret;
+
+  apm::ipc::Response resp;
+  std::string err;
+
+  if (!apm::ipc::sendRequest(req, resp, socketPath, &err)) {
+    std::cerr << "Error: " << err << "\n";
+    return false;
+  }
+
+  if (!resp.success) {
+    std::cerr << (resp.message.empty() ? "Authentication failed"
+                                       : resp.message)
+              << "\n";
+    return false;
+  }
+
+  if (!resp.message.empty())
+    std::cout << resp.message << "\n";
+
+  auto itToken = resp.rawFields.find("session_token");
+  if (itToken != resp.rawFields.end()) {
+    sessionTokenOut = itToken->second;
+    return true;
+  }
+
+  bool hadSession = false;
+  if (loadActiveSessionToken(sessionTokenOut, hadSession))
+    return true;
+
+  std::cerr << "Authentication succeeded but no active session token was found."
+            << "\n";
+  return false;
+}
+
+static bool ensureAuthenticatedSession(const std::string &socketPath,
+                                       std::string &sessionTokenOut) {
+  bool hadSession = false;
+  if (loadActiveSessionToken(sessionTokenOut, hadSession))
+    return true;
+
+  if (hadSession)
+    std::cout << "APM security session expired. Please re-authenticate.\n";
+
+  const bool hasPasspin = apm::fs::isFile(apm::config::PASS_PIN_FILE);
+
+  std::string secret;
+  if (hasPasspin) {
+    if (!promptForSecret("Enter APM password/PIN: ", secret)) {
+      std::cerr << "Failed to read password/PIN input.\n";
+      return false;
+    }
+    return requestSessionUnlock(socketPath, "unlock", secret, sessionTokenOut);
+  }
+
+  if (!promptForNewSecret(secret)) {
+    std::cerr << "Password/PIN setup aborted.\n";
+    return false;
+  }
+
+  return requestSessionUnlock(socketPath, "set", secret, sessionTokenOut);
+}
+
+static void attachSession(apm::ipc::Request &req,
+                          const std::string &sessionToken) {
+  if (!sessionToken.empty())
+    req.sessionToken = sessionToken;
+}
+
+static bool requiresAuthSession(const std::string &cmd) {
+  return cmd == "update" || cmd == "install" || cmd == "remove" ||
+         cmd == "upgrade" || cmd == "autoremove" ||
+         cmd == "module-install" || cmd == "module-list" ||
+         cmd == "module-enable" || cmd == "module-disable" ||
+         cmd == "module-remove" || cmd == "apk-install" ||
+         cmd == "apk-uninstall";
 }
 
 static bool ensureManualSlotAvailable(const std::string &pkgName,
@@ -632,6 +764,7 @@ void printUsage() {
       << "  list                        Show installed packages\n"
       << "  info <pkg>                  Show detailed package information\n"
       << "  search <pattern>            Search available repo packages\n"
+      << "  key-add <file.asc|.gpg>     Import a trusted public key\n"
       << "\n"
       << "  help                        Show this help\n"
       << std::endl;
@@ -663,10 +796,12 @@ int cmdPing(const std::string &socketPath) {
 }
 
 // Trigger repository metadata refresh via the daemon so Packages lists stay current.
-int cmdUpdate(const std::string &socketPath) {
+int cmdUpdate(const std::string &socketPath,
+              const std::string &sessionToken) {
   apm::ipc::Request req;
   req.type = apm::ipc::RequestType::Update;
   req.id = "update-1";
+  attachSession(req, sessionToken);
 
   apm::ipc::Response resp;
   std::string err;
@@ -771,7 +906,9 @@ int cmdUpdate(const std::string &socketPath) {
 }
 
 // Ask the daemon to install a package along with its dependencies.
-int cmdInstall(const std::string &socketPath, const std::string &pkg) {
+int cmdInstall(const std::string &socketPath,
+               const std::string &sessionToken,
+               const std::string &pkg) {
   auto parsePackageList = [](const apm::ipc::Response &resp,
                              const std::string &field) {
     std::vector<std::string> pkgs;
@@ -789,6 +926,7 @@ int cmdInstall(const std::string &socketPath, const std::string &pkg) {
   planReq.type = apm::ipc::RequestType::Install;
   planReq.id = "install-plan-1";
   planReq.packageName = pkg;
+  attachSession(planReq, sessionToken);
   planReq.rawFields["simulate"] = "1";
 
   apm::ipc::Response planResp;
@@ -849,6 +987,7 @@ int cmdInstall(const std::string &socketPath, const std::string &pkg) {
   req.type = apm::ipc::RequestType::Install;
   req.id = "install-run-1";
   req.packageName = pkg;
+  attachSession(req, sessionToken);
 
   apm::ipc::Response resp;
   err.clear();
@@ -980,7 +1119,9 @@ int cmdPackageInstall(const std::string &packagePath) {
 }
 
 // Ask the daemon to remove a package and clean up metadata.
-int cmdRemove(const std::string &socketPath, const std::string &pkg) {
+int cmdRemove(const std::string &socketPath,
+              const std::string &sessionToken,
+              const std::string &pkg) {
   std::string manualMsg;
   std::string manualErr;
   ManualRemoveState manualState =
@@ -998,6 +1139,7 @@ int cmdRemove(const std::string &socketPath, const std::string &pkg) {
   req.type = apm::ipc::RequestType::Remove;
   req.id = "remove-1";
   req.packageName = pkg;
+  attachSession(req, sessionToken);
 
   apm::ipc::Response resp;
   std::string err;
@@ -1013,15 +1155,16 @@ int cmdRemove(const std::string &socketPath, const std::string &pkg) {
 }
 
 // Forward an APK install request to the daemon, optionally forcing a system install overlay.
-int cmdApkInstall(const std::string &socketPath, const std::string &apk,
+int cmdApkInstall(const std::string &socketPath,
+                  const std::string &sessionToken, const std::string &apk,
                   bool installAsSystem) {
   apm::ipc::Request req;
   req.type = apm::ipc::RequestType::ApkInstall;
   req.id = "apk-install-1";
+  attachSession(req, sessionToken);
 
-  req.rawFields["apkPath"] = apk;
-  if (installAsSystem)
-    req.rawFields["installAsSystem"] = "1";
+  req.apkPath = apk;
+  req.installAsSystem = installAsSystem;
 
   apm::ipc::Response resp;
   std::string err;
@@ -1038,11 +1181,14 @@ int cmdApkInstall(const std::string &socketPath, const std::string &apk,
 }
 
 // Forward an APK uninstall request to the daemon for a given package name.
-int cmdApkUninstall(const std::string &socketPath, const std::string &pkgName) {
+int cmdApkUninstall(const std::string &socketPath,
+                    const std::string &sessionToken,
+                    const std::string &pkgName) {
   apm::ipc::Request req;
   req.type = apm::ipc::RequestType::ApkUninstall;
   req.id = "apk-uninstall-1";
   req.packageName = pkgName;
+  attachSession(req, sessionToken);
 
   apm::ipc::Response resp;
   std::string err;
@@ -1059,10 +1205,12 @@ int cmdApkUninstall(const std::string &socketPath, const std::string &pkgName) {
 }
 
 // Request upgrades for either all installed packages or a provided subset.
-int cmdUpgrade(const std::string &socketPath, int argc, char **argv) {
+int cmdUpgrade(const std::string &socketPath,
+               const std::string &sessionToken, int argc, char **argv) {
   apm::ipc::Request req;
   req.type = apm::ipc::RequestType::Upgrade;
   req.id = "upgrade-1";
+  attachSession(req, sessionToken);
 
   if (argc > 0) {
     std::ostringstream ss;
@@ -1088,10 +1236,12 @@ int cmdUpgrade(const std::string &socketPath, int argc, char **argv) {
 }
 
 // Ask the daemon to remove auto-installed dependencies no longer needed.
-int cmdAutoremove(const std::string &socketPath) {
+int cmdAutoremove(const std::string &socketPath,
+                  const std::string &sessionToken) {
   apm::ipc::Request req;
   req.type = apm::ipc::RequestType::Autoremove;
   req.id = "autoremove-1";
+  attachSession(req, sessionToken);
 
   apm::ipc::Response resp;
   std::string err;
@@ -1107,12 +1257,14 @@ int cmdAutoremove(const std::string &socketPath) {
 }
 
 int cmdModuleInstall(const std::string &socketPath,
+                     const std::string &sessionToken,
                      const std::string &zipPath) {
   apm::ipc::Request req;
   req.type = apm::ipc::RequestType::ModuleInstall;
   req.id = "module-install-1";
   req.modulePath = zipPath;
   req.rawFields["module_path"] = zipPath;
+  attachSession(req, sessionToken);
 
   apm::ipc::Response resp;
   std::string err;
@@ -1129,6 +1281,7 @@ int cmdModuleInstall(const std::string &socketPath,
 }
 
 static int runModuleToggle(const std::string &socketPath,
+                           const std::string &sessionToken,
                            apm::ipc::RequestType type,
                            const std::string &name,
                            const std::string &verb) {
@@ -1138,6 +1291,7 @@ static int runModuleToggle(const std::string &socketPath,
   req.moduleName = name;
   req.packageName = name;
   req.rawFields["module"] = name;
+  attachSession(req, sessionToken);
 
   apm::ipc::Response resp;
   std::string err;
@@ -1152,25 +1306,36 @@ static int runModuleToggle(const std::string &socketPath,
   return resp.success ? 0 : 1;
 }
 
-int cmdModuleEnable(const std::string &socketPath, const std::string &name) {
-  return runModuleToggle(socketPath, apm::ipc::RequestType::ModuleEnable, name,
+int cmdModuleEnable(const std::string &socketPath,
+                    const std::string &sessionToken,
+                    const std::string &name) {
+  return runModuleToggle(socketPath, sessionToken,
+                         apm::ipc::RequestType::ModuleEnable, name,
                          "Module enable");
 }
 
-int cmdModuleDisable(const std::string &socketPath, const std::string &name) {
-  return runModuleToggle(socketPath, apm::ipc::RequestType::ModuleDisable, name,
+int cmdModuleDisable(const std::string &socketPath,
+                     const std::string &sessionToken,
+                     const std::string &name) {
+  return runModuleToggle(socketPath, sessionToken,
+                         apm::ipc::RequestType::ModuleDisable, name,
                          "Module disable");
 }
 
-int cmdModuleRemove(const std::string &socketPath, const std::string &name) {
-  return runModuleToggle(socketPath, apm::ipc::RequestType::ModuleRemove, name,
+int cmdModuleRemove(const std::string &socketPath,
+                    const std::string &sessionToken,
+                    const std::string &name) {
+  return runModuleToggle(socketPath, sessionToken,
+                         apm::ipc::RequestType::ModuleRemove, name,
                          "Module remove");
 }
 
-int cmdModuleList(const std::string &socketPath) {
+int cmdModuleList(const std::string &socketPath,
+                  const std::string &sessionToken) {
   apm::ipc::Request req;
   req.type = apm::ipc::RequestType::ModuleList;
   req.id = "module-list-1";
+  attachSession(req, sessionToken);
 
   apm::ipc::Response resp;
   std::string err;
@@ -1319,6 +1484,26 @@ int cmdSearchLocal(int argc, char **argv) {
   return apm::cli::searchPackages(patterns);
 }
 
+// Import an ASCII-armored public key into the trusted key directory.
+int cmdKeyAdd(const std::string &path) {
+  std::string fingerprint;
+  std::string storedPath;
+  std::string error;
+
+  if (!apm::crypto::importTrustedPublicKey(
+          path, apm::config::TRUSTED_KEYS_DIR, &fingerprint, &storedPath,
+          &error)) {
+    std::cerr << "Failed to import key: " << error << "\n";
+    return 1;
+  }
+
+  std::cout << "Trusted key imported: " << fingerprint;
+  if (!storedPath.empty())
+    std::cout << " -> " << storedPath;
+  std::cout << "\n";
+  return 0;
+}
+
 } // namespace
 
 //
@@ -1354,6 +1539,12 @@ int main(int argc, char **argv) {
 
   std::string cmd = argv[i++];
 
+  std::string sessionToken;
+  if (requiresAuthSession(cmd)) {
+    if (!ensureAuthenticatedSession(socketPath, sessionToken))
+      return 1;
+  }
+
   //
   // ============================
   //   IPC COMMAND DISPATCH
@@ -1363,14 +1554,14 @@ int main(int argc, char **argv) {
   if (cmd == "ping")
     return cmdPing(socketPath);
   if (cmd == "update")
-    return cmdUpdate(socketPath);
+    return cmdUpdate(socketPath, sessionToken);
 
   if (cmd == "install") {
     if (i >= argc) {
       std::cerr << "apm: 'install' requires a package\n";
       return 1;
     }
-    return cmdInstall(socketPath, argv[i]);
+    return cmdInstall(socketPath, sessionToken, argv[i]);
   }
 
   if (cmd == "package-install") {
@@ -1386,11 +1577,11 @@ int main(int argc, char **argv) {
       std::cerr << "apm: 'module-install' requires a ZIP path\n";
       return 1;
     }
-    return cmdModuleInstall(socketPath, argv[i]);
+    return cmdModuleInstall(socketPath, sessionToken, argv[i]);
   }
 
   if (cmd == "module-list") {
-    return cmdModuleList(socketPath);
+    return cmdModuleList(socketPath, sessionToken);
   }
 
   if (cmd == "module-enable") {
@@ -1398,7 +1589,7 @@ int main(int argc, char **argv) {
       std::cerr << "apm: 'module-enable' requires a module name\n";
       return 1;
     }
-    return cmdModuleEnable(socketPath, argv[i]);
+    return cmdModuleEnable(socketPath, sessionToken, argv[i]);
   }
 
   if (cmd == "module-disable") {
@@ -1406,7 +1597,7 @@ int main(int argc, char **argv) {
       std::cerr << "apm: 'module-disable' requires a module name\n";
       return 1;
     }
-    return cmdModuleDisable(socketPath, argv[i]);
+    return cmdModuleDisable(socketPath, sessionToken, argv[i]);
   }
 
   if (cmd == "module-remove") {
@@ -1414,7 +1605,7 @@ int main(int argc, char **argv) {
       std::cerr << "apm: 'module-remove' requires a module name\n";
       return 1;
     }
-    return cmdModuleRemove(socketPath, argv[i]);
+    return cmdModuleRemove(socketPath, sessionToken, argv[i]);
   }
 
   if (cmd == "remove") {
@@ -1422,7 +1613,7 @@ int main(int argc, char **argv) {
       std::cerr << "apm: 'remove' requires a package\n";
       return 1;
     }
-    return cmdRemove(socketPath, argv[i]);
+    return cmdRemove(socketPath, sessionToken, argv[i]);
   }
 
   if (cmd == "apk-install") {
@@ -1441,7 +1632,7 @@ int main(int argc, char **argv) {
         return 1;
       }
     }
-    return cmdApkInstall(socketPath, apk, sys);
+    return cmdApkInstall(socketPath, sessionToken, apk, sys);
   }
 
   if (cmd == "apk-uninstall") {
@@ -1449,16 +1640,16 @@ int main(int argc, char **argv) {
       std::cerr << "apm: 'apk-uninstall' requires a package name\n";
       return 1;
     }
-    return cmdApkUninstall(socketPath, argv[i]);
+    return cmdApkUninstall(socketPath, sessionToken, argv[i]);
   }
 
   if (cmd == "upgrade") {
     int remaining = argc - i;
-    return cmdUpgrade(socketPath, remaining, argv + i);
+    return cmdUpgrade(socketPath, sessionToken, remaining, argv + i);
   }
 
   if (cmd == "autoremove")
-    return cmdAutoremove(socketPath);
+    return cmdAutoremove(socketPath, sessionToken);
 
   //
   // ============================
@@ -1478,6 +1669,13 @@ int main(int argc, char **argv) {
   if (cmd == "search") {
     int remaining = argc - i;
     return cmdSearchLocal(remaining, argv + i);
+  }
+  if (cmd == "key-add") {
+    if (i >= argc) {
+      std::cerr << "apm: 'key-add' requires a .asc file\n";
+      return 1;
+    }
+    return cmdKeyAdd(argv[i]);
   }
   if (cmd == "help")
     return printUsage(), 0;

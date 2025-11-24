@@ -5,8 +5,8 @@
  * Copyright (C) 2025 RedHead Industries
  *
  * File: gpg_verify.hpp
- * Purpose: Declare helpers for verifying detached OpenPGP signatures.
- * Last Modified: November 18th, 2025. - 3:00 PM Eastern Time.
+ * Purpose: Declare helpers for verifying detached OpenPGP signatures and importing trusted keys.
+ * Last Modified: November 23rd, 2025. - 2:52 PM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -30,17 +30,28 @@
 
 namespace apm::crypto {
 
-// Verify a detached OpenPGP signature:
+// Verify a detached OpenPGP signature using RSA/SHA256:
 //
 //   sigPath is a detached signature (Release.gpg)
 //   dataPath is the signed file (Release)
-//   trustedKeysDir contains one or more *.gpg keyring files.
+//   trustedKeysDir contains trusted public keys (*.asc or *.gpg)
 //
-// Returns true if signature verifies against at least one keyring;
+// Returns true if the signature verifies against at least one trusted key;
 // false otherwise. errorMsg is optional.
 bool verifyDetachedSignature(const std::string &dataPath,
                              const std::string &sigPath,
                              const std::string &trustedKeysDir,
                              std::string *errorMsg = nullptr);
+
+// Import a trusted ASCII-armored or binary public key into trustedKeysDir. The
+// key is validated to be an RSA V4 OpenPGP public key (2048–4096 bits). The
+// stored filename is the lowercase SHA256 fingerprint of the decoded key data
+// with an extension that reflects the original format (".asc" for armored,
+// ".gpg" for binary).
+bool importTrustedPublicKey(const std::string &ascPath,
+                            const std::string &trustedKeysDir,
+                            std::string *fingerprintOut = nullptr,
+                            std::string *storedPathOut = nullptr,
+                            std::string *errorMsg = nullptr);
 
 } // namespace apm::crypto

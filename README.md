@@ -108,13 +108,23 @@ Example:
 ```
 deb [arch=arm64] https://deb.debian.org/debian bookworm main contrib non-free
 deb https://packages.termux.dev/apt/termux-main stable main
+deb [trusted=yes] https://packages.termux.dev/apt/termux-main/ stable main
 ```
 
 Notes:
 
 - Termux repos are detected automatically; Debian arches are mapped to Termux equivalents.
 - `apm update` downloads Release + Packages(.gz) into `/data/apm/lists` and parses them locally; `.xz` indices are intentionally skipped on Android.
-- GPG verification is stubbed (`src/util/crypto/gpg_verify.cpp`), but the download/verification pipeline is in place for future enforcement. SHA256 verification of Packages/Release is wired but currently bypassed for `.deb` payloads.
+- Release metadata is verified against trusted keys in `/data/apm/keys` (`.asc`
+  or `.gpg`, including inline `InRelease` signatures). Missing signatures or
+  keys cause the source to be skipped unless `[trusted=yes]` is set. SHA256
+  verification of Packages/Release is wired but currently bypassed for `.deb`
+  payloads.
+- Per-source trust overrides:
+  - `[trusted=yes]` skips Release signature verification for that repo.
+  - `[trusted=required]` enforces Release verification; the source is skipped
+    if the signature or trusted key is missing.
+  - No `trusted` option defaults to verifying Release signatures.
 - Set `APM_CAINFO=/path/to/cacert.pem` to point curl at a custom CA bundle; otherwise the downloader tries common Android/Linux locations or builds a bundle from `/system/etc/security/cacerts`.
 
 
@@ -139,6 +149,13 @@ Most commands hit the daemon; `list`, `info`, and `search` operate offline.
 | `apm module-list` | List AMS modules and status. |
 | `apm module-install <zip>` | Install an AMS module ZIP. |
 | `apm module-enable/disable/remove <name>` | Toggle or remove modules and rebuild overlays. |
+
+
+## Security
+
+- The first privileged command (e.g., `apm update`, `apm install`, module/APK operations) prompts you to set an APM password/PIN. Losing it requires a factory reset to clear `passpin.bin`.
+- The secret is stored as AES-256-GCM ciphertext in `/data/apm/.security/passpin.bin`; the key never leaves Keystore2 (alias `apm_passkey`, non-exportable, encrypt/decrypt only).
+- Successful authentication starts a 3-minute session recorded at `/data/apm/.security/session.bin`; during that window, privileged commands run without re-entering the password/PIN.
 
 
 ## Manual packages
