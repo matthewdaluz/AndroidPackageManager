@@ -26,25 +26,216 @@
  *
  */
 
+#include "fs.hpp"
 #include "logger.hpp"
-#include "policy_parser.hpp"
 #include "te_parser.hpp"
 
+#include <array>
+#include <cerrno>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <iostream>
+#include <spawn.h>
 #include <string>
+#include <sys/wait.h>
+#include <unistd.h>
 #include <vector>
 
 using apm::logger::error;
 using apm::logger::info;
 using apm::logger::warn;
 
+extern char **environ;
+
 namespace {
 
-const char *kDefaultPolicyPath = "/sys/fs/selinux/policy";
+const char *kDefaultRulePath = "/data/apm-system-overlay/sepolicy/apm-sepolicy.rules";
 const char *kLogPath = "/data/apm/logs/policy.log";
+const char *kTempRuleTemplate = "/data/local/tmp/apm-policy.XXXXXX";
 
 void printUsage(const char *argv0) {
-  std::cerr << "Usage: " << argv0 << " <rules.te> [policy_path]\n";
+  std::cerr << "Usage: " << argv0 << " <rules.te> [rule_output]\n";
+}
+
+std::string join(const std::vector<std::string> &items,
+                 const std::string &sep) {
+  std::string out;
+  for (std::size_t i = 0; i < items.size(); ++i) {
+    out.append(items[i]);
+    if (i + 1 < items.size())
+      out.append(sep);
+  }
+  return out;
+}
+
+bool isExecutable(const std::string &path) {
+  return ::access(path.c_str(), X_OK) == 0;
+}
+
+bool findMagiskPolicy(std::string &outPath) {
+  const std::vector<std::string> candidates = {
+      "/sbin/magiskpolicy",
+      "/sbin/.magisk/magiskpolicy",
+      "/data/adb/magisk/magiskpolicy",
+      "/system/bin/magiskpolicy",
+  };
+  for (const auto &candidate : candidates) {
+    if (isExecutable(candidate)) {
+      outPath = candidate;
+      return true;
+    }
+  }
+
+  const char *pathEnv = std::getenv("PATH");
+  if (pathEnv) {
+    std::string pathVar(pathEnv);
+    std::size_t pos = 0;
+    while (pos <= pathVar.size()) {
+      std::size_t next = pathVar.find(':', pos);
+      std::string dir =
+          (next == std::string::npos) ? pathVar.substr(pos)
+                                      : pathVar.substr(pos, next - pos);
+      if (!dir.empty()) {
+        std::string candidate = dir + "/magiskpolicy";
+        if (isExecutable(candidate)) {
+          outPath = candidate;
+          return true;
+        }
+      }
+      if (next == std::string::npos)
+        break;
+      pos = next + 1;
+    }
+  }
+  return false;
+}
+
+bool writeRuleFile(const std::string &path,
+                   const std::vector<std::string> &rules, bool append,
+                   std::string &error) {
+  std::string payload;
+  for (const auto &line : rules) {
+    payload.append(line);
+    payload.push_back('\n');
+  }
+
+  bool ok = append ? apm::fs::appendFile(path, payload, true)
+                   : apm::fs::writeFile(path, payload, true);
+  if (!ok) {
+    error = "Failed to write rule file at " + path;
+    return false;
+  }
+  return true;
+}
+
+bool writeTempRuleFile(const std::vector<std::string> &rules,
+                       std::string &outPath, std::string &error) {
+  std::array<char, 128> tmpl{};
+  std::snprintf(tmpl.data(), tmpl.size(), "%s", kTempRuleTemplate);
+  int fd = ::mkstemp(tmpl.data());
+  if (fd < 0) {
+    error = "Unable to create temp rule file";
+    return false;
+  }
+
+  std::string payload;
+  for (const auto &line : rules) {
+    payload.append(line);
+    payload.push_back('\n');
+  }
+
+  const char *data = payload.data();
+  std::size_t remaining = payload.size();
+  while (remaining > 0) {
+    ssize_t written = ::write(fd, data, remaining);
+    if (written < 0) {
+      error = "Failed writing temp rule file";
+      ::close(fd);
+      ::unlink(tmpl.data());
+      return false;
+    }
+    data += static_cast<std::size_t>(written);
+    remaining -= static_cast<std::size_t>(written);
+  }
+
+  ::close(fd);
+  outPath.assign(tmpl.data());
+  return true;
+}
+
+bool runCommand(const std::vector<std::string> &args, std::string &error) {
+  if (args.empty()) {
+    error = "No command specified";
+    return false;
+  }
+
+  std::vector<char *> argv;
+  argv.reserve(args.size() + 1);
+  for (const auto &arg : args) {
+    argv.push_back(const_cast<char *>(arg.c_str()));
+  }
+  argv.push_back(nullptr);
+
+  pid_t pid = 0;
+  int spawnRc = ::posix_spawn(&pid, args[0].c_str(), nullptr, nullptr,
+                              argv.data(), environ);
+  if (spawnRc != 0) {
+    error = "Unable to spawn " + args[0] + ": " + std::strerror(spawnRc);
+    return false;
+  }
+
+  int status = 0;
+  if (::waitpid(pid, &status, 0) < 0) {
+    error = "Failed waiting for " + args[0] + ": " + std::strerror(errno);
+    return false;
+  }
+
+  if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+    error = args[0] + " exited with code " +
+            std::to_string(WEXITSTATUS(status));
+    return false;
+  }
+
+  return true;
+}
+
+bool applyWithMagiskPolicy(const std::string &binaryPath,
+                           const std::vector<std::string> &rules,
+                           std::string &error) {
+  std::string tempRulePath;
+  if (!writeTempRuleFile(rules, tempRulePath, error)) {
+    return false;
+  }
+
+  std::vector<std::string> args = {binaryPath, "--live", "--apply",
+                                   tempRulePath};
+  bool ok = runCommand(args, error);
+  ::unlink(tempRulePath.c_str());
+  return ok;
+}
+
+std::vector<std::string> buildRuleLines(const apm::selinux::TePolicy &policy) {
+  std::vector<std::string> lines;
+  for (const auto &rule : policy.rules) {
+    switch (rule.kind) {
+    case apm::selinux::TeRule::Kind::Type:
+      lines.push_back("type " + rule.lhs);
+      break;
+    case apm::selinux::TeRule::Kind::TypeAttribute:
+      lines.push_back("typeattribute " + rule.lhs + " " + rule.rhs);
+      break;
+    case apm::selinux::TeRule::Kind::Allow:
+      lines.push_back("allow " + rule.lhs + " " + rule.rhs + ":" +
+                      rule.tclass + " " + join(rule.perms, " "));
+      break;
+    case apm::selinux::TeRule::Kind::DontAudit:
+      lines.push_back("dontaudit " + rule.lhs + " " + rule.rhs + ":" +
+                      rule.tclass + " " + join(rule.perms, " "));
+      break;
+    }
+  }
+  return lines;
 }
 
 } // namespace
@@ -59,7 +250,7 @@ int main(int argc, char **argv) {
   }
 
   std::string tePath = argv[1];
-  std::string policyPath = (argc == 3) ? argv[2] : kDefaultPolicyPath;
+  std::string ruleOutPath = (argc == 3) ? argv[2] : kDefaultRulePath;
 
   info("apm-policy starting");
   info("Loading rules from " + tePath);
@@ -75,56 +266,38 @@ int main(int argc, char **argv) {
     warn("Parser warning: " + warnMsg);
   }
 
-  apm::selinux::PolicyParser parser;
-  if (!parser.load(policyPath, errorMsg)) {
-    error("Failed to load policy: " + errorMsg);
-    return 1;
+  auto ruleLines = buildRuleLines(tePolicy);
+  if (ruleLines.empty()) {
+    warn("No rules to apply from " + tePath);
+    return 0;
   }
 
-  info("Applying " + std::to_string(tePolicy.rules.size()) + " rule(s)");
-
-  for (const auto &rule : tePolicy.rules) {
-    switch (rule.kind) {
-    case apm::selinux::TeRule::Kind::Type:
-      if (!parser.ensureType(rule.lhs, false, errorMsg)) {
-        error("Failed to add type " + rule.lhs + ": " + errorMsg);
-        return 1;
-      }
-      info("Ensured type " + rule.lhs);
-      break;
-    case apm::selinux::TeRule::Kind::TypeAttribute:
-      if (!parser.assignAttribute(rule.lhs, rule.rhs, errorMsg)) {
-        error("Failed to assign attribute " + rule.rhs + " to " + rule.lhs +
-              ": " + errorMsg);
-        return 1;
-      }
-      info("Assigned attribute " + rule.rhs + " to " + rule.lhs);
-      break;
-    case apm::selinux::TeRule::Kind::Allow:
-      if (!parser.addAvRule(rule.lhs, rule.rhs, rule.tclass, rule.perms, false,
-                            errorMsg)) {
-        error("Failed to add allow rule: " + errorMsg);
-        return 1;
-      }
-      info("Added allow " + rule.lhs + " " + rule.rhs + ":" + rule.tclass);
-      break;
-    case apm::selinux::TeRule::Kind::DontAudit:
-      if (!parser.addAvRule(rule.lhs, rule.rhs, rule.tclass, rule.perms, true,
-                            errorMsg)) {
-        error("Failed to add dontaudit rule: " + errorMsg);
-        return 1;
-      }
-      info("Added dontaudit " + rule.lhs + " " + rule.rhs + ":" + rule.tclass);
-      break;
+  std::string injectorPath;
+  bool injected = false;
+  if (findMagiskPolicy(injectorPath)) {
+    info("Applying " + std::to_string(ruleLines.size()) +
+         " rule(s) via magiskpolicy");
+    if (!applyWithMagiskPolicy(injectorPath, ruleLines, errorMsg)) {
+      error("Failed to inject policy: " + errorMsg);
+      return 1;
     }
+    info("Live policy injection complete");
+    injected = true;
+  } else {
+    warn("magiskpolicy not found; rules will be written for external "
+         "processing");
   }
 
-  info("Writing updated policy to " + policyPath);
-  if (!parser.save(policyPath, errorMsg)) {
-    error("Failed to write policy: " + errorMsg);
+  if (!writeRuleFile(ruleOutPath, ruleLines, true, errorMsg)) {
+    error("Failed to persist rules to " + ruleOutPath + ": " + errorMsg);
     return 1;
   }
 
-  info("Policy update complete");
+  info("Appended rules to " + ruleOutPath);
+  if (!injected) {
+    warn("Rules were not injected live; please apply them with magiskpolicy");
+    return 1;
+  }
+  info("apm-policy finished");
   return 0;
 }

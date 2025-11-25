@@ -43,7 +43,7 @@ constexpr std::uint32_t POLICYDB_VERSION_BOUNDARY = 24;
 constexpr std::uint32_t POLICYDB_VERSION_AVTAB = 20;
 constexpr std::uint32_t POLICYDB_VERSION_POLCAP = 22;
 constexpr std::uint32_t POLICYDB_VERSION_PERMISSIVE = 23;
-constexpr std::uint32_t POLICYDB_VERSION_MAX = 33;
+constexpr std::uint32_t POLICYDB_VERSION_MAX = 35;
 
 constexpr std::uint32_t SYM_NUM = 8;
 constexpr std::uint32_t SYM_COMMONS = 0;
@@ -171,4 +171,3 @@ private:
 };
 
 } // namespace apm::selinux
-

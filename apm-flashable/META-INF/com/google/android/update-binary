@@ -1,25 +1,18 @@
 #!/sbin/sh
 
-# APM flashable installer
-# - Detects system-as-root devices and stages a Magisk-style overlay in /data
-# - Installs apm/apmd either to /system or the overlay, depending on layout
-# - Seeds data dirs
-# - Defers SELinux changes to a boot-time script run from init.apmd.rc
+# APM flashable installer for modern system-as-root devices.
+# Recovery is FBE-limited: we only write to /mnt/system, never /data.
+# All runtime installation happens during Android boot (post-fs-data).
 
 OUTFD="$2"
 ZIPFILE="$3"
-TMPDIR="/tmp/apm-flashable"
-SEPOLICY_TMP="/tmp/apm-sepolicy"
-SYSTEM_ROOT_MNT="/system_root"
-SYSTEM_TARGET=""
-SYSTEM_AS_ROOT=0
 
-OVERLAY_BASE="/data/apm-system-overlay"
-OVERLAY_SYSTEM="$OVERLAY_BASE/system"
-OVERLAY_BIN="$OVERLAY_SYSTEM/bin"
-OVERLAY_INIT_DIR="$OVERLAY_SYSTEM/etc/init"
-OVERLAY_SEPOLICY="$OVERLAY_BASE/sepolicy"
-INSTALL_MODE_FILE="$OVERLAY_BASE/.install_mode"
+STAGING_BASE="/mnt/system/apm-staging"
+STAGING_BIN="$STAGING_BASE/bin"
+STAGING_SEPOLICY="$STAGING_BASE/sepolicy"
+STAGING_SCRIPTS="$STAGING_BASE/scripts"
+INIT_DST="/mnt/system/etc/init"
+INIT_RC="$INIT_DST/init.apmd.rc"
 
 ui_print() {
   printf "ui_print %s\nui_print \n" "$1" > /proc/self/fd/"$OUTFD"
@@ -30,381 +23,170 @@ abort() {
   exit 1
 }
 
-cmd_exists() {
-  command -v "$1" >/dev/null 2>&1
-}
-
-cleanup() {
-  rm -rf "$TMPDIR" "$SEPOLICY_TMP"
-}
-trap cleanup EXIT
-
-detect_system_as_root() {
-  local prop
-  prop="$(getprop ro.build.system_root_image 2>/dev/null)"
-  if echo "$prop" | grep -qiE "true|yes|1"; then
-    SYSTEM_AS_ROOT=1
-    return
-  fi
-
-  if grep -q " /system_root " /proc/mounts 2>/dev/null; then
-    SYSTEM_AS_ROOT=1
-    return
-  fi
-
-  if [ -d /system_root ] && [ -d /system_root/system ]; then
-    SYSTEM_AS_ROOT=1
-  fi
-}
-
-resolve_system_target_from() {
-  local base="$1"
-  if [ -d "$base/system/bin" ]; then
-    SYSTEM_TARGET="$base/system"
-  else
-    SYSTEM_TARGET="$base"
-  fi
-}
-
-mount_data_rw() {
-  if mountpoint -q /data; then
-    mount -o rw,remount /data >/dev/null 2>&1
-    return 0
-  fi
-
-  for part in \
-    /dev/block/mapper/userdata \
-    /dev/block/bootdevice/by-name/userdata \
-    /dev/block/platform/*/by-name/userdata; do
-    [ -e "$part" ] || continue
-    mkdir -p /data
-    if mount -o rw "$part" /data >/dev/null 2>&1 || mount "$part" /data >/dev/null 2>&1; then
-      return 0
-    fi
-  done
-
-  return 1
+maybe_chcon() {
+  local path="$1" ctx="$2"
+  command -v chcon >/dev/null 2>&1 || return 0
+  chcon "$ctx" "$path" 2>/dev/null || true
 }
 
 mount_system_rw() {
-  if mountpoint -q /system; then
-    mount -o rw,remount /system >/dev/null 2>&1
-    resolve_system_target_from /system
-    return 0
+  if mountpoint -q /mnt/system; then
+    mount -o rw,remount /mnt/system >/dev/null 2>&1 && return 0
   fi
 
-  mkdir -p "$SYSTEM_ROOT_MNT"
-  for part in \
-    /dev/block/mapper/system \
-    /dev/block/mapper/system_a \
-    /dev/block/bootdevice/by-name/system \
-    /dev/block/bootdevice/by-name/system_a \
-    /dev/block/platform/*/by-name/system \
-    /dev/block/platform/*/by-name/system_a; do
-    [ -e "$part" ] || continue
-    if mount -o rw "$part" "$SYSTEM_ROOT_MNT" >/dev/null 2>&1 || mount "$part" "$SYSTEM_ROOT_MNT" >/dev/null 2>&1; then
-      resolve_system_target_from "$SYSTEM_ROOT_MNT"
-      mount --bind "$SYSTEM_TARGET" /system >/dev/null 2>&1 || true
-      return 0
-    fi
-  done
+  if mountpoint -q /system; then
+    mount -o rw,remount /system >/dev/null 2>&1 && return 0
+  fi
 
-  [ -d /system/bin ] && SYSTEM_TARGET=/system
+  mount -o rw,remount / >/dev/null 2>&1 && return 0
   return 0
 }
 
-extract_payload() {
-  rm -rf "$TMPDIR"
-  mkdir -p "$TMPDIR"
-  unzip -o "$ZIPFILE" "system/*" -d "$TMPDIR" >/dev/null 2>&1
+ensure_dirs() {
+  mkdir -p "$STAGING_BIN" \
+           "$STAGING_SEPOLICY" \
+           "$STAGING_SCRIPTS" \
+           "$STAGING_BASE/init" \
+           "$INIT_DST" || abort "Unable to create staging dirs"
+
+  chown 0:0 "$STAGING_BASE" "$STAGING_BIN" "$STAGING_SEPOLICY" "$STAGING_SCRIPTS" "$STAGING_BASE/init" "$INIT_DST" 2>/dev/null || true
+  chmod 0755 "$STAGING_BASE" "$STAGING_BIN" "$STAGING_SEPOLICY" "$STAGING_SCRIPTS" "$STAGING_BASE/init" "$INIT_DST" 2>/dev/null || true
 }
 
-extract_sepolicy() {
-  rm -rf "$SEPOLICY_TMP"
-  mkdir -p "$SEPOLICY_TMP"
+install_init_rc() {
+  unzip -o -j "$ZIPFILE" "system/etc/init/init.apmd.rc" \
+    -d "$INIT_DST" >/dev/null 2>&1 || abort "Failed to place init.apmd.rc"
 
-  unzip -o "$ZIPFILE" "sepolicy/*" -d "$SEPOLICY_TMP" >/dev/null 2>&1
+  chown 0:0 "$INIT_RC" 2>/dev/null || true
+  chmod 0644 "$INIT_RC" 2>/dev/null || true
+  maybe_chcon "$INIT_RC" "u:object_r:system_file:s0"
 }
 
-set_perm() {
-  local path="$1" mode="$2" user="$3" group="$4" ctx="$5"
-  [ -e "$path" ] || return 0
-  chown "$user":"$group" "$path" 2>/dev/null || true
-  chmod "$mode" "$path" 2>/dev/null || true
-  if [ -n "$ctx" ] && cmd_exists chcon; then
-    chcon "$ctx" "$path" 2>/dev/null || true
-  fi
+install_binaries() {
+  unzip -o -j "$ZIPFILE" "system/bin/*" -d "$STAGING_BIN" >/dev/null 2>&1 || abort "Failed to extract binaries"
+  chmod 0755 "$STAGING_BIN"/* 2>/dev/null || true
 }
 
-[ "$SYSTEM_AS_ROOT" -eq 1 ] && return 0
-install_system_files() {
-  mkdir -p "$SYSTEM_TARGET/bin" "$SYSTEM_TARGET/etc/init"
-  cp -af "$TMPDIR/system/." "$SYSTEM_TARGET"
-
-  set_perm "$SYSTEM_TARGET/bin/apm" 0755 0 2000 "u:object_r:system_file:s0"
-  set_perm "$SYSTEM_TARGET/bin/apmd" 0755 0 0 "u:object_r:apmd_exec:s0"
-  set_perm "$SYSTEM_TARGET/etc/init/init.apmd.rc" 0644 0 0 "u:object_r:system_file:s0"
-}
-
-prepare_overlay_paths() {
-  mount_data_rw || abort "Unable to mount /data"
-
-  mkdir -p "$OVERLAY_BIN" "$OVERLAY_INIT_DIR" "$OVERLAY_SEPOLICY"
-  chown 0:0 "$OVERLAY_BASE" "$OVERLAY_SYSTEM" "$OVERLAY_BIN" "$OVERLAY_INIT_DIR" "$OVERLAY_SEPOLICY"
-  chmod 0755 "$OVERLAY_BASE" "$OVERLAY_SYSTEM" "$OVERLAY_BIN" "$OVERLAY_INIT_DIR"
-  chmod 0755 "$OVERLAY_SEPOLICY"
-}
-
-install_overlay_files() {
-  prepare_overlay_paths
-
-  cp -af "$TMPDIR/system/bin/." "$OVERLAY_BIN"
-  mkdir -p "$OVERLAY_SYSTEM/etc/init"
-  cp -af "$TMPDIR/system/etc/init/init.apmd.rc" "$OVERLAY_INIT_DIR"
-
-  set_perm "$OVERLAY_BIN/apm" 0755 0 2000 "u:object_r:system_file:s0"
-  set_perm "$OVERLAY_BIN/apmd" 0755 0 0 "u:object_r:apmd_exec:s0"
-  set_perm "$OVERLAY_BIN/xz" 0755 0 2000 "u:object_r:system_file:s0"
-  set_perm "$OVERLAY_BIN/lzmainfo" 0755 0 2000 "u:object_r:system_file:s0"
-  set_perm "$OVERLAY_INIT_DIR/init.apmd.rc" 0644 0 0 "u:object_r:system_file:s0"
-
-  echo "overlay" >"$INSTALL_MODE_FILE"
-  chmod 0644 "$INSTALL_MODE_FILE"
-}
-
-prepare_data_dirs() {
-  mount_data_rw || abort "Unable to mount /data"
-
-  dirs="
-    /data/apm
-    /data/apm/bin
-    /data/apm/cache
-    /data/apm/lists
-    /data/apm/keys
-    /data/apm/pkgs
-    /data/apm/installed
-    /data/apm/logs
-    /data/apm/sources
-    /data/apm/sources/sources.list.d
-    /data/ams
-    /data/ams/modules
-    /data/ams/overlays
-    /data/ams/merged
-  "
-
-  for d in $dirs; do
-    mkdir -p "$d"
-    chown root:shell "$d"
-    chmod 0775 "$d"
-    chcon u:object_r:apm_data_file:s0 "$d" 2>/dev/null || true
-  done
-
-  # socket context
-  mkdir -p /data/apm
-  chcon u:object_r:apmd_socket:s0 /data/apm 2>/dev/null || true
-
-  restorecon -R /data/apm /data/ams >/dev/null 2>&1 || true
-}
-
-stage_sepolicy_payload() {
-  [ -d "$SEPOLICY_TMP/sepolicy" ] || return 0
-  mkdir -p "$OVERLAY_SEPOLICY"
-  cp -af "$SEPOLICY_TMP/sepolicy/." "$OVERLAY_SEPOLICY" 2>/dev/null || true
-  if [ -f "$OVERLAY_SEPOLICY/sepolicy-inject" ]; then
-    chown 0:0 "$OVERLAY_SEPOLICY/sepolicy-inject" 2>/dev/null || true
-    chmod 0755 "$OVERLAY_SEPOLICY/sepolicy-inject" 2>/dev/null || true
-  fi
+install_te_files() {
+  unzip -o -j "$ZIPFILE" "sepolicy/*.te" -d "$STAGING_SEPOLICY" >/dev/null 2>&1 || true
+  chmod 0644 "$STAGING_SEPOLICY"/*.te 2>/dev/null || true
 }
 
 write_boot_scripts() {
-  mkdir -p "$OVERLAY_BASE"
-  chown 0:0 "$OVERLAY_BASE" 2>/dev/null || true
-  chmod 0755 "$OVERLAY_BASE" 2>/dev/null || true
-
-  cat >"$OVERLAY_BASE/apm-overlay.sh" <<'EOF'
+  cat >"$STAGING_SCRIPTS/apm-overlay.sh" <<'EOF'
 #!/system/bin/sh
 BASE="/data/apm-system-overlay"
-INSTALL_MODE_FILE="$BASE/.install_mode"
-INSTALL_MODE="overlay"
-READY_FLAG="$BASE/.sepolicy_ready"
-
-if [ -f "$INSTALL_MODE_FILE" ]; then
-  INSTALL_MODE="$(cat "$INSTALL_MODE_FILE" 2>/dev/null)"
-fi
-
 BIN_DIR="$BASE/system/bin"
-INIT_DIR="$BASE/system/etc/init"
-LOG_FILE="$BASE/apm-overlay.log"
+INIT_SRC="$BASE/init/init.apmd.rc"
+LOG_DIR="$BASE/logs"
+LOG_FILE="$LOG_DIR/overlay.log"
+SYS_BASE="/mnt/system"
+SYS_ALT="/system"
+
+mkdir -p "$LOG_DIR"
 
 log() {
   echo "$(date '+%F %T') - $*" >>"$LOG_FILE"
 }
 
-wait_for_sepolicy() {
-  local i=0
-  log "Waiting for SELinux patcher to finish..."
-  while [ $i -lt 30 ]; do
-    [ -f "$READY_FLAG" ] && return 0
-    sleep 1
-    i=$((i+1))
-  done
-  log "SELinux patcher not ready after 30s; continuing anyway"
-  return 0
+bind_mount() {
+  local src="$1" dst="$2"
+  if [ ! -e "$src" ]; then
+    log "Skip missing $src"
+    return 0
+  fi
+
+  mkdir -p "$(dirname "$dst")"
+  if [ ! -e "$dst" ]; then
+    touch "$dst" 2>/dev/null || log "Unable to create $dst"
+  fi
+
+  if grep -q " $dst " /proc/mounts 2>/dev/null; then
+    log "Already mounted: $dst"
+    return 0
+  fi
+
+  if mount -o bind "$src" "$dst" 2>/dev/null || mount --bind "$src" "$dst" 2>/dev/null; then
+    log "Bind mounted $src -> $dst"
+  else
+    log "Failed to bind $src -> $dst"
+  fi
 }
 
-if [ "$INSTALL_MODE" != "overlay" ]; then
-  log "Install mode=$INSTALL_MODE; starting apmd-bootstrap directly"
-  wait_for_sepolicy
-  setprop ctl.start apmd-bootstrap
+log "Starting overlay bind mounts"
+for bin in "$BIN_DIR"/*; do
+  [ -f "$bin" ] || continue
+  bind_mount "$bin" "$SYS_BASE/bin/$(basename "$bin")"
+  if [ "$SYS_ALT" != "$SYS_BASE" ]; then
+    bind_mount "$bin" "$SYS_ALT/bin/$(basename "$bin")"
+  fi
+done
+bind_mount "$INIT_SRC" "$SYS_BASE/etc/init/init.apmd.rc"
+if [ "$SYS_ALT" != "$SYS_BASE" ]; then
+  bind_mount "$INIT_SRC" "$SYS_ALT/etc/init/init.apmd.rc"
+fi
+log "Overlay bind mounts complete"
+exit 0
+EOF
+
+  cat >"$STAGING_SCRIPTS/apm-sepolicy.sh" <<'EOF'
+#!/system/bin/sh
+BASE="/data/apm-system-overlay"
+TE_DIR="$BASE/sepolicy"
+LOG_DIR="$BASE/logs"
+LOG_FILE="$LOG_DIR/sepolicy.log"
+SYS_BASE="/mnt/system"
+SYS_ALT="/system"
+
+mkdir -p "$LOG_DIR"
+
+log() {
+  echo "$(date '+%F %T') - $*" >>"$LOG_FILE"
+}
+
+log "Starting SELinux rule application"
+
+if [ ! -d "$TE_DIR" ]; then
+  log "No SELinux rules directory found; nothing to do"
   exit 0
 fi
 
-bind_one() {
-  local src="$1" dst="$2"
-  [ -e "$src" ] || return 0
-  mkdir -p "$(dirname "$dst")"
-  grep -q " $dst " /proc/mounts 2>/dev/null && return 0
-  mount -o bind "$src" "$dst" 2>/dev/null || mount --bind "$src" "$dst" 2>/dev/null
-}
+applied=0
+for te in "$TE_DIR"/*.te; do
+  [ -f "$te" ] || continue
+  log "Applying $(basename "$te")"
+  if [ -x "$SYS_BASE/bin/apm-policy" ] && "$SYS_BASE/bin/apm-policy" "$te" >>"$LOG_FILE" 2>&1; then
+    log "Applied $(basename "$te")"
+  elif [ "$SYS_ALT" != "$SYS_BASE" ] && [ -x "$SYS_ALT/bin/apm-policy" ] && "$SYS_ALT/bin/apm-policy" "$te" >>"$LOG_FILE" 2>&1; then
+    log "Applied $(basename "$te") via alt path"
+  else
+    log "Failed to apply $(basename "$te")"
+  fi
+  applied=1
+done
 
-wait_for_sepolicy
-
-log "Starting overlay bind mounts (mode=$INSTALL_MODE)"
-bind_one "$BIN_DIR/apm" "/system/bin/apm"
-bind_one "$BIN_DIR/apmd" "/system/bin/apmd"
-bind_one "$BIN_DIR/xz" "/system/bin/xz"
-bind_one "$BIN_DIR/lzmainfo" "/system/bin/lzmainfo"
-bind_one "$INIT_DIR/init.apmd.rc" "/system/etc/init/init.apmd.rc"
-
-log "Overlay setup finished"
-setprop ctl.start apmd-bootstrap
-EOF
-
-  cat >"$OVERLAY_BASE/apm-sepolicy.sh" <<'EOF'
-#!/system/bin/sh
-BASE="/data/apm-system-overlay"
-INSTALL_MODE_FILE="$BASE/.install_mode"
-INSTALL_MODE="overlay"
-READY_FLAG="$BASE/.sepolicy_ready"
-
-if [ -f "$INSTALL_MODE_FILE" ]; then
-  INSTALL_MODE="$(cat "$INSTALL_MODE_FILE" 2>/dev/null)"
+if [ "$applied" -eq 0 ]; then
+  log "No .te files found to apply"
 fi
 
-if [ "$INSTALL_MODE" = "overlay" ]; then
-  TARGET_SYSTEM="$BASE/system"
-else
-  TARGET_SYSTEM="/system"
-fi
-
-mkdir -p "$BASE"
-
-BIN_DIR="$TARGET_SYSTEM/bin"
-INIT_DIR="$TARGET_SYSTEM/etc/init"
-SEPOLICY_DIR="$BASE/sepolicy"
-LOG_FILE="$BASE/apm-sepolicy.log"
-INJECTOR_PATH="$SEPOLICY_DIR/sepolicy-inject"
-
-rm -f "$READY_FLAG"
-
-cmd_exists() {
-  command -v "$1" >/dev/null 2>&1
-}
-
-log() {
-  echo "$(date '+%F %T') - $*" >>"$LOG_FILE"
-}
-
-apply_policies() {
-  [ -d "$SEPOLICY_DIR" ] || {
-    log "No packaged SELinux policies; skipping"
-    return
-  }
-
-  local injector=""
-  if [ -x "$INJECTOR_PATH" ]; then
-    injector="$INJECTOR_PATH --live --apply"
-    log "Using bundled sepolicy-inject"
-  elif cmd_exists magiskpolicy; then
-    injector="magiskpolicy --live --apply"
-    log "Using magiskpolicy"
-  elif cmd_exists sepolicy-inject; then
-    injector="sepolicy-inject --live --apply"
-    log "Using system sepolicy-inject"
-  fi
-
-  [ -n "$injector" ] || {
-    # If a precompiled policy file is present, try loading it directly
-    if [ -f "$SEPOLICY_DIR/policy.bin" ] && cmd_exists load_policy; then
-      load_policy "$SEPOLICY_DIR/policy.bin" >/dev/null 2>&1 && log "Loaded packaged policy.bin"
-    else
-      log "No live SELinux injector available"
-    fi
-    return
-  }
-
-  for te in "$SEPOLICY_DIR"/*.te; do
-    [ -f "$te" ] || continue
-    $injector "$te" >/dev/null 2>&1 && log "Applied policy $(basename "$te")"
-  done
-}
-
-apply_file_contexts() {
-  if cmd_exists restorecon; then
-    restorecon -R /data/apm /data/ams "$BIN_DIR" "$INIT_DIR" >/dev/null 2>&1 || true
-  fi
-
-  cmd_exists chcon || return
-
-  [ -f "$BIN_DIR/apmd" ] && chcon u:object_r:apmd_exec:s0 "$BIN_DIR/apmd" 2>/dev/null
-  for f in apm xz lzmainfo; do
-    [ -f "$BIN_DIR/$f" ] && chcon u:object_r:system_file:s0 "$BIN_DIR/$f" 2>/dev/null
-  done
-  [ -f "$INIT_DIR/init.apmd.rc" ] && chcon u:object_r:system_file:s0 "$INIT_DIR/init.apmd.rc" 2>/dev/null
-  [ -f "$BASE/apm-overlay.sh" ] && chcon u:object_r:system_file:s0 "$BASE/apm-overlay.sh" 2>/dev/null
-  [ -f "$BASE/apm-sepolicy.sh" ] && chcon u:object_r:system_file:s0 "$BASE/apm-sepolicy.sh" 2>/dev/null
-  [ -f "$INJECTOR_PATH" ] && chcon u:object_r:system_file:s0 "$INJECTOR_PATH" 2>/dev/null
-
-  chcon u:object_r:apm_data_file:s0 /data/apm 2>/dev/null || true
-  chcon u:object_r:ams_module_file:s0 /data/ams 2>/dev/null || true
-  chcon u:object_r:apmd_socket:s0 /data/apm/apmd.sock 2>/dev/null || true
-}
-
-log "Starting boot-time SELinux adjustments (mode=$INSTALL_MODE)"
-apply_policies
-apply_file_contexts
-touch "$READY_FLAG"
-log "SELinux adjustments complete"
+log "apm-sepolicy finished"
+exit 0
 EOF
 
-  chmod 0755 "$OVERLAY_BASE/apm-overlay.sh" "$OVERLAY_BASE/apm-sepolicy.sh"
-  chown 0:0 "$OVERLAY_BASE/apm-overlay.sh" "$OVERLAY_BASE/apm-sepolicy.sh"
+  chown 0:0 "$STAGING_SCRIPTS/apm-overlay.sh" "$STAGING_SCRIPTS/apm-sepolicy.sh" 2>/dev/null || true
+  chmod 0755 "$STAGING_SCRIPTS/apm-overlay.sh" "$STAGING_SCRIPTS/apm-sepolicy.sh" 2>/dev/null || true
 }
 
 main() {
-  ui_print "Installing APM..."
-  detect_system_as_root
-  extract_payload || abort "Failed to unpack system files"
-  extract_sepolicy || ui_print "No sepolicy directory in ZIP (skipping)"
-
-  if [ "$SYSTEM_AS_ROOT" -eq 1 ]; then
-    ui_print "System-as-root detected; staging overlay in /data/apm-system-overlay"
-    install_overlay_files || abort "Failed to stage overlay files"
-  else
-    mount_system_rw || abort "Unable to mount /system"
-    install_system_files || abort "Failed to install binaries"
-    mount_data_rw || abort "Unable to mount /data"
-    mkdir -p "$OVERLAY_BASE"
-    echo "system" >"$INSTALL_MODE_FILE"
-    chmod 0644 "$INSTALL_MODE_FILE"
-  fi
-
-  prepare_data_dirs
-  stage_sepolicy_payload
+  ui_print "Installing APM (system staging)..."
+  mount_system_rw
+  ensure_dirs
+  install_init_rc
+  install_binaries
+  install_te_files
   write_boot_scripts
-
-  ui_print "APM installed successfully. SELinux adjustments will run during boot."
-  ui_print "Done."
+  ui_print "Staging complete. Boot-time init will finalize installation."
+  exit 0
 }
 
 main "$@"

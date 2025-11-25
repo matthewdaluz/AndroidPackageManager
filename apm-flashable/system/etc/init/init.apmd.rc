@@ -50,13 +50,38 @@ on post-fs-data
     mkdir /data/apm-system-overlay 0755 root root
     mkdir /data/apm-system-overlay/system 0755 root root
     mkdir /data/apm-system-overlay/system/bin 0755 root root
-    mkdir /data/apm-system-overlay/system/etc 0755 root root
-    mkdir /data/apm-system-overlay/system/etc/init 0755 root root
+    mkdir /data/apm-system-overlay/init 0755 root root
     mkdir /data/apm-system-overlay/sepolicy 0755 root root
-    chmod 0755 /data/apm-system-overlay/apm-overlay.sh
-    chmod 0755 /data/apm-system-overlay/apm-sepolicy.sh
-    start apm-sepolicy
-    start apm-overlay
+    mkdir /data/apm-system-overlay/scripts 0755 root root
+    mkdir /data/apm-system-overlay/logs 0755 root root
+    exec /system/bin/sh -c '\
+        mkdir -p /data/apm-system-overlay/system/bin /data/apm-system-overlay/init /data/apm-system-overlay/sepolicy /data/apm-system-overlay/scripts /data/apm-system-overlay/logs; \
+        cp -af /mnt/system/apm-staging/bin/. /data/apm-system-overlay/system/bin/ 2>/dev/null; \
+        cp -af /mnt/system/apm-staging/sepolicy/. /data/apm-system-overlay/sepolicy/ 2>/dev/null; \
+        cp -af /mnt/system/apm-staging/scripts/. /data/apm-system-overlay/scripts/ 2>/dev/null; \
+        cp -af /mnt/system/etc/init/init.apmd.rc /data/apm-system-overlay/init/ 2>/dev/null; \
+        touch /data/apm/apmd.pid 2>/dev/null; \
+        chown -R root:root /data/apm-system-overlay 2>/dev/null; \
+        chmod 0755 /data/apm-system-overlay/system/bin/* 2>/dev/null; \
+        chmod 0755 /data/apm-system-overlay/scripts/* 2>/dev/null; \
+        chmod 0644 /data/apm-system-overlay/init/init.apmd.rc 2>/dev/null; \
+        chmod 0644 /data/apm-system-overlay/sepolicy/*.te 2>/dev/null; \
+        chmod 0664 /data/apm/apmd.pid 2>/dev/null; \
+        if [ -x /system/bin/chcon ]; then \
+            /system/bin/chcon u:object_r:system_file:s0 /data/apm-system-overlay/init/init.apmd.rc 2>/dev/null; \
+            /system/bin/chcon u:object_r:system_file:s0 /data/apm-system-overlay/scripts/apm-overlay.sh 2>/dev/null; \
+            /system/bin/chcon u:object_r:system_file:s0 /data/apm-system-overlay/scripts/apm-sepolicy.sh 2>/dev/null; \
+            /system/bin/chcon u:object_r:apmd_exec:s0 /data/apm-system-overlay/system/bin/apmd 2>/dev/null; \
+            /system/bin/chcon u:object_r:system_file:s0 /data/apm-system-overlay/system/bin/apm 2>/dev/null; \
+            /system/bin/chcon u:object_r:system_file:s0 /data/apm-system-overlay/system/bin/apm-policy 2>/dev/null; \
+            /system/bin/chcon u:object_r:system_file:s0 /data/apm-system-overlay/system/bin/xz 2>/dev/null; \
+            /system/bin/chcon u:object_r:system_file:s0 /data/apm-system-overlay/system/bin/lzmainfo 2>/dev/null; \
+        fi; \
+        exit 0'
+    exec /system/bin/sh /data/apm-system-overlay/scripts/apm-overlay.sh
+    exec /system/bin/sh /data/apm-system-overlay/scripts/apm-sepolicy.sh
+    start apmd-bootstrap
+    start apmd
 
 service apmd-bootstrap /system/bin/sh -c '\
     umask 0002; \
@@ -94,16 +119,8 @@ service apmd-bootstrap /system/bin/sh -c '\
     group root system shell
     seclabel u:r:init:s0
 
-service apm-overlay /system/bin/sh /data/apm-system-overlay/apm-overlay.sh
+service apmd /system/bin/apmd
     class late_start
-    oneshot
     user root
-    group root system
-    seclabel u:r:init:s0
-
-service apm-sepolicy /system/bin/sh /data/apm-system-overlay/apm-sepolicy.sh
-    class late_start
-    oneshot
-    user root
-    group root system
+    group root system shell
     seclabel u:r:init:s0
