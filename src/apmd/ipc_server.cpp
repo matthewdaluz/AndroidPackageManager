@@ -6,7 +6,7 @@
  *
  * File: ipc_server.cpp
  * Purpose: Implement the apmd UNIX socket server, request dispatch, and response helpers.
- * Last Modified: November 18th, 2025. - 3:00 PM Eastern Time.
+ * Last Modified: November 23rd, 2025. - 12:06 PM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -39,6 +39,7 @@
 #include <vector>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <utility>
 #include <unistd.h>
 
 namespace apm::ipc {
@@ -97,7 +98,7 @@ void sendResponseMessage(int clientFd, Response resp) {
 IpcServer::IpcServer(const std::string &socketPath,
                      apm::ams::ModuleManager &moduleManager)
     : m_listenFd(-1), m_socketPath(socketPath), m_running(false),
-      m_moduleManager(moduleManager) {}
+      m_moduleManager(moduleManager), m_securityManager() {}
 
 IpcServer::~IpcServer() {
   if (m_listenFd >= 0) {
@@ -235,7 +236,43 @@ void IpcServer::handleClient(int clientFd) {
   Response resp;
   resp.id = req.id;
 
+  auto requiresAuth = [](RequestType t) {
+    return !(t == RequestType::Ping || t == RequestType::Authenticate);
+  };
+
+  if (requiresAuth(req.type)) {
+    std::string authErr;
+    if (!m_securityManager.validateSessionToken(req.sessionToken, &authErr)) {
+      resp.success = false;
+      resp.message = authErr.empty() ? "Authentication required" : authErr;
+      resp.rawFields["auth"] = "required";
+      sendResponseMessage(clientFd, resp);
+      return;
+    }
+  }
+
   switch (req.type) {
+
+  case RequestType::Authenticate: {
+    apm::logger::info("IpcServer: Authenticate request received");
+    apm::security::SessionState session;
+    std::string authErr;
+    if (!m_securityManager.authenticate(req.authAction, req.authSecret,
+                                        session, &authErr)) {
+      resp.success = false;
+      resp.message =
+          authErr.empty() ? "Authentication failed" : std::move(authErr);
+      break;
+    }
+
+    resp.success = true;
+    resp.message = (req.authAction == "set")
+                       ? "Password/PIN saved. Session active."
+                       : "Session unlocked.";
+    resp.rawFields["session_token"] = session.token;
+    resp.rawFields["session_expires"] = std::to_string(session.expiresAt);
+    break;
+  }
 
   case RequestType::Upgrade: {
     apm::logger::info("IpcServer: Upgrade request received");

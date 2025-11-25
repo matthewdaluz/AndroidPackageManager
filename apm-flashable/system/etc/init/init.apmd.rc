@@ -1,0 +1,126 @@
+# 
+# /*
+#  * APM - Android Package Manager
+#  *
+#  * RedHead Industries - Technologies Branch
+#  * Copyright (C) 2025 RedHead Industries
+#  *
+#  * File: init.apmd.rc
+#  * Purpose: Android init script that waits for /data readiness and repeatedly
+#  *          launches apmd until it is running.
+#  * Last Modified: 2025-11-23 10:57:52 EST
+#  * Author: Matthew DaLuz - RedHead Founder
+#  *
+#  * APM is free software: you can redistribute it and/or modify
+#  * it under the terms of the GNU General Public License as published by
+#  * the Free Software Foundation, either version 3 of the License, or
+#  * (at your option) any later version.
+#  *
+#  * APM is distributed in the hope that it will be useful,
+#  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  * GNU General Public License for more details.
+#  *
+#  * You should have received a copy of the GNU General Public License
+#  * along with APM. If not, see <https://www.gnu.org/licenses/>.
+#  *
+#  */
+# 
+# Android init script for apmd. Waits for /data to be mounted and writable,
+# pre-creates the runtime directories with shell-friendly permissions, then
+# retries daemon startup every 5 seconds until it is running.
+
+on post-fs-data
+    mkdir /data/apm 0775 root shell
+    mkdir /data/apm/bin 0775 root shell
+    mkdir /data/apm/cache 0775 root shell
+    mkdir /data/apm/lists 0775 root shell
+    mkdir /data/apm/keys 0775 root shell
+    mkdir /data/apm/pkgs 0775 root shell
+    mkdir /data/apm/installed 0775 root shell
+    mkdir /data/apm/installed/commands 0775 root shell
+    mkdir /data/apm/installed/dependencies 0775 root shell
+    mkdir /data/apm/logs 0775 root shell
+    mkdir /data/apm/sources 0775 root shell
+    mkdir /data/apm/sources/sources.list.d 0775 root shell
+    mkdir /data/ams 0775 root shell
+    mkdir /data/ams/modules 0775 root shell
+    mkdir /data/ams/overlays 0775 root shell
+    mkdir /data/ams/merged 0775 root shell
+    mkdir /data/apm-system-overlay 0755 root root
+    mkdir /data/apm-system-overlay/system 0755 root root
+    mkdir /data/apm-system-overlay/system/bin 0755 root root
+    mkdir /data/apm-system-overlay/init 0755 root root
+    mkdir /data/apm-system-overlay/sepolicy 0755 root root
+    mkdir /data/apm-system-overlay/scripts 0755 root root
+    mkdir /data/apm-system-overlay/logs 0755 root root
+    exec /system/bin/sh -c '\
+        mkdir -p /data/apm-system-overlay/system/bin /data/apm-system-overlay/init /data/apm-system-overlay/sepolicy /data/apm-system-overlay/scripts /data/apm-system-overlay/logs; \
+        cp -af /mnt/system/apm-staging/bin/. /data/apm-system-overlay/system/bin/ 2>/dev/null; \
+        cp -af /mnt/system/apm-staging/sepolicy/. /data/apm-system-overlay/sepolicy/ 2>/dev/null; \
+        cp -af /mnt/system/apm-staging/scripts/. /data/apm-system-overlay/scripts/ 2>/dev/null; \
+        cp -af /mnt/system/etc/init/init.apmd.rc /data/apm-system-overlay/init/ 2>/dev/null; \
+        touch /data/apm/apmd.pid 2>/dev/null; \
+        chown -R root:root /data/apm-system-overlay 2>/dev/null; \
+        chmod 0755 /data/apm-system-overlay/system/bin/* 2>/dev/null; \
+        chmod 0755 /data/apm-system-overlay/scripts/* 2>/dev/null; \
+        chmod 0644 /data/apm-system-overlay/init/init.apmd.rc 2>/dev/null; \
+        chmod 0644 /data/apm-system-overlay/sepolicy/*.te 2>/dev/null; \
+        chmod 0664 /data/apm/apmd.pid 2>/dev/null; \
+        if [ -x /system/bin/chcon ]; then \
+            /system/bin/chcon u:object_r:system_file:s0 /data/apm-system-overlay/init/init.apmd.rc 2>/dev/null; \
+            /system/bin/chcon u:object_r:system_file:s0 /data/apm-system-overlay/scripts/apm-overlay.sh 2>/dev/null; \
+            /system/bin/chcon u:object_r:system_file:s0 /data/apm-system-overlay/scripts/apm-sepolicy.sh 2>/dev/null; \
+            /system/bin/chcon u:object_r:apmd_exec:s0 /data/apm-system-overlay/system/bin/apmd 2>/dev/null; \
+            /system/bin/chcon u:object_r:system_file:s0 /data/apm-system-overlay/system/bin/apm 2>/dev/null; \
+            /system/bin/chcon u:object_r:system_file:s0 /data/apm-system-overlay/system/bin/apm-policy 2>/dev/null; \
+            /system/bin/chcon u:object_r:system_file:s0 /data/apm-system-overlay/system/bin/xz 2>/dev/null; \
+            /system/bin/chcon u:object_r:system_file:s0 /data/apm-system-overlay/system/bin/lzmainfo 2>/dev/null; \
+        fi; \
+        exit 0'
+    exec /system/bin/sh /data/apm-system-overlay/scripts/apm-overlay.sh
+    exec /system/bin/sh /data/apm-system-overlay/scripts/apm-sepolicy.sh
+    start apmd-bootstrap
+    start apmd
+
+service apmd-bootstrap /system/bin/sh -c '\
+    umask 0002; \
+    while ! /system/bin/grep -q "[[:space:]]/data[[:space:]]" /proc/mounts; do \
+        /system/bin/sleep 1; \
+    done; \
+    while ! /system/bin/touch /data/.apmd-ready 2>/dev/null; do \
+        /system/bin/sleep 1; \
+    done; \
+    /system/bin/rm -f /data/.apmd-ready; \
+    /system/bin/mkdir -p /data/apm/bin /data/apm/cache /data/apm/lists \
+        /data/apm/keys /data/apm/pkgs /data/apm/installed/commands \
+        /data/apm/installed/dependencies /data/apm/logs /data/apm/sources \
+        /data/apm/sources/sources.list.d /data/ams/modules \
+        /data/ams/overlays /data/ams/merged; \
+    /system/bin/chown -R root.shell /data/apm /data/ams; \
+    /system/bin/chmod 0775 /data/apm /data/apm/bin /data/apm/cache \
+        /data/apm/lists /data/apm/keys /data/apm/pkgs /data/apm/installed \
+        /data/apm/installed/commands /data/apm/installed/dependencies \
+        /data/apm/logs /data/apm/sources /data/apm/sources/sources.list.d \
+        /data/ams /data/ams/modules /data/ams/overlays /data/ams/merged; \
+    if [ -x /system/bin/restorecon ]; then \
+        /system/bin/restorecon -R /data/apm /data/ams 2>/dev/null; \
+    fi; \
+    while :; do \
+        if /system/bin/pidof apmd >/dev/null 2>&1; then \
+            exit 0; \
+        fi; \
+        /system/bin/apmd >> /data/apm/logs/apmd.log 2>&1 & \
+        /system/bin/sleep 5; \
+    done'
+    class late_start
+    oneshot
+    user root
+    group root system shell
+    seclabel u:r:init:s0
+
+service apmd /system/bin/apmd
+    class late_start
+    user root
+    group root system shell
+    seclabel u:r:init:s0

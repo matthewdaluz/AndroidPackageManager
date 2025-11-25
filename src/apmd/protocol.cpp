@@ -6,7 +6,7 @@
  *
  * File: protocol.cpp
  * Purpose: Implement IPC request/response parsing plus serialization utilities.
- * Last Modified: November 18th, 2025. - 3:00 PM Eastern Time.
+ * Last Modified: November 23rd, 2025. - 12:06 PM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -110,6 +110,8 @@ RequestType parseType(const std::string &sRaw) {
 
   if (s == "PING")
     return RequestType::Ping;
+  if (s == "AUTHENTICATE")
+    return RequestType::Authenticate;
   if (s == "UPDATE")
     return RequestType::Update;
   if (s == "INSTALL")
@@ -143,6 +145,8 @@ std::string typeToString(RequestType t) {
   switch (t) {
   case RequestType::Ping:
     return "PING";
+  case RequestType::Authenticate:
+    return "AUTHENTICATE";
   case RequestType::Update:
     return "UPDATE";
   case RequestType::Install:
@@ -207,6 +211,7 @@ bool parseRequest(const std::string &raw, Request &out, std::string *errorMsg) {
   }
 
   out.id = get("id");
+  out.sessionToken = get("session");
 
   // Commands that require packageName
   // Install/Remove use packageName
@@ -259,6 +264,18 @@ bool parseRequest(const std::string &raw, Request &out, std::string *errorMsg) {
     }
   }
 
+  if (out.type == RequestType::Authenticate) {
+    out.authAction = get("auth_action");
+    if (out.authAction.empty())
+      out.authAction = "unlock";
+    out.authSecret = get("auth_secret");
+    if (out.authSecret.empty()) {
+      if (errorMsg)
+        *errorMsg = "Missing 'auth_secret' field";
+      return false;
+    }
+  }
+
   return true;
 }
 
@@ -276,6 +293,16 @@ std::string serializeRequest(const Request &req) {
   if (!req.id.empty())
     out << "id:" << req.id << "\n";
 
+  if (!req.sessionToken.empty())
+    out << "session:" << req.sessionToken << "\n";
+
+  if (req.type == RequestType::Authenticate) {
+    if (!req.authAction.empty())
+      out << "auth_action:" << req.authAction << "\n";
+    if (!req.authSecret.empty())
+      out << "auth_secret:" << req.authSecret << "\n";
+  }
+
   if (!req.packageName.empty())
     out << "package:" << req.packageName << "\n";
 
@@ -291,7 +318,11 @@ std::string serializeRequest(const Request &req) {
     out << "module:" << req.moduleName << "\n";
 
   for (const auto &kv : req.rawFields) {
-    if (kv.first == "type" || kv.first == "id" || kv.first == "package")
+    if (kv.first == "type" || kv.first == "id" || kv.first == "package" ||
+        kv.first == "session" || kv.first == "apkPath" ||
+        kv.first == "installAsSystem" || kv.first == "module_path" ||
+        kv.first == "module" || kv.first == "auth_action" ||
+        kv.first == "auth_secret")
       continue;
     out << kv.first << ":" << kv.second << "\n";
   }

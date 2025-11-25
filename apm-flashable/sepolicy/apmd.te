@@ -1,0 +1,79 @@
+# ==========================================
+#  APMD Daemon SELinux Policy
+# ==========================================
+
+type apmd, domain;
+type apmd_exec, exec_type, file_type;
+
+# init launches apmd
+init_daemon_domain(apmd)
+
+# Allow init to execute apmd binary
+allow init apmd_exec:file { read open execute execute_no_trans };
+
+# -------------------------------------------------------
+# APM data storage (/data/apm/**)
+# -------------------------------------------------------
+
+type apm_data_file, file_type, data_file_type;
+type apm_data_dir, file_type, data_file_type;
+
+allow apmd apm_data_dir:dir { read write search add_name remove_name create getattr setattr open };
+allow apmd apm_data_file:file { read write create open getattr setattr append unlink };
+
+# -------------------------------------------------------
+# AMS module storage (/data/ams/**)
+# -------------------------------------------------------
+
+type ams_module_dir, file_type, data_file_type;
+type ams_module_file, file_type, data_file_type;
+
+allow apmd ams_module_dir:dir { read write search add_name remove_name create getattr setattr open };
+allow apmd ams_module_file:file { read write create open getattr setattr unlink };
+
+# -------------------------------------------------------
+# APMD IPC Socket
+# -------------------------------------------------------
+
+type apmd_socket, file_type;
+
+allow apmd apmd_socket:sock_file { create read write getattr setattr unlink rename };
+allow apmd unix_stream_socket:socket { create read write bind listen accept connect getopt shutdown };
+
+# Allow APM CLI to connect from the shell domain
+allow shell apmd_socket:sock_file { read write open getattr };
+allow shell apmd:unix_stream_socket connectto;
+
+# -------------------------------------------------------
+# APK Install / Package Manager
+# -------------------------------------------------------
+
+allow apmd installd_service:service_manager find;
+allow apmd installd:unix_stream_socket connectto;
+
+allow apmd system_server:unix_stream_socket connectto;
+allow apmd package_info_service:service_manager find;
+
+# -------------------------------------------------------
+# Filesystem mounting for AMS overlays
+# -------------------------------------------------------
+
+allow apmd self:capability { sys_admin dac_override dac_read_search };
+allow apmd fs_type:filesystem { mount remount unmount };
+
+allow apmd block_device:blk_file { read write open };
+
+# -------------------------------------------------------
+# Logging
+# -------------------------------------------------------
+
+allow apmd logd:unix_stream_socket connectto;
+allow apmd logd_log_file:file append;
+
+# -------------------------------------------------------
+# Tempfs for crypto/GPG intermediate buffers
+# -------------------------------------------------------
+
+allow apmd tmpfs:file { read write create open getattr setattr };
+
+

@@ -592,13 +592,38 @@ static bool parseSingleSourcesFile(const std::string &path,
         trim(key);
         trim(val);
 
-        if (key == "arch" || key == "Architectures") {
+        std::string keyLower = key;
+        std::transform(keyLower.begin(), keyLower.end(), keyLower.begin(),
+                       [](unsigned char c) {
+                         return static_cast<char>(std::tolower(c));
+                       });
+
+        if (keyLower == "arch" || keyLower == "architectures") {
           // Take first architecture if multiple
           auto commaPos = val.find(',');
           if (commaPos != std::string::npos) {
             val = val.substr(0, commaPos);
           }
           src.arch = val;
+        } else if (keyLower == "trusted") {
+          std::string valLower = val;
+          std::transform(valLower.begin(), valLower.end(), valLower.begin(),
+                         [](unsigned char c) {
+                           return static_cast<char>(std::tolower(c));
+                         });
+
+          if (valLower == "required") {
+            src.trustPolicy = RepoTrustPolicy::Require;
+          } else if (valLower == "yes" || valLower == "true" ||
+                     valLower == "1") {
+            src.trustPolicy = RepoTrustPolicy::Skip;
+          } else {
+            apm::logger::warn(
+                "loadSourcesList: unknown trusted value '" + val +
+                "' on line " + std::to_string(lineNo) + " in " + path +
+                " (defaulting to verification)");
+            src.trustPolicy = RepoTrustPolicy::Default;
+          }
         }
       }
 
@@ -1006,6 +1031,10 @@ static std::string makeReleaseUrl(const RepoSource &src) {
   return makeDistBaseUrl(src) + "/Release";
 }
 
+static std::string makeInReleaseUrl(const RepoSource &src) {
+  return makeDistBaseUrl(src) + "/InRelease";
+}
+
 static std::string makeReleaseGpgUrl(const RepoSource &src) {
   return makeDistBaseUrl(src) + "/Release.gpg";
 }
@@ -1022,6 +1051,109 @@ static std::string makeReleaseGpgFilename(const RepoSource &src,
   std::string key = src.uri + "_" + src.dist;
   key = sanitizeForFilename(key);
   return apm::fs::joinPath(listsDir, key + "_Release.gpg");
+}
+
+static std::string makeInReleaseFilename(const RepoSource &src,
+                                         const std::string &listsDir) {
+  std::string key = src.uri + "_" + src.dist;
+  key = sanitizeForFilename(key);
+  return apm::fs::joinPath(listsDir, key + "_InRelease");
+}
+
+static std::string normalizeToCrLf(const std::string &text) {
+  std::string out;
+  out.reserve(text.size() + text.size() / 4 + 2);
+
+  for (char c : text) {
+    if (c == '\r')
+      continue;
+    if (c == '\n') {
+      out.append("\r\n");
+    } else {
+      out.push_back(c);
+    }
+  }
+
+  return out;
+}
+
+struct InReleaseParts {
+  std::string releaseText;
+  std::string signatureBlock;
+};
+
+static bool parseInReleaseFile(const std::string &path, InReleaseParts &out,
+                               std::string *errorMsg) {
+  std::string content;
+  if (!apm::fs::readFile(path, content)) {
+    if (errorMsg)
+      *errorMsg = "Failed to read InRelease: " + path;
+    return false;
+  }
+
+  std::istringstream in(content);
+  std::string line;
+  bool sawBegin = false;
+  bool inHeaders = false;
+  bool inSig = false;
+  std::ostringstream releaseBuf;
+  std::ostringstream sigBuf;
+
+  while (std::getline(in, line)) {
+    if (!line.empty() && line.back() == '\r') {
+      line.pop_back();
+    }
+
+    if (!sawBegin) {
+      if (line == "-----BEGIN PGP SIGNED MESSAGE-----") {
+        sawBegin = true;
+        inHeaders = true;
+      }
+      continue;
+    }
+
+    if (inSig) {
+      sigBuf << line << "\n";
+      continue;
+    }
+
+    if (line == "-----BEGIN PGP SIGNATURE-----") {
+      inSig = true;
+      sigBuf << line << "\n";
+      continue;
+    }
+
+    if (inHeaders) {
+      if (line.empty()) {
+        inHeaders = false;
+      }
+      continue;
+    }
+
+    if (!line.empty() && line.size() >= 2 && line[0] == '-' &&
+        line[1] == ' ') {
+      line.erase(0, 2);
+    }
+
+    releaseBuf << line << "\n";
+  }
+
+  if (!sawBegin) {
+    if (errorMsg)
+      *errorMsg = "InRelease missing cleartext signature header";
+    return false;
+  }
+
+  std::string sigBlock = sigBuf.str();
+  if (sigBlock.find("-----END PGP SIGNATURE-----") == std::string::npos) {
+    if (errorMsg)
+      *errorMsg = "InRelease missing signature trailer";
+    return false;
+  }
+
+  out.releaseText = normalizeToCrLf(releaseBuf.str());
+  out.signatureBlock = std::move(sigBlock);
+  return true;
 }
 
 // Download Release/Packages metadata for every repo/component combination and
@@ -1070,44 +1202,106 @@ bool updateFromSourcesList(const std::string &sourcesPath,
     };
 
     // ---------------------------------------------------------
-    // 1) Download and verify Release + Release.gpg
+    // 1) Download and verify Release (+ InRelease fallback)
     // ---------------------------------------------------------
     std::string relUrl = makeReleaseUrl(src);
+    std::string inRelUrl = makeInReleaseUrl(src);
     std::string relGpgUrl = makeReleaseGpgUrl(src);
 
     std::string relPath = makeReleaseFilename(src, listsDir);
     std::string relGpgPath = makeReleaseGpgFilename(src, listsDir);
+    std::string inRelPath = makeInReleaseFilename(src, listsDir);
 
     std::string dlErr;
+    bool releaseReady = false;
+    bool signatureReady = false;
 
-    auto relCb = makeDownloadCallback(RepoUpdateStage::DownloadRelease,
-                                      "Release", nullptr);
-    if (!apm::net::downloadFile(relUrl, relPath, &dlErr, relCb)) {
-      apm::logger::warn("updateFromSourcesList: failed to download Release " +
-                        relUrl + ": " + dlErr);
-      // Skip this source entirely
+    // Prefer InRelease (clear-signed) where available
+    auto inRelCb = makeDownloadCallback(RepoUpdateStage::DownloadRelease,
+                                        "InRelease", nullptr);
+    if (apm::net::downloadFile(inRelUrl, inRelPath, &dlErr, inRelCb)) {
+      InReleaseParts parts;
+      std::string inErr;
+      if (parseInReleaseFile(inRelPath, parts, &inErr)) {
+        if (apm::fs::writeFile(relPath, parts.releaseText, false)) {
+          releaseReady = true;
+        } else {
+          apm::logger::warn(
+              "updateFromSourcesList: failed to store Release contents from "
+              "InRelease for " +
+              src.uri + " " + src.dist);
+        }
+
+        if (!parts.signatureBlock.empty()) {
+          if (apm::fs::writeFile(relGpgPath, parts.signatureBlock, false)) {
+            signatureReady = true;
+          } else {
+            apm::logger::warn(
+                "updateFromSourcesList: failed to store inline signature for " +
+                src.uri + " " + src.dist);
+          }
+        }
+      } else {
+        apm::logger::warn("updateFromSourcesList: unable to parse InRelease " +
+                          inRelUrl + ": " + inErr);
+      }
+    } else if (!dlErr.empty()) {
+      apm::logger::info("updateFromSourcesList: InRelease not available at " +
+                        inRelUrl + ": " + dlErr);
+    }
+
+    // Fallback to Release + Release.gpg if needed
+    if (!releaseReady) {
+      dlErr.clear();
+      auto relCb = makeDownloadCallback(RepoUpdateStage::DownloadRelease,
+                                        "Release", nullptr);
+      if (!apm::net::downloadFile(relUrl, relPath, &dlErr, relCb)) {
+        apm::logger::warn(
+            "updateFromSourcesList: failed to download Release " + relUrl +
+            ": " + dlErr);
+        continue;
+      }
+      releaseReady = true;
+
+      dlErr.clear();
+      auto relGpgCb = makeDownloadCallback(
+          RepoUpdateStage::DownloadReleaseSignature, "Release.gpg", nullptr);
+      if (apm::net::downloadFile(relGpgUrl, relGpgPath, &dlErr, relGpgCb)) {
+        signatureReady = true;
+      } else {
+        apm::logger::warn("updateFromSourcesList: Release.gpg missing at " +
+                          relGpgUrl + ": " + dlErr);
+      }
+    }
+
+    if (!releaseReady) {
+      apm::logger::warn("updateFromSourcesList: no Release metadata for " +
+                        src.uri + " " + src.dist);
       continue;
     }
 
-    auto relGpgCb = makeDownloadCallback(
-        RepoUpdateStage::DownloadReleaseSignature, "Release.gpg", nullptr);
-    if (!apm::net::downloadFile(relGpgUrl, relGpgPath, &dlErr, relGpgCb)) {
-      apm::logger::warn(
-          "updateFromSourcesList: failed to download Release.gpg " + relGpgUrl +
-          ": " + dlErr);
-      // Skip this source entirely
-      continue;
-    }
+    bool shouldVerify = src.trustPolicy != RepoTrustPolicy::Skip;
 
-    // Verify GPG signature
-    std::string sigErr;
-    if (!apm::crypto::verifyDetachedSignature(
-            relPath, relGpgPath, apm::config::TRUSTED_KEYS_DIR, &sigErr)) {
-      apm::logger::warn(
-          "updateFromSourcesList: Release signature verification failed for " +
-          src.uri + " " + src.dist + ": " + sigErr);
-      // Skip this source entirely
-      continue;
+    if (shouldVerify) {
+      if (!signatureReady) {
+        apm::logger::warn("updateFromSourcesList: no Release signature found "
+                          "for " +
+                          src.uri + " " + src.dist);
+        continue;
+      }
+
+      std::string sigErr;
+      if (!apm::crypto::verifyDetachedSignature(
+              relPath, relGpgPath, apm::config::TRUSTED_KEYS_DIR, &sigErr)) {
+        apm::logger::warn("updateFromSourcesList: Release signature "
+                          "verification failed for " +
+                          src.uri + " " + src.dist + ": " + sigErr);
+        continue;
+      }
+    } else {
+      apm::logger::info(
+          "updateFromSourcesList: trusted=yes for " + src.uri + " " + src.dist +
+          " – skipping Release signature verification");
     }
 
     // Parse Release for SHA256 entries

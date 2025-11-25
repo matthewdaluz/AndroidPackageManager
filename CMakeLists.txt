@@ -5,10 +5,21 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+include(FetchContent)
+
 if(POLICY CMP0077)
   cmake_policy(SET CMP0077 NEW)
   set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
 endif()
+
+find_package(Git QUIET)
+find_program(PATCH_EXECUTABLE patch)
+
+function(apm_require_program program_path pretty_name reason)
+  if(NOT program_path)
+    message(FATAL_ERROR "${pretty_name} is required ${reason}. Install the prerequisites listed in README.md.")
+  endif()
+endfunction()
 
 # ======================================================
 # Android NDK Setup
@@ -81,7 +92,7 @@ endif()
 find_package(ZLIB QUIET)
 if(NOT ZLIB_FOUND)
   message(STATUS "ZLIB not found, downloading and building...")
-  include(FetchContent)
+  apm_require_program("${GIT_EXECUTABLE}" "git" "to fetch the bundled zlib source")
 
   # Use a known version that has good CMake support
   FetchContent_Declare(
@@ -135,10 +146,12 @@ if(APM_USE_SYSTEM_CURL)
   find_package(CURL QUIET)
 endif()
 
+set(APM_BUNDLED_TLS_LIBS "")
 if(NOT CURL_FOUND)
   message(STATUS "Falling back to bundled libcurl and mbedTLS")
   set(APM_USE_SYSTEM_CURL OFF CACHE BOOL "Prefer system-installed libcurl" FORCE)
-  include(FetchContent)
+  apm_require_program("${GIT_EXECUTABLE}" "git" "to fetch the bundled curl/mbedTLS sources")
+  apm_require_program("${PATCH_EXECUTABLE}" "patch" "to apply bundled curl/mbedTLS patches")
 
   set(_APM_PREV_ENABLE_TESTING_DEFINED FALSE)
   set(_APM_PREV_ENABLE_TESTING_CACHE FALSE)
@@ -194,6 +207,7 @@ if(NOT CURL_FOUND)
   set(MBEDX509_LIBRARY "${_APM_MBEDTLS_LIBDIR}/libmbedx509.a" CACHE FILEPATH "Bundled mbedx509 library" FORCE)
   set(MBEDCRYPTO_LIBRARY "${_APM_MBEDTLS_LIBDIR}/libmbedcrypto.a" CACHE FILEPATH "Bundled mbedcrypto library" FORCE)
   set(MBEDTLS_LIBRARIES "${MBEDTLS_LIBRARY};${MBEDX509_LIBRARY};${MBEDCRYPTO_LIBRARY}" CACHE STRING "Bundled mbedTLS libraries" FORCE)
+  set(APM_BUNDLED_TLS_LIBS ${MBEDTLS_LIBRARIES})
 
   set(BUILD_CURL_EXE OFF)
   set(ENABLE_ARES OFF)
@@ -270,6 +284,103 @@ if(NOT CURL_FOUND)
   unset(_APM_MBEDTLS_LIBDIR)
 endif()
 
+# Ensure mbedTLS is available even when using the system curl.
+if(NOT DEFINED MBEDTLS_LIBRARIES OR MBEDTLS_LIBRARIES STREQUAL "")
+  apm_require_program("${PATCH_EXECUTABLE}" "patch" "to apply bundled mbedTLS patches")
+
+  set(_APM_PREV_ENABLE_TESTING_CACHE FALSE)
+  set(_APM_PREV_ENABLE_TESTING_DEFINED FALSE)
+  if(DEFINED CACHE{ENABLE_TESTING})
+    set(_APM_PREV_ENABLE_TESTING_CACHE TRUE)
+    set(_APM_PREV_ENABLE_TESTING "${CACHE{ENABLE_TESTING}}")
+  elseif(DEFINED ENABLE_TESTING)
+    set(_APM_PREV_ENABLE_TESTING_DEFINED TRUE)
+    set(_APM_PREV_ENABLE_TESTING "${ENABLE_TESTING}")
+  endif()
+
+  set(_APM_PREV_ENABLE_PROGRAMS_CACHE FALSE)
+  set(_APM_PREV_ENABLE_PROGRAMS_DEFINED FALSE)
+  if(DEFINED CACHE{ENABLE_PROGRAMS})
+    set(_APM_PREV_ENABLE_PROGRAMS_CACHE TRUE)
+    set(_APM_PREV_ENABLE_PROGRAMS "${CACHE{ENABLE_PROGRAMS}}")
+  elseif(DEFINED ENABLE_PROGRAMS)
+    set(_APM_PREV_ENABLE_PROGRAMS_DEFINED TRUE)
+    set(_APM_PREV_ENABLE_PROGRAMS "${ENABLE_PROGRAMS}")
+  endif()
+
+  set(_APM_PREV_BUILD_SHARED_LIBS_CACHE FALSE)
+  set(_APM_PREV_BUILD_SHARED_LIBS_DEFINED FALSE)
+  if(DEFINED CACHE{BUILD_SHARED_LIBS})
+    set(_APM_PREV_BUILD_SHARED_LIBS_CACHE TRUE)
+    set(_APM_PREV_BUILD_SHARED_LIBS "${CACHE{BUILD_SHARED_LIBS}}")
+  elseif(DEFINED BUILD_SHARED_LIBS)
+    set(_APM_PREV_BUILD_SHARED_LIBS_DEFINED TRUE)
+    set(_APM_PREV_BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS}")
+  endif()
+
+  set(ENABLE_TESTING OFF)
+  set(ENABLE_PROGRAMS OFF)
+  set(BUILD_SHARED_LIBS OFF)
+  set(MBEDTLS_FATAL_WARNINGS OFF)
+  set(DISABLE_PACKAGE_CONFIG_AND_INSTALL OFF)
+
+  set(_APM_MBEDTLS_PATCH "${CMAKE_SOURCE_DIR}/cmake/patches/mbedtls-disable-tls13.patch")
+
+  FetchContent_Declare(
+    mbedtls
+    URL https://github.com/Mbed-TLS/mbedtls/releases/download/v3.6.0/mbedtls-3.6.0.tar.bz2
+    URL_HASH SHA256=3ecf94fcfdaacafb757786a01b7538a61750ebd85c4b024f56ff8ba1490fcd38
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    PATCH_COMMAND ${CMAKE_COMMAND} -E chdir <SOURCE_DIR>
+                  patch -p1 -N -i "${_APM_MBEDTLS_PATCH}"
+  )
+  FetchContent_MakeAvailable(mbedtls)
+  set(_APM_MBEDTLS_LIBDIR "${mbedtls_BINARY_DIR}/library")
+  set(MBEDTLS_INCLUDE_DIRS "${mbedtls_SOURCE_DIR}/include" CACHE PATH "Bundled mbedTLS includes" FORCE)
+  set(MBEDTLS_LIBRARY "${_APM_MBEDTLS_LIBDIR}/libmbedtls.a" CACHE FILEPATH "Bundled mbedtls library" FORCE)
+  set(MBEDX509_LIBRARY "${_APM_MBEDTLS_LIBDIR}/libmbedx509.a" CACHE FILEPATH "Bundled mbedx509 library" FORCE)
+  set(MBEDCRYPTO_LIBRARY "${_APM_MBEDTLS_LIBDIR}/libmbedcrypto.a" CACHE FILEPATH "Bundled mbedcrypto library" FORCE)
+  set(MBEDTLS_LIBRARIES "${MBEDTLS_LIBRARY};${MBEDX509_LIBRARY};${MBEDCRYPTO_LIBRARY}" CACHE STRING "Bundled mbedTLS libraries" FORCE)
+  if(NOT APM_BUNDLED_TLS_LIBS)
+    set(APM_BUNDLED_TLS_LIBS ${MBEDTLS_LIBRARIES})
+  endif()
+
+  if(_APM_PREV_ENABLE_TESTING_CACHE)
+    set(ENABLE_TESTING "${_APM_PREV_ENABLE_TESTING}" CACHE BOOL "" FORCE)
+  elseif(_APM_PREV_ENABLE_TESTING_DEFINED)
+    set(ENABLE_TESTING "${_APM_PREV_ENABLE_TESTING}")
+  else()
+    unset(ENABLE_TESTING CACHE)
+  endif()
+
+  if(_APM_PREV_ENABLE_PROGRAMS_CACHE)
+    set(ENABLE_PROGRAMS "${_APM_PREV_ENABLE_PROGRAMS}" CACHE BOOL "" FORCE)
+  elseif(_APM_PREV_ENABLE_PROGRAMS_DEFINED)
+    set(ENABLE_PROGRAMS "${_APM_PREV_ENABLE_PROGRAMS}")
+  else()
+    unset(ENABLE_PROGRAMS CACHE)
+  endif()
+
+  if(_APM_PREV_BUILD_SHARED_LIBS_CACHE)
+    set(BUILD_SHARED_LIBS "${_APM_PREV_BUILD_SHARED_LIBS}" CACHE BOOL "" FORCE)
+  elseif(_APM_PREV_BUILD_SHARED_LIBS_DEFINED)
+    set(BUILD_SHARED_LIBS "${_APM_PREV_BUILD_SHARED_LIBS}")
+  else()
+    unset(BUILD_SHARED_LIBS CACHE)
+  endif()
+
+  unset(_APM_PREV_ENABLE_TESTING_CACHE)
+  unset(_APM_PREV_ENABLE_TESTING)
+  unset(_APM_PREV_ENABLE_TESTING_DEFINED)
+  unset(_APM_PREV_ENABLE_PROGRAMS_CACHE)
+  unset(_APM_PREV_ENABLE_PROGRAMS)
+  unset(_APM_PREV_ENABLE_PROGRAMS_DEFINED)
+  unset(_APM_PREV_BUILD_SHARED_LIBS_CACHE)
+  unset(_APM_PREV_BUILD_SHARED_LIBS)
+  unset(_APM_PREV_BUILD_SHARED_LIBS_DEFINED)
+  unset(_APM_MBEDTLS_LIBDIR)
+endif()
+
 # ======================================================
 # APM Client Binary
 # ======================================================
@@ -295,6 +406,7 @@ add_executable(apm
     src/core/status_db.cpp
     src/core/manual_package.cpp
     src/core/release_parser.cpp
+    src/core/security.cpp
     src/ams/module_info.cpp
     src/ams/module_manager.cpp
     src/util/crypto/sha256.cpp
@@ -312,10 +424,15 @@ target_include_directories(apm PRIVATE
     src/util/include
     src/util/crypto
     src/apm/commands/include
+    ${MBEDTLS_INCLUDE_DIRS}
     include
 )
 
-target_link_libraries(apm PRIVATE CURL::libcurl ZLIB::ZLIB)
+target_link_libraries(apm PRIVATE
+    CURL::libcurl
+    ZLIB::ZLIB
+    ${APM_BUNDLED_TLS_LIBS}
+)
 
 # ======================================================
 # APM Daemon Binary
@@ -327,6 +444,7 @@ add_executable(apmd
     src/apmd/install_manager.cpp
     src/apmd/export_path.cpp
     src/apmd/apk_installer.cpp
+    src/apmd/mbedtls_client.cpp
 
     src/core/control_parser.cpp
     src/core/deb_extractor.cpp
@@ -338,6 +456,7 @@ add_executable(apmd
     src/core/status_db.cpp
     src/core/manual_package.cpp
     src/core/release_parser.cpp
+    src/core/security.cpp
     src/ams/module_info.cpp
     src/ams/module_manager.cpp
     src/util/crypto/sha256.cpp
@@ -345,6 +464,8 @@ add_executable(apmd
 
     src/util/fs.cpp
     src/util/crypto/sha256.cpp
+
+    src/apmd/security_manager.cpp
 )
 
 target_include_directories(apmd PRIVATE
@@ -354,7 +475,44 @@ target_include_directories(apmd PRIVATE
     src/util/include
     src/util/crypto
     src/apm/commands/include
+    ${MBEDTLS_INCLUDE_DIRS}
     include
 )
 
-target_link_libraries(apmd PRIVATE CURL::libcurl ZLIB::ZLIB)
+target_link_libraries(apmd PRIVATE
+    CURL::libcurl
+    ZLIB::ZLIB
+    ${APM_BUNDLED_TLS_LIBS}
+)
+
+if(TARGET mbedcrypto)
+  add_dependencies(apm mbedcrypto)
+  add_dependencies(apmd mbedcrypto)
+endif()
+
+if(TARGET mbedx509)
+  add_dependencies(apm mbedx509)
+  add_dependencies(apmd mbedx509)
+endif()
+
+if(TARGET mbedtls)
+  add_dependencies(apm mbedtls)
+  add_dependencies(apmd mbedtls)
+endif()
+
+# ======================================================
+# APM Policy Injector
+# ======================================================
+add_executable(apm-policy
+    src/selinux/apm_policy.cpp
+    src/selinux/policy_parser.cpp
+    src/selinux/te_parser.cpp
+    src/core/logger.cpp
+    src/util/fs.cpp
+)
+
+target_include_directories(apm-policy PRIVATE
+    src/selinux/include
+    src/core/include
+    src/util/include
+)

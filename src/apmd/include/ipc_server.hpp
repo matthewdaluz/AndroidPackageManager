@@ -6,7 +6,7 @@
  *
  * File: ipc_server.hpp
  * Purpose: Declare the UNIX domain socket server that accepts CLI connections for apmd.
- * Last Modified: November 18th, 2025. - 3:00 PM Eastern Time.
+ * Last Modified: November 23rd, 2025. - 12:06 PM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -27,6 +27,7 @@
 #pragma once
 
 #include "ams/module_manager.hpp"
+#include "security_manager.hpp"
 
 #include <string>
 
@@ -53,6 +54,7 @@ private:
   std::string m_socketPath;
   bool m_running;
   apm::ams::ModuleManager &m_moduleManager;
+  apm::daemon::SecurityManager m_securityManager;
 
   void handleClient(int clientFd);
 };
