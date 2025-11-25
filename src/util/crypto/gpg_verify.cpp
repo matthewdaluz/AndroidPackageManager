@@ -6,7 +6,7 @@
  *
  * File: gpg_verify.cpp
  * Purpose: Implement OpenPGP RSA/SHA256 detached signature verification and key import helpers.
- * Last Modified: November 23rd, 2025. - 2:52 PM Eastern Time.
+ * Last Modified: November 25th, 2025. - 11:35 AM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -34,10 +34,9 @@
 #include <array>
 #include <cctype>
 #include <cstdint>
-#include <filesystem>
+#include <cerrno>
 #include <fstream>
 #include <sstream>
-#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -79,10 +78,11 @@ std::string formatMbedError(int code) {
   return std::string(buf);
 }
 
-bool isTrustedKeyFile(const std::filesystem::path &p) {
-  if (!p.has_extension())
+bool isTrustedKeyFile(const std::string &path) {
+  auto dotPos = path.find_last_of('.');
+  if (dotPos == std::string::npos)
     return false;
-  std::string ext = p.extension().string();
+  std::string ext = path.substr(dotPos);
   std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) {
     return static_cast<char>(std::tolower(c));
   });
@@ -799,36 +799,25 @@ bool verifyDetachedSignature(const std::string &dataPath,
     return false;
   }
 
-  std::error_code existsErr;
-  if (!std::filesystem::exists(trustedKeysDir, existsErr) || existsErr) {
-    if (errorMsg) {
-      if (existsErr)
-        *errorMsg = "Trusted keys directory missing: " + trustedKeysDir +
-                    " (" + existsErr.message() + ")";
-      else
-        *errorMsg = "Trusted keys directory missing: " + trustedKeysDir;
-    }
+  if (!apm::fs::isDirectory(trustedKeysDir)) {
+    if (errorMsg)
+      *errorMsg = "Trusted keys directory missing: " + trustedKeysDir;
     return false;
   }
 
   bool anyKey = false;
   std::string lastErr;
 
-  std::error_code iterErr;
-  std::filesystem::directory_iterator it(trustedKeysDir, iterErr);
-  if (iterErr) {
-    if (errorMsg)
-      *errorMsg = "Failed to read trusted keys directory: " +
-                  iterErr.message();
-    return false;
-  }
-
-  std::filesystem::directory_iterator end;
-  for (auto entry = it; entry != end; ++entry) {
-    if (!entry->is_regular_file())
+  auto entries = apm::fs::listDir(trustedKeysDir, false);
+  for (const auto &entryName : entries) {
+    if (entryName.empty() || entryName == "." || entryName == "..")
       continue;
 
-    if (!isTrustedKeyFile(entry->path()))
+    std::string path = apm::fs::joinPath(trustedKeysDir, entryName);
+    if (!apm::fs::isRegularFile(path))
+      continue;
+
+    if (!isTrustedKeyFile(path))
       continue;
 
     anyKey = true;
@@ -836,9 +825,8 @@ bool verifyDetachedSignature(const std::string &dataPath,
     std::string fingerprint;
     std::string keyErr;
 
-    if (!loadKeyFile(entry->path().string(), key, fingerprint, &keyErr)) {
-      apm::logger::warn("Skipping key " + entry->path().string() + ": " +
-                        keyErr);
+    if (!loadKeyFile(path, key, fingerprint, &keyErr)) {
+      apm::logger::warn("Skipping key " + path + ": " + keyErr);
       lastErr = keyErr;
       continue;
     }
@@ -846,8 +834,7 @@ bool verifyDetachedSignature(const std::string &dataPath,
     std::vector<uint8_t> sigPadded;
     if (!normalizeSignature(sig.signatureMpi, key.keyBytes, sigPadded,
                             &keyErr)) {
-      apm::logger::warn("Skipping key " + entry->path().string() + ": " +
-                        keyErr);
+      apm::logger::warn("Skipping key " + path + ": " + keyErr);
       lastErr = keyErr;
       continue;
     }

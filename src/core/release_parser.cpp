@@ -6,7 +6,7 @@
  *
  * File: release_parser.cpp
  * Purpose: Implement parsing of Release files and SHA256 lookups.
- * Last Modified: November 18th, 2025. - 3:00 PM Eastern Time.
+ * Last Modified: November 25th, 2025. - 11:35 AM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -31,6 +31,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
+#include <cstdlib>
 #include <sstream>
 
 namespace apm::repo {
@@ -108,10 +110,14 @@ bool parseReleaseFile(const std::string &path, ReleaseInfo &out,
       entry.hash = hash;
       entry.name = name;
 
-      try {
-        entry.size = static_cast<std::size_t>(std::stoull(sizeStr));
-      } catch (...) {
+      errno = 0;
+      char *end = nullptr;
+      unsigned long long parsed =
+          std::strtoull(sizeStr.c_str(), &end, 10);
+      if (errno != 0 || end == sizeStr.c_str()) {
         entry.size = 0;
+      } else {
+        entry.size = static_cast<std::size_t>(parsed);
       }
 
       out.sha256.push_back(std::move(entry));

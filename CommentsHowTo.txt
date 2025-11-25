@@ -1,12 +1,14 @@
+Below is what the top of every file should have.
+
 /*
  * APM - Android Package Manager
  *
  * RedHead Industries - Technologies Branch
  * Copyright (C) 2025 RedHead Industries
  *
- * File: te_parser.hpp
- * Purpose: Declare a tiny .te parser for apm-policy.
- * Last Modified: February 18th, 2025.
+ * File: <File name here>
+ * Purpose: <Short description of what the code file does here>
+ * Last Modified: <Insert current date and time here>
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -23,30 +25,3 @@
  * along with APM. If not, see <https://www.gnu.org/licenses/>.
  *
  */
-
-#pragma once
-
-#include <string>
-#include <vector>
-
-namespace apm::selinux {
-
-struct TeRule {
-  enum class Kind { Type, TypeAttribute, Allow, DontAudit };
-
-  Kind kind{};
-  std::string lhs;
-  std::string rhs;
-  std::string tclass;
-  std::vector<std::string> perms;
-};
-
-struct TePolicy {
-  std::vector<TeRule> rules;
-  std::vector<std::string> warnings;
-};
-
-bool parseTeFile(const std::string &path, TePolicy &out, std::string &error);
-
-} // namespace apm::selinux
-

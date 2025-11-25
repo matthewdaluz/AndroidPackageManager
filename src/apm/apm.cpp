@@ -6,7 +6,7 @@
  *
  * File: apm.cpp
  * Purpose: Implement the apm CLI, including local commands and IPC-backed operations.
- * Last Modified: November 23rd, 2025. - 2:52 PM Eastern Time.
+ * Last Modified: November 25th, 2025. - 11:35 AM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -43,6 +43,7 @@
 #include <cerrno>
 #include <cctype>
 #include <chrono>
+#include <cstdlib>
 #include <cstdint>
 #include <cstring>
 #include <dirent.h>
@@ -85,6 +86,33 @@ static std::string formatSpeed(double bytesPerSec) {
   if (bytesPerSec <= 0.0)
     return "0B/s";
   return humanReadableBytes(bytesPerSec) + "/s";
+}
+
+// Parse unsigned integers safely without exceptions (Android builds disable
+// C++ exceptions).
+static std::uint64_t parseUintSafe(const std::string &value) {
+  if (value.empty())
+    return 0;
+
+  errno = 0;
+  char *end = nullptr;
+  unsigned long long parsed = std::strtoull(value.c_str(), &end, 10);
+  if (errno != 0 || end == value.c_str())
+    return 0;
+  return static_cast<std::uint64_t>(parsed);
+}
+
+// Parse doubles safely without exceptions.
+static double parseDoubleSafe(const std::string &value) {
+  if (value.empty())
+    return 0.0;
+
+  errno = 0;
+  char *end = nullptr;
+  double parsed = std::strtod(value.c_str(), &end);
+  if (errno != 0 || end == value.c_str())
+    return 0.0;
+  return parsed;
 }
 
 static std::string buildProgressBar(double ratio) {
@@ -810,26 +838,6 @@ int cmdUpdate(const std::string &socketPath,
     bool lineActive = false;
   } ui;
 
-  auto parseUint = [](const std::string &value) -> std::uint64_t {
-    if (value.empty())
-      return 0;
-    try {
-      return static_cast<std::uint64_t>(std::stoull(value));
-    } catch (...) {
-      return 0;
-    }
-  };
-
-  auto parseDouble = [](const std::string &value) -> double {
-    if (value.empty())
-      return 0.0;
-    try {
-      return std::stod(value);
-    } catch (...) {
-      return 0.0;
-    }
-  };
-
   auto onProgress = [&](const apm::ipc::Response &chunk) {
     auto eventIt = chunk.rawFields.find("event");
     if (eventIt == chunk.rawFields.end() || eventIt->second != "repo-update")
@@ -863,10 +871,10 @@ int cmdUpdate(const std::string &socketPath,
       label = getField("repo") + " - " + description;
     }
 
-    const std::uint64_t current = parseUint(getField("bytes"));
-    const std::uint64_t total = parseUint(getField("total"));
-    const double dlSpeed = parseDouble(getField("dl_speed"));
-    const double ulSpeed = parseDouble(getField("ul_speed"));
+    const std::uint64_t current = parseUintSafe(getField("bytes"));
+    const std::uint64_t total = parseUintSafe(getField("total"));
+    const double dlSpeed = parseDoubleSafe(getField("dl_speed"));
+    const double ulSpeed = parseDoubleSafe(getField("ul_speed"));
     const bool finished = getField("finished") == "1";
     const double ratio =
         total > 0 ? static_cast<double>(current) / static_cast<double>(total)
@@ -997,26 +1005,6 @@ int cmdInstall(const std::string &socketPath,
     bool lineActive = false;
   } ui;
 
-  auto parseUint = [](const std::string &value) -> std::uint64_t {
-    if (value.empty())
-      return 0;
-    try {
-      return static_cast<std::uint64_t>(std::stoull(value));
-    } catch (...) {
-      return 0;
-    }
-  };
-
-  auto parseDouble = [](const std::string &value) -> double {
-    if (value.empty())
-      return 0.0;
-    try {
-      return std::stod(value);
-    } catch (...) {
-      return 0.0;
-    }
-  };
-
   auto onProgress = [&](const apm::ipc::Response &chunk) {
     auto eventIt = chunk.rawFields.find("event");
     if (eventIt == chunk.rawFields.end() ||
@@ -1041,10 +1029,10 @@ int cmdInstall(const std::string &socketPath,
     if (fileLabel.empty())
       fileLabel = pkgName;
 
-    const std::uint64_t current = parseUint(getField("bytes"));
-    const std::uint64_t total = parseUint(getField("total"));
-    const double dlSpeed = parseDouble(getField("dl_speed"));
-    const double ulSpeed = parseDouble(getField("ul_speed"));
+    const std::uint64_t current = parseUintSafe(getField("bytes"));
+    const std::uint64_t total = parseUintSafe(getField("total"));
+    const double dlSpeed = parseDoubleSafe(getField("dl_speed"));
+    const double ulSpeed = parseDoubleSafe(getField("ul_speed"));
     const bool finished = getField("finished") == "1";
     const double ratio =
         total > 0 ? static_cast<double>(current) / static_cast<double>(total)

@@ -1,0 +1,130 @@
+/*
+ * APM - Android Package Manager
+ *
+ * RedHead Industries - Technologies Branch
+ * Copyright (C) 2025 RedHead Industries
+ *
+ * File: Android.bp
+ * Purpose: Define Soong build targets for the apm CLI, the apmd daemon, and supporting licensing metadata.
+ * Last Modified: November 25th, 2025. - 11:21 AM Eastern Time.
+ * Author: Matthew DaLuz - RedHead Founder
+ *
+ * APM is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * APM is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with APM. If not, see <https://www.gnu.org/licenses/>.
+ *
+ */
+
+package {
+    default_applicable_licenses: ["apm_license"],
+}
+
+license {
+    name: "apm_license",
+    license_kinds: ["SPDX-license-identifier-GPL-3.0-or-later"],
+    license_text: ["LICENSE"],
+}
+
+cc_defaults {
+    name: "apm_cc_defaults",
+    cpp_std: "c++17",
+    stl: "libc++_static",
+    shared_libs: [
+        "libcurl",
+        "libz",
+        "libmbedtls",
+        "libmbedcrypto",
+        "libmbedx509",
+    ],
+}
+
+cc_binary {
+    name: "apm",
+    defaults: ["apm_cc_defaults"],
+    srcs: [
+        "src/apm/apm.cpp",
+        "src/apm/ipc_client.cpp",
+        "src/apm/commands/apk_install.cpp",
+        "src/apm/commands/list.cpp",
+        "src/apm/commands/info.cpp",
+        "src/apm/commands/search.cpp",
+        "src/apmd/apk_installer.cpp",
+        "src/apmd/export_path.cpp",
+        "src/apmd/protocol.cpp",
+        "src/core/control_parser.cpp",
+        "src/core/deb_extractor.cpp",
+        "src/core/repo_index.cpp",
+        "src/core/dependency.cpp",
+        "src/core/logger.cpp",
+        "src/core/tar_extractor.cpp",
+        "src/core/downloader.cpp",
+        "src/core/status_db.cpp",
+        "src/core/manual_package.cpp",
+        "src/core/release_parser.cpp",
+        "src/core/security.cpp",
+        "src/ams/module_info.cpp",
+        "src/ams/module_manager.cpp",
+        "src/util/crypto/sha256.cpp",
+        "src/util/crypto/gpg_verify.cpp",
+        "src/util/fs.cpp",
+    ],
+    local_include_dirs: [
+        "src/apm/include",
+        "src/apmd/include",
+        "src/ams/include",
+        "src/core/include",
+        "src/util/include",
+        "src/util/crypto",
+        "src/apm/commands/include",
+    ],
+}
+
+cc_binary {
+    name: "apmd",
+    defaults: ["apm_cc_defaults"],
+    srcs: [
+        "src/apmd/apmd.cpp",
+        "src/apmd/ipc_server.cpp",
+        "src/apmd/install_manager.cpp",
+        "src/apmd/export_path.cpp",
+        "src/apmd/apk_installer.cpp",
+        "src/apmd/mbedtls_client.cpp",
+        "src/apmd/protocol.cpp",
+        "src/apmd/security_manager.cpp",
+        "src/core/control_parser.cpp",
+        "src/core/deb_extractor.cpp",
+        "src/core/repo_index.cpp",
+        "src/core/dependency.cpp",
+        "src/core/logger.cpp",
+        "src/core/tar_extractor.cpp",
+        "src/core/downloader.cpp",
+        "src/core/status_db.cpp",
+        "src/core/manual_package.cpp",
+        "src/core/release_parser.cpp",
+        "src/core/security.cpp",
+        "src/ams/module_info.cpp",
+        "src/ams/module_manager.cpp",
+        "src/util/crypto/sha256.cpp",
+        "src/util/crypto/gpg_verify.cpp",
+        "src/util/fs.cpp",
+    ],
+    local_include_dirs: [
+        "src/apm/include",
+        "src/apmd/include",
+        "src/ams/include",
+        "src/core/include",
+        "src/util/include",
+        "src/util/crypto",
+        "src/apm/commands/include",
+    ],
+    init_rc: ["init.apmd.rc"],
+}

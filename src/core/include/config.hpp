@@ -35,7 +35,8 @@ inline constexpr const char *INSTALLED_DIR = "/data/apm/installed";
 inline constexpr const char *COMMANDS_DIR = "/data/apm/installed/commands";
 inline constexpr const char *DEPENDENCIES_DIR =
     "/data/apm/installed/dependencies";
-inline constexpr const char *TERMUX_INSTALLED_DIR = "/data/apm/installed/termux";
+inline constexpr const char *TERMUX_INSTALLED_DIR =
+    "/data/apm/installed/termux";
 inline constexpr const char *COMMANDS_PATH_HELPER =
     "/data/apm/installed/commands/apm-path.sh";
 inline constexpr const char *COMMANDS_EXPORT_SCRIPT =
@@ -84,7 +85,7 @@ inline constexpr const char *SOURCES_LIST_D =
 inline constexpr const char *SOURCES_LIST = SOURCES_DIR;
 
 // apmd UNIX socket
-inline constexpr const char *SOCKET_PATH = "/data/apm/apmd.sock";
+inline constexpr const char *SOCKET_PATH = "/dev/socket/apmd";
 
 // Default architecture for Debian-style repos
 inline constexpr const char *DEFAULT_ARCH = "arm64";
@@ -93,7 +94,8 @@ inline constexpr const char *DEFAULT_ARCH = "arm64";
 inline constexpr const char *TRUSTED_KEYS_DIR = "/data/apm/keys";
 
 inline constexpr const char *SECURITY_DIR = "/data/apm/.security";
-inline constexpr const char *MASTER_KEY_FILE = "/data/apm/.security/masterkey.bin";
+inline constexpr const char *MASTER_KEY_FILE =
+    "/data/apm/.security/masterkey.bin";
 inline constexpr const char *PASS_PIN_FILE = "/data/apm/.security/passpin.bin";
 inline constexpr const char *SESSION_FILE = "/data/apm/.security/session.bin";
 inline constexpr const char *PASS_KEY_ALIAS = "apm_passkey";

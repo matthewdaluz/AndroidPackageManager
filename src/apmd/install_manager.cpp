@@ -6,7 +6,7 @@
  *
  * File: install_manager.cpp
  * Purpose: Implement package downloading, dependency resolution, and install/remove/upgrade workflows.
- * Last Modified: November 22nd, 2025. - 10:30 PM Eastern Time.
+ * Last Modified: November 25th, 2025. - 11:35 AM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -673,17 +673,12 @@ static bool installSinglePackage(const PackageEntry &pkg,
   }
 
   // Parse control file (sanity check, non-fatal)
-  try {
-    std::string controlPath = apm::fs::joinPath(controlDir, "control");
-    auto cf = apm::control::parseControlFile(controlPath);
-    if (!cf.packageName.empty() && cf.packageName != pkg.packageName) {
-      apm::logger::warn("installSinglePackage: control file package name (" +
-                        cf.packageName + ") != repo package name (" +
-                        pkg.packageName + ")");
-    }
-  } catch (...) {
-    apm::logger::warn(
-        "installSinglePackage: control file parse threw an exception");
+  std::string controlPath = apm::fs::joinPath(controlDir, "control");
+  auto cf = apm::control::parseControlFile(controlPath);
+  if (!cf.packageName.empty() && cf.packageName != pkg.packageName) {
+    apm::logger::warn("installSinglePackage: control file package name (" +
+                      cf.packageName + ") != repo package name (" +
+                      pkg.packageName + ")");
   }
 
   if (!apm::fs::createDirs(apm::config::INSTALLED_DIR)) {

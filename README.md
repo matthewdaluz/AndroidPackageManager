@@ -90,6 +90,15 @@ Notes:
 - Script expects NDK r27d at `$ANDROID_NDK`, `$ANDROID_NDK_HOME`, or `~/Android/NDK`. When configuring manually with `-DANDROID=ON`, CMake will attempt to download r27d if it cannot find one.
 - Outputs land in `build/` just like the host build.
 
+### Build inside AOSP (Soong)
+
+APM ships a Soong blueprint for Android 15 platform builds.
+
+1. Place this tree at `system/apm/` in your AOSP checkout.
+2. Add `apm` and `apmd` to your product's `PRODUCT_PACKAGES` (for example in `device.mk`), then build with `m apm apmd` or as part of a full platform build.
+3. Soong installs both binaries into `/system/bin/` and drops `init.apmd.rc` into `/system/etc/init/`.
+4. The bundled init script waits for `/data`, provisions `/data/apm` subdirectories, and keeps calling `apmd` as root every five seconds until it is running so `apm` remains usable without root.
+
 
 ## Deploying on-device
 

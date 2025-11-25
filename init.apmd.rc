@@ -1,0 +1,65 @@
+#/*
+# * APM - Android Package Manager
+# *
+# * RedHead Industries - Technologies Branch
+# * Copyright (C) 2025 RedHead Industries
+# *
+# * File: init.apmd.rc
+# * Purpose: Bootstrap apmd on Android: wait for /data, provision APM directories, and keep the daemon running as root.
+# * Last Modified: November 25th, 2025. - 11:21 AM Eastern Time.
+# * Author: Matthew DaLuz - RedHead Founder
+# *
+# * APM is free software: you can redistribute it and/or modify
+# * it under the terms of the GNU General Public License as published by
+# * the Free Software Foundation, either version 3 of the License, or
+# * (at your option) any later version.
+# *
+# * APM is distributed in the hope that it will be useful,
+# * but WITHOUT ANY WARRANTY; without even the implied warranty of
+# * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# * GNU General Public License for more details.
+# *
+# * You should have received a copy of the GNU General Public License
+# * along with APM. If not, see <https://www.gnu.org/licenses/>.
+# *
+# */
+
+on post-fs-data
+    mkdir /data/apm 0755 root root
+    mkdir /data/apm/installed 0755 root root
+    mkdir /data/apm/installed/commands 0755 root root
+    mkdir /data/apm/installed/dependencies 0755 root root
+    mkdir /data/apm/installed/termux 0755 root root
+    mkdir /data/apm/cache 0755 root root
+    mkdir /data/apm/lists 0755 root root
+    mkdir /data/apm/pkgs 0755 root root
+    mkdir /data/apm/logs 0755 root root
+    mkdir /data/apm/logs/modules 0755 root root
+    mkdir /data/apm/sources 0755 root root
+    mkdir /data/apm/sources/sources.list.d 0755 root root
+    mkdir /data/apm/keys 0755 root root
+    mkdir /data/apm/manual-packages 0755 root root
+    mkdir /data/apm/bin 0755 root root
+    mkdir /data/apm/modules 0755 root root
+    mkdir /data/apm/modules/.runtime 0700 root root
+    mkdir /data/apm/modules/.runtime/upper 0700 root root
+    mkdir /data/apm/modules/.runtime/work 0700 root root
+    mkdir /data/apm/modules/.runtime/base 0700 root root
+    mkdir /data/apm/termux 0755 root root
+    mkdir /data/apm/termux/usr 0755 root root
+    mkdir /data/apm/termux/home 0755 root root
+    mkdir /data/apm/termux/tmp 0775 root root
+    mkdir /data/apm/.security 0700 root root
+    start apmd
+    start apmd-keeper
+
+service apmd /system/bin/apmd --socket /dev/socket/apmd
+    user root
+    group root system inet
+    disabled
+    oneshot
+
+service apmd-keeper /system/bin/sh -c "while true; do if ! /system/bin/pidof apmd >/dev/null 2>&1; then /system/bin/setprop ctl.start apmd; fi; /system/bin/sleep 5; done"
+    user root
+    group root system inet
+    disabled

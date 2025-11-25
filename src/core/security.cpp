@@ -6,7 +6,7 @@
  *
  * File: security.cpp
  * Purpose: Implement shared security helpers for session persistence and time handling.
- * Last Modified: November 23rd, 2025. - 12:06 PM Eastern Time.
+ * Last Modified: November 25th, 2025. - 11:35 AM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -31,6 +31,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
+#include <cstdlib>
 #include <chrono>
 #include <sstream>
 #include <string>
@@ -103,13 +105,16 @@ bool parseSession(const std::string &raw, SessionState &out,
     if (key == "token")
       out.token = value;
     else if (key == "expires") {
-      try {
-        out.expiresAt = static_cast<std::uint64_t>(std::stoull(value));
-      } catch (...) {
+      errno = 0;
+      char *end = nullptr;
+      unsigned long long parsed =
+          std::strtoull(value.c_str(), &end, 10);
+      if (errno != 0 || end == value.c_str()) {
         if (errorMsg)
           *errorMsg = "Invalid session expiry value";
         return false;
       }
+      out.expiresAt = static_cast<std::uint64_t>(parsed);
     } else if (key == "hmac") {
       out.hmac = value;
     }

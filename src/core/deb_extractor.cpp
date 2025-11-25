@@ -6,7 +6,7 @@
  *
  * File: deb_extractor.cpp
  * Purpose: Implement .deb archive parsing and control/data extraction.
- * Last Modified: November 18th, 2025. - 3:00 PM Eastern Time.
+ * Last Modified: November 25th, 2025. - 11:35 AM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -29,6 +29,8 @@
 #include "logger.hpp"
 
 #include <algorithm>
+#include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 
@@ -168,14 +170,16 @@ bool extractDebArchive(const std::string &debPath, const std::string &outputDir,
     std::string sizeStr(header + 48, header + 58);
     sizeStr = trimRightSpaces(sizeStr);
     std::size_t memberSize = 0;
-    try {
-      memberSize = static_cast<std::size_t>(std::stoul(sizeStr));
-    } catch (...) {
+    errno = 0;
+    char *end = nullptr;
+    unsigned long parsed = std::strtoul(sizeStr.c_str(), &end, 10);
+    if (errno != 0 || end == sizeStr.c_str()) {
       if (errorMsg)
         *errorMsg = "Invalid member size in .deb";
       apm::logger::error("extractDebArchive: invalid member size");
       return false;
     }
+    memberSize = static_cast<std::size_t>(parsed);
 
     // Decide if we care about this member.
     bool isControl = startsWith(name, "control.tar");
