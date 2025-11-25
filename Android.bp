@@ -6,7 +6,7 @@
  *
  * File: Android.bp
  * Purpose: Define Soong build targets for the apm CLI, the apmd daemon, and supporting licensing metadata.
- * Last Modified: November 25th, 2025. - 11:21 AM Eastern Time.
+ * Last Modified: November 25th, 2025. - 11:45 AM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -41,15 +41,14 @@ cc_defaults {
     shared_libs: [
         "libcurl",
         "libz",
-        "libmbedtls",
-        "libmbedcrypto",
-        "libmbedx509",
+        "libcrypto",
     ],
 }
 
 cc_binary {
     name: "apm",
     defaults: ["apm_cc_defaults"],
+    installable: true,
     srcs: [
         "src/apm/apm.cpp",
         "src/apm/ipc_client.cpp",
@@ -91,6 +90,7 @@ cc_binary {
 cc_binary {
     name: "apmd",
     defaults: ["apm_cc_defaults"],
+    installable: true,
     srcs: [
         "src/apmd/apmd.cpp",
         "src/apmd/ipc_server.cpp",

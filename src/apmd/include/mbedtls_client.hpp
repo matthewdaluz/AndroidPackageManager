@@ -5,8 +5,8 @@
  * Copyright (C) 2025 RedHead Industries
  *
  * File: mbedtls_client.hpp
- * Purpose: Local symmetric crypto engine built on mbedTLS (AES-256-GCM +
- * PBKDF2). Last Modified: November 23rd, 2025. - 12:06 PM Eastern Time.
+ * Purpose: Local symmetric crypto engine built on BoringSSL (AES-256-GCM +
+ * PBKDF2). Last Modified: November 25th, 2025. - 11:45 AM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify

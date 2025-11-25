@@ -5,9 +5,9 @@
  * Copyright (C) 2025 RedHead Industries
  *
  * File: gpg_verify.cpp
- * Purpose: Implement OpenPGP RSA/SHA256 detached signature verification and key import helpers.
- * Last Modified: November 25th, 2025. - 11:35 AM Eastern Time.
- * Author: Matthew DaLuz - RedHead Founder
+ * Purpose: Implement OpenPGP RSA/SHA256 detached signature verification and key
+ * import helpers using BoringSSL primitives. Last Modified: November 25th,
+ * 2025. - 11:45 AM Eastern Time. Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,36 +28,40 @@
 
 #include "fs.hpp"
 #include "logger.hpp"
-#include "sha256.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cctype>
-#include <cstdint>
 #include <cerrno>
+#include <cstdint>
 #include <fstream>
 #include <sstream>
-#include <utility>
 #include <vector>
 
-#include <mbedtls/base64.h>
-#include <mbedtls/error.h>
-#include <mbedtls/md.h>
-#include <mbedtls/pk.h>
-#include <mbedtls/rsa.h>
+#include <openssl/bio.h>
+#include <openssl/bn.h>
+#include <openssl/crypto.h>
+#include <openssl/err.h>
+#include <openssl/evp.h>
+#include <openssl/pem.h>
+#include <openssl/rsa.h>
+#include <openssl/sha.h>
 
 namespace apm::crypto {
 
 namespace {
 
-// RAII wrapper for mbedTLS PK contexts to avoid leaking allocated buffers.
+// RAII wrapper for RSA contexts to avoid leaking allocated buffers.
 struct LoadedKey {
-  LoadedKey() { mbedtls_pk_init(&ctx); }
-  ~LoadedKey() { mbedtls_pk_free(&ctx); }
+  LoadedKey() : rsa(nullptr), keyBytes(0) {}
+  ~LoadedKey() {
+    if (rsa)
+      RSA_free(rsa);
+  }
   LoadedKey(const LoadedKey &) = delete;
   LoadedKey &operator=(const LoadedKey &) = delete;
 
-  mbedtls_pk_context ctx;
+  RSA *rsa;
   std::size_t keyBytes = 0;
   std::string fingerprint;
 };
@@ -72,9 +76,12 @@ struct ParsedSignature {
   std::vector<uint8_t> signatureMpi;
 };
 
-std::string formatMbedError(int code) {
-  char buf[128] = {0};
-  mbedtls_strerror(code, buf, sizeof(buf));
+std::string formatOpenSslError() {
+  char buf[256] = {0};
+  unsigned long code = ERR_get_error();
+  if (code == 0)
+    return "unknown OpenSSL error";
+  ERR_error_string_n(code, buf, sizeof(buf));
   return std::string(buf);
 }
 
@@ -95,23 +102,23 @@ bool decodeBase64(const std::string &b64, std::vector<uint8_t> &out) {
   if (b64.empty())
     return false;
 
-  size_t needed = 0;
-  int rc = mbedtls_base64_decode(nullptr, 0, &needed,
-                                 reinterpret_cast<const unsigned char *>(
-                                     b64.data()),
-                                 b64.size());
-  if (rc != MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL || needed == 0)
+  std::size_t maxOut = (b64.size() + 3) / 4 * 3;
+  out.assign(maxOut, 0);
+  int decoded = EVP_DecodeBlock(
+      out.data(), reinterpret_cast<const unsigned char *>(b64.data()),
+      static_cast<int>(b64.size()));
+  if (decoded < 0)
     return false;
 
-  out.resize(needed);
-  rc = mbedtls_base64_decode(out.data(), out.size(), &needed,
-                             reinterpret_cast<const unsigned char *>(
-                                 b64.data()),
-                             b64.size());
-  if (rc != 0)
-    return false;
-
-  out.resize(needed);
+  std::size_t pad = 0;
+  if (!b64.empty() && b64[b64.size() - 1] == '=')
+    ++pad;
+  if (b64.size() > 1 && b64[b64.size() - 2] == '=')
+    ++pad;
+  std::size_t finalLen = decoded >= 0 && static_cast<std::size_t>(decoded) > pad
+                             ? static_cast<std::size_t>(decoded) - pad
+                             : 0;
+  out.resize(finalLen);
   return true;
 }
 
@@ -360,9 +367,8 @@ bool parseRsaPublicKeyPacket(const std::vector<uint8_t> &body,
 }
 
 bool findRsaPublicKey(const std::vector<uint8_t> &blob,
-                      std::vector<uint8_t> &modulus,
-                      std::size_t &modulusBits, std::vector<uint8_t> &exponent,
-                      std::string *errorMsg) {
+                      std::vector<uint8_t> &modulus, std::size_t &modulusBits,
+                      std::vector<uint8_t> &exponent, std::string *errorMsg) {
   std::size_t off = 0;
   while (off < blob.size()) {
     uint8_t tag = 0;
@@ -442,8 +448,8 @@ bool parseSignaturePacket(const std::vector<uint8_t> &blob,
 
   sig.hashedSubpackets.assign(
       body.begin() + static_cast<std::ptrdiff_t>(bOff),
-      body.begin() +
-          static_cast<std::ptrdiff_t>(bOff + static_cast<std::size_t>(hashedLen)));
+      body.begin() + static_cast<std::ptrdiff_t>(
+                         bOff + static_cast<std::size_t>(hashedLen)));
   bOff += hashedLen;
 
   if (bOff + 2 > body.size()) {
@@ -463,8 +469,8 @@ bool parseSignaturePacket(const std::vector<uint8_t> &blob,
 
   sig.unhashedSubpackets.assign(
       body.begin() + static_cast<std::ptrdiff_t>(bOff),
-      body.begin() +
-          static_cast<std::ptrdiff_t>(bOff + static_cast<std::size_t>(unhashedLen)));
+      body.begin() + static_cast<std::ptrdiff_t>(
+                         bOff + static_cast<std::size_t>(unhashedLen)));
   bOff += unhashedLen;
 
   if (bOff + 2 > body.size()) {
@@ -492,10 +498,21 @@ bool parseSignaturePacket(const std::vector<uint8_t> &blob,
 }
 
 std::string sha256Hex(const std::vector<uint8_t> &data) {
-  SHA256 ctx;
+  uint8_t digest[SHA256_DIGEST_LENGTH] = {0};
+  SHA256_CTX ctx;
+  SHA256_Init(&ctx);
   if (!data.empty())
-    ctx.update(data.data(), data.size());
-  return ctx.finalHex();
+    SHA256_Update(&ctx, data.data(), data.size());
+  SHA256_Final(digest, &ctx);
+
+  static const char *hex = "0123456789abcdef";
+  std::string out;
+  out.reserve(SHA256_DIGEST_LENGTH * 2);
+  for (uint8_t b : digest) {
+    out.push_back(hex[b >> 4]);
+    out.push_back(hex[b & 0x0f]);
+  }
+  return out;
 }
 
 bool modulusLengthValid(std::size_t bits) {
@@ -506,33 +523,48 @@ bool buildKeyFromBlob(const std::vector<uint8_t> &blob, LoadedKey &keyOut,
                       std::string &fingerprint, std::string *errorMsg) {
   fingerprint = sha256Hex(blob);
 
-  mbedtls_pk_context parsed;
-  mbedtls_pk_init(&parsed);
-  int rc = mbedtls_pk_parse_public_key(&parsed, blob.data(), blob.size());
-  if (rc == 0) {
-    if (mbedtls_pk_get_type(&parsed) != MBEDTLS_PK_RSA) {
-      if (errorMsg)
-        *errorMsg = "Public key is not RSA";
-      mbedtls_pk_free(&parsed);
-      return false;
+  // First try parsing as PEM/DER public key.
+  const unsigned char *derPtr = blob.data();
+  EVP_PKEY *pkey = d2i_PUBKEY(nullptr, &derPtr, blob.size());
+  if (!pkey) {
+    BIO *bio = BIO_new_mem_buf(blob.data(), static_cast<int>(blob.size()));
+    if (bio) {
+      pkey = PEM_read_bio_PUBKEY(bio, nullptr, nullptr, nullptr);
+      BIO_free(bio);
     }
-
-    std::size_t bits = mbedtls_pk_get_bitlen(&parsed);
-    if (!modulusLengthValid(bits)) {
-      if (errorMsg)
-        *errorMsg = "RSA key size outside 2048-4096 bit range";
-      mbedtls_pk_free(&parsed);
-      return false;
-    }
-
-    mbedtls_pk_free(&keyOut.ctx);
-    std::swap(keyOut.ctx, parsed);
-    keyOut.keyBytes = (bits + 7) / 8;
-    mbedtls_pk_free(&parsed);
-    return true;
   }
 
-  mbedtls_pk_free(&parsed);
+  if (pkey) {
+    RSA *rsa = const_cast<RSA *>(EVP_PKEY_get0_RSA(pkey));
+    if (!rsa) {
+      if (errorMsg)
+        *errorMsg = "Public key is not RSA";
+      EVP_PKEY_free(pkey);
+      return false;
+    }
+
+    int bits = RSA_bits(rsa);
+    if (!modulusLengthValid(static_cast<std::size_t>(bits))) {
+      if (errorMsg)
+        *errorMsg = "RSA key size outside 2048-4096 bit range";
+      EVP_PKEY_free(pkey);
+      return false;
+    }
+
+    if (!RSA_up_ref(rsa)) {
+      if (errorMsg)
+        *errorMsg = "Failed to retain RSA key";
+      EVP_PKEY_free(pkey);
+      return false;
+    }
+
+    if (keyOut.rsa)
+      RSA_free(keyOut.rsa);
+    keyOut.rsa = rsa;
+    keyOut.keyBytes = static_cast<std::size_t>(RSA_size(rsa));
+    EVP_PKEY_free(pkey);
+    return true;
+  }
 
   std::vector<uint8_t> n;
   std::vector<uint8_t> e;
@@ -546,30 +578,29 @@ bool buildKeyFromBlob(const std::vector<uint8_t> &blob, LoadedKey &keyOut,
     return false;
   }
 
-  if (mbedtls_pk_setup(&keyOut.ctx,
-                       mbedtls_pk_info_from_type(MBEDTLS_PK_RSA)) != 0) {
+  RSA *rsa = RSA_new();
+  if (!rsa) {
     if (errorMsg)
-      *errorMsg = "Failed to initialize RSA context";
+      *errorMsg = "Failed to allocate RSA context";
     return false;
   }
 
-  mbedtls_rsa_context *rsa = mbedtls_pk_rsa(keyOut.ctx);
-  rc = mbedtls_rsa_import_raw(rsa, n.data(), n.size(), nullptr, 0, nullptr, 0,
-                              e.data(), e.size(), nullptr, 0);
-  if (rc != 0) {
+  BIGNUM *bnN = BN_bin2bn(n.data(), static_cast<int>(n.size()), nullptr);
+  BIGNUM *bnE = BN_bin2bn(e.data(), static_cast<int>(e.size()), nullptr);
+  if (!bnN || !bnE || RSA_set0_key(rsa, bnN, bnE, nullptr) != 1) {
     if (errorMsg)
-      *errorMsg = "Failed to import RSA key: " + formatMbedError(rc);
+      *errorMsg = "Failed to import RSA key";
+    if (bnN)
+      BN_free(bnN);
+    if (bnE)
+      BN_free(bnE);
+    RSA_free(rsa);
     return false;
   }
 
-  rc = mbedtls_rsa_complete(rsa);
-  if (rc != 0) {
-    if (errorMsg)
-      *errorMsg = "Incomplete RSA key: " + formatMbedError(rc);
-    return false;
-  }
-
-  mbedtls_rsa_set_padding(rsa, MBEDTLS_RSA_PKCS_V15, MBEDTLS_MD_SHA256);
+  if (keyOut.rsa)
+    RSA_free(keyOut.rsa);
+  keyOut.rsa = rsa;
   keyOut.keyBytes = (nBits + 7) / 8;
   return true;
 }
@@ -623,32 +654,11 @@ bool normalizeSignature(const std::vector<uint8_t> &mpi, std::size_t keyBytes,
 
 bool hashSignedData(const ParsedSignature &sig, const std::string &dataPath,
                     std::vector<uint8_t> &digest, std::string *errorMsg) {
-  digest.assign(32, 0);
-
-  const mbedtls_md_info_t *info =
-      mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
-  if (!info) {
+  digest.assign(SHA256_DIGEST_LENGTH, 0);
+  SHA256_CTX ctx;
+  if (SHA256_Init(&ctx) != 1) {
     if (errorMsg)
-      *errorMsg = "SHA256 not available in mbedTLS";
-    return false;
-  }
-
-  mbedtls_md_context_t md;
-  mbedtls_md_init(&md);
-
-  int rc = mbedtls_md_setup(&md, info, 0);
-  if (rc != 0) {
-    if (errorMsg)
-      *errorMsg = "SHA256 setup failed: " + formatMbedError(rc);
-    mbedtls_md_free(&md);
-    return false;
-  }
-
-  rc = mbedtls_md_starts(&md);
-  if (rc != 0) {
-    if (errorMsg)
-      *errorMsg = "SHA256 init failed: " + formatMbedError(rc);
-    mbedtls_md_free(&md);
+      *errorMsg = "SHA256 init failed";
     return false;
   }
 
@@ -656,7 +666,6 @@ bool hashSignedData(const ParsedSignature &sig, const std::string &dataPath,
   if (!in.is_open()) {
     if (errorMsg)
       *errorMsg = "Failed to open signed data: " + dataPath;
-    mbedtls_md_free(&md);
     return false;
   }
 
@@ -665,13 +674,11 @@ bool hashSignedData(const ParsedSignature &sig, const std::string &dataPath,
     in.read(buf.data(), buf.size());
     std::streamsize got = in.gcount();
     if (got > 0) {
-      rc = mbedtls_md_update(
-          &md, reinterpret_cast<const unsigned char *>(buf.data()),
-          static_cast<std::size_t>(got));
-      if (rc != 0) {
+      if (SHA256_Update(&ctx,
+                        reinterpret_cast<const unsigned char *>(buf.data()),
+                        static_cast<std::size_t>(got)) != 1) {
         if (errorMsg)
-          *errorMsg = "SHA256 update failed: " + formatMbedError(rc);
-        mbedtls_md_free(&md);
+          *errorMsg = "SHA256 update failed";
         return false;
       }
     }
@@ -680,7 +687,6 @@ bool hashSignedData(const ParsedSignature &sig, const std::string &dataPath,
   if (!in.eof()) {
     if (errorMsg)
       *errorMsg = "Failed reading signed data: " + dataPath;
-    mbedtls_md_free(&md);
     return false;
   }
 
@@ -696,35 +702,29 @@ bool hashSignedData(const ParsedSignature &sig, const std::string &dataPath,
   header.insert(header.end(), sig.hashedSubpackets.begin(),
                 sig.hashedSubpackets.end());
 
-  rc = mbedtls_md_update(&md, header.data(), header.size());
-  if (rc != 0) {
+  if (SHA256_Update(&ctx, header.data(), header.size()) != 1) {
     if (errorMsg)
-      *errorMsg = "SHA256 header update failed: " + formatMbedError(rc);
-    mbedtls_md_free(&md);
+      *errorMsg = "SHA256 header update failed";
     return false;
   }
 
   uint32_t trailerLen = static_cast<uint32_t>(header.size());
-  uint8_t trailer[6] = {0x04, 0xff,
+  uint8_t trailer[6] = {0x04,
+                        0xff,
                         static_cast<uint8_t>((trailerLen >> 24) & 0xff),
                         static_cast<uint8_t>((trailerLen >> 16) & 0xff),
                         static_cast<uint8_t>((trailerLen >> 8) & 0xff),
                         static_cast<uint8_t>(trailerLen & 0xff)};
 
-  rc = mbedtls_md_update(&md, trailer, sizeof(trailer));
-  if (rc != 0) {
+  if (SHA256_Update(&ctx, trailer, sizeof(trailer)) != 1) {
     if (errorMsg)
-      *errorMsg = "SHA256 trailer update failed: " + formatMbedError(rc);
-    mbedtls_md_free(&md);
+      *errorMsg = "SHA256 trailer update failed";
     return false;
   }
 
-  rc = mbedtls_md_finish(&md, digest.data());
-  mbedtls_md_free(&md);
-
-  if (rc != 0) {
+  if (SHA256_Final(digest.data(), &ctx) != 1) {
     if (errorMsg)
-      *errorMsg = "SHA256 finalize failed: " + formatMbedError(rc);
+      *errorMsg = "SHA256 finalize failed";
     return false;
   }
 
@@ -734,11 +734,18 @@ bool hashSignedData(const ParsedSignature &sig, const std::string &dataPath,
 bool verifyWithKey(LoadedKey &key, const std::vector<uint8_t> &digest,
                    const std::vector<uint8_t> &sigBytes,
                    std::string *errorMsg) {
-  int rc = mbedtls_pk_verify(&key.ctx, MBEDTLS_MD_SHA256, digest.data(),
-                             digest.size(), sigBytes.data(), sigBytes.size());
-  if (rc != 0) {
+  if (!key.rsa) {
     if (errorMsg)
-      *errorMsg = formatMbedError(rc);
+      *errorMsg = "RSA key not loaded";
+    return false;
+  }
+
+  int rc = RSA_verify(NID_sha256, digest.data(),
+                      static_cast<unsigned int>(digest.size()), sigBytes.data(),
+                      static_cast<unsigned int>(sigBytes.size()), key.rsa);
+  if (rc != 1) {
+    if (errorMsg)
+      *errorMsg = formatOpenSslError();
     return false;
   }
   return true;
@@ -897,14 +904,12 @@ bool importTrustedPublicKey(const std::string &ascPath,
   if (!buildKeyFromBlob(decoded, key, fingerprint, errorMsg))
     return false;
 
-  std::string dest =
-      apm::fs::joinPath(trustedKeysDir, armored ? fingerprint + ".asc"
-                                                : fingerprint + ".gpg");
+  std::string dest = apm::fs::joinPath(
+      trustedKeysDir, armored ? fingerprint + ".asc" : fingerprint + ".gpg");
 
   if (!apm::fs::createDirs(trustedKeysDir)) {
     if (errorMsg)
-      *errorMsg = "Failed to create trusted keys directory: " +
-                  trustedKeysDir;
+      *errorMsg = "Failed to create trusted keys directory: " + trustedKeysDir;
     return false;
   }
 
