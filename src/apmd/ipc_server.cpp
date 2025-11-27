@@ -27,6 +27,7 @@
 #include "include/ipc_server.hpp"
 #include "config.hpp"
 #include "include/apk_installer.hpp"
+#include "factory_reset.hpp"
 #include "install_manager.hpp"
 #include "logger.hpp"
 #include "protocol.hpp"
@@ -607,6 +608,22 @@ void IpcServer::handleClient(int clientFd) {
 
     resp.success = true;
     resp.message = body.str();
+    break;
+  }
+
+  case RequestType::FactoryReset: {
+    apm::logger::info("IpcServer: FactoryReset request received");
+
+    apm::daemon::FactoryResetResult result;
+    if (!apm::daemon::performFactoryReset(m_moduleManager, result)) {
+      resp.success = false;
+      resp.message =
+          result.message.empty() ? "Factory reset failed" : result.message;
+    } else {
+      resp.success = true;
+      resp.message = result.message.empty() ? "Factory reset completed."
+                                            : result.message;
+    }
     break;
   }
 

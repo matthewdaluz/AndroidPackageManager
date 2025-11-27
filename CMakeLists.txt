@@ -447,6 +447,7 @@ add_executable(apmd
     src/apmd/export_path.cpp
     src/apmd/apk_installer.cpp
     src/apmd/mbedtls_client.cpp
+    src/apmd/factory_reset.cpp
 
     src/core/control_parser.cpp
     src/core/deb_extractor.cpp

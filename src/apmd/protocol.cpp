@@ -136,6 +136,8 @@ RequestType parseType(const std::string &sRaw) {
     return RequestType::ModuleDisable;
   if (s == "MODULE_REMOVE")
     return RequestType::ModuleRemove;
+  if (s == "FACTORY_RESET")
+    return RequestType::FactoryReset;
 
   return RequestType::Unknown;
 }
@@ -171,6 +173,8 @@ std::string typeToString(RequestType t) {
     return "MODULE_DISABLE";
   case RequestType::ModuleRemove:
     return "MODULE_REMOVE";
+  case RequestType::FactoryReset:
+    return "FACTORY_RESET";
   default:
     return "UNKNOWN";
   }

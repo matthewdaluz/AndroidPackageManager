@@ -145,10 +145,11 @@ Most commands hit the daemon; `list`, `info`, and `search` operate offline.
 | ------- | ------- |
 | `apm ping` | Confirm daemon reachability. |
 | `apm update` | Refresh repo metadata with per-stage progress events. |
-| `apm install <pkg> [--simulate] [--reinstall]` | Resolve dependencies (first alternative only), download `.deb` files, and install them under `/data/apm/installed`/`dependencies`. Termux packages are detected and rewritten into `/data/apm/termux/usr` with PATH wrappers in `/data/apm/bin`. |
+| `apm install <pkg> [--simulate] [--reinstall]` | Resolve dependencies (first alternative only), download `.deb` files, and install them under `/data/apm/installed`/`dependencies`. Termux packages are detected and rewritten into `/data/apm/installed/termux/usr` with PATH wrappers in `/data/apm/bin`. |
 | `apm remove <pkg>` | Removes manual packages locally first; otherwise asks the daemon, which protects reverse dependencies unless forced (force flag is future work). |
 | `apm upgrade [pkg ...]` | Upgrade all installed packages or a subset; uses the same resolver and installer as `install`. |
 | `apm autoremove` | Remove packages marked `Auto-Installed` in the status DB. |
+| `apm factory-reset` | Wipe installed commands/deps, credentials, repo lists, AMS modules, and system app overlays (prompts before running). |
 | `apm list` | Print installed packages from `/data/apm/status`. |
 | `apm info <pkg>` | Show installed metadata plus the candidate version from cached indices. |
 | `apm search <pattern ...>` | Case-insensitive search across cached repo descriptions. |
@@ -192,7 +193,7 @@ The CLI validates the prefix, unpacks the archive, snapshots every file, and sto
 
 ## Termux compatibility
 
-If a repo package is marked as Termux (detected via repo URI, payload layout, or dependencies), `apmd` rewrites its payload into `/data/apm/termux/usr`, maintains a manifest of installed files, and drops shim wrappers into `/data/apm/bin` so commands are reachable on PATH. The daemon also writes `/data/apm/termux/env.sh` and basic HOME/TMP scaffolding.
+If a repo package is marked as Termux (detected via repo URI, payload layout, or dependencies), `apmd` rewrites its payload into `/data/apm/installed/termux/usr`, maintains a manifest of installed files, and drops shim wrappers into `/data/apm/bin` so commands are reachable on PATH. The daemon also writes `/data/apm/installed/termux/env.sh` and basic HOME/TMP scaffolding.
 
 
 ## PATH integration

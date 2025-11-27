@@ -51,11 +51,12 @@ inline constexpr const char *PKGS_DIR = "/data/apm/pkgs";
 inline constexpr const char *LOGS_DIR = "/data/apm/logs";
 inline constexpr const char *MANUAL_PACKAGES_DIR = "/data/apm/manual-packages";
 inline constexpr const char *APM_BIN_DIR = "/data/apm/bin";
-inline constexpr const char *TERMUX_ROOT = "/data/apm/termux";
-inline constexpr const char *TERMUX_PREFIX = "/data/apm/termux/usr";
-inline constexpr const char *TERMUX_ENV_FILE = "/data/apm/termux/env.sh";
-inline constexpr const char *TERMUX_HOME_DIR = "/data/apm/termux/home";
-inline constexpr const char *TERMUX_TMP_DIR = "/data/apm/termux/tmp";
+inline constexpr const char *TERMUX_ROOT = "/data/apm/installed/termux";
+inline constexpr const char *TERMUX_PREFIX = "/data/apm/installed/termux/usr";
+inline constexpr const char *TERMUX_ENV_FILE =
+    "/data/apm/installed/termux/env.sh";
+inline constexpr const char *TERMUX_HOME_DIR = "/data/apm/installed/termux/home";
+inline constexpr const char *TERMUX_TMP_DIR = "/data/apm/installed/termux/tmp";
 
 inline constexpr const char *MODULES_DIR = "/data/apm/modules";
 inline constexpr const char *MODULE_LOGS_DIR = "/data/apm/logs/modules";

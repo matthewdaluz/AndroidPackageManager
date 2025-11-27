@@ -37,6 +37,28 @@ on post-fs-data
     mkdir /data/apm/installed/commands 0775 root shell
     mkdir /data/apm/installed/dependencies 0775 root shell
     mkdir /data/apm/installed/termux 0775 root shell
+    mkdir /data/apm/installed/termux/bin 0775 root shell
+    mkdir /data/apm/installed/termux/lib 0775 root shell
+    mkdir /data/apm/installed/termux/lib64 0775 root shell
+    mkdir /data/apm/installed/termux/lib32 0775 root shell
+    mkdir /data/apm/installed/termux/opt 0775 root shell
+    mkdir /data/apm/installed/termux/mnt 0775 root shell
+    mkdir /data/apm/installed/termux/var 0775 root shell
+    mkdir /data/apm/installed/termux/etc 0775 root shell
+    mkdir /data/apm/installed/termux/tmp 0775 root shell
+    mkdir /data/apm/installed/termux/usr 0775 root shell
+    mkdir /data/apm/installed/termux/home 0775 root shell
+    mkdir /data/apm/installed/termux/usr/bin 0775 root shell
+    mkdir /data/apm/installed/termux/usr/lib 0775 root shell
+    mkdir /data/apm/installed/termux/usr/lib64 0775 root shell
+    mkdir /data/apm/installed/termux/usr/lib32 0775 root shell
+    mkdir /data/apm/installed/termux/usr/libexec 0775 root shell
+    mkdir /data/apm/installed/termux/usr/include 0775 root shell
+    mkdir /data/apm/installed/termux/usr/share 0775 root shell
+    mkdir /data/apm/installed/termux/usr/etc 0775 root shell
+    mkdir /data/apm/installed/termux/usr/opt 0775 root shell
+    mkdir /data/apm/installed/termux/usr/var 0775 root shell
+    mkdir /data/apm/installed/termux/usr/tmp 0775 root shell
     mkdir /data/apm/logs 0775 root shell
     mkdir /data/apm/logs/modules 0775 root shell
     mkdir /data/apm/sources 0775 root shell
@@ -47,10 +69,6 @@ on post-fs-data
     mkdir /data/apm/modules/.runtime/upper 0700 root shell
     mkdir /data/apm/modules/.runtime/work 0700 root shell
     mkdir /data/apm/modules/.runtime/base 0700 root shell
-    mkdir /data/apm/termux 0775 root shell
-    mkdir /data/apm/termux/usr 0775 root shell
-    mkdir /data/apm/termux/home 0775 root shell
-    mkdir /data/apm/termux/tmp 0775 root shell
     mkdir /data/apm/.security 0700 root root
     mkdir /data/ams 0775 root shell
     mkdir /data/ams/modules 0775 root shell

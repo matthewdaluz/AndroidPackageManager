@@ -101,6 +101,7 @@ cc_binary {
         "src/apmd/apk_installer.cpp",
         "src/apmd/mbedtls_client.cpp",
         "src/apmd/protocol.cpp",
+        "src/apmd/factory_reset.cpp",
         "src/apmd/security_manager.cpp",
         "src/core/control_parser.cpp",
         "src/core/deb_extractor.cpp",

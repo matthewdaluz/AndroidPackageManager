@@ -46,7 +46,8 @@ enum class RequestType {
   ModuleInstall,
   ModuleEnable,
   ModuleDisable,
-  ModuleRemove
+  ModuleRemove,
+  FactoryReset
 };
 
 struct Request {

@@ -374,7 +374,8 @@ static bool requiresAuthSession(const std::string &cmd) {
          cmd == "upgrade" || cmd == "autoremove" || cmd == "module-install" ||
          cmd == "module-list" || cmd == "module-enable" ||
          cmd == "module-disable" || cmd == "module-remove" ||
-         cmd == "apk-install" || cmd == "apk-uninstall";
+         cmd == "apk-install" || cmd == "apk-uninstall" ||
+         cmd == "factory-reset";
 }
 
 static bool ensureManualSlotAvailable(const std::string &pkgName,
@@ -774,6 +775,7 @@ void printUsage() {
       << "  remove <pkg>                Remove an installed package\n"
       << "  upgrade [pkgs...]           Upgrade all or selected packages\n"
       << "  autoremove                  Remove unused auto-installed deps\n"
+      << "  factory-reset               Reset APM data and installed content\n"
       << "  module-list                 List installed AMS modules\n"
       << "  module-install <zip>        Install an AMS module from a ZIP\n"
       << "  module-enable <name>        Enable an installed AMS module\n"
@@ -1237,6 +1239,72 @@ int cmdAutoremove(const std::string &socketPath,
   return resp.success ? 0 : 1;
 }
 
+int cmdFactoryReset(const std::string &socketPath,
+                    const std::string &sessionToken) {
+  std::cout << "APM factory reset will:\n";
+  std::cout << "  - Remove installed commands and dependencies under "
+            << apm::config::INSTALLED_DIR << "\n";
+  std::cout << "  - Clear APM shim binaries under " << apm::config::APM_BIN_DIR
+            << "\n";
+  std::cout << "  - Remove manual package metadata under "
+            << apm::config::MANUAL_PACKAGES_DIR << "\n";
+  std::cout << "  - Clear password/PIN and session data under "
+            << apm::config::SECURITY_DIR << "\n";
+  std::cout << "  - Reset package status database at "
+            << apm::config::STATUS_FILE << "\n";
+  std::cout << "  - Remove AMS modules under " << apm::config::MODULES_DIR
+            << "\n";
+  std::cout << "  - Delete repository lists under " << apm::config::LISTS_DIR
+            << "\n";
+  std::cout
+      << "  - Uninstall system apps staged with --install-as-system\n";
+  std::cout << "Proceed with factory reset? [y/N]: " << std::flush;
+
+  std::string response;
+  if (!std::getline(std::cin, response)) {
+    response.clear();
+  }
+
+  bool confirmed = false;
+  for (char ch : response) {
+    if (std::isspace(static_cast<unsigned char>(ch)))
+      continue;
+    if (ch == 'y' || ch == 'Y')
+      confirmed = true;
+    break;
+  }
+
+  if (!confirmed) {
+    std::cout << "Factory reset aborted.\n";
+    return 0;
+  }
+
+  apm::ipc::Request req;
+  req.type = apm::ipc::RequestType::FactoryReset;
+  req.id = "factory-reset-1";
+  attachSession(req, sessionToken);
+
+  apm::ipc::Response resp;
+  std::string err;
+
+  if (!apm::ipc::sendRequest(req, resp, socketPath, &err)) {
+    std::cerr << "Error: " << err << "\n";
+    return 1;
+  }
+
+  if (!resp.success) {
+    std::cerr << "Factory reset failed: "
+              << (resp.message.empty() ? "unknown error" : resp.message) << "\n";
+    return 1;
+  }
+
+  std::cout << (resp.message.empty() ? "Factory reset completed."
+                                     : resp.message)
+            << "\n";
+  std::cout << "Please reboot your device to finish the reset.\n";
+  return 0;
+}
+
 int cmdModuleInstall(const std::string &socketPath,
                      const std::string &sessionToken,
                      const std::string &zipPath) {
@@ -1637,6 +1705,9 @@ int main(int argc, char **argv) {
 
   if (cmd == "autoremove")
     return cmdAutoremove(socketPath, sessionToken);
+
+  if (cmd == "factory-reset")
+    return cmdFactoryReset(socketPath, sessionToken);
 
   //
   // ============================

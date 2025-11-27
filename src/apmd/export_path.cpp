@@ -143,7 +143,6 @@ bool ensureCommandsPathHelperScript() {
   script << "  apm_path__add \"$APM_TERMUX_PREFIX/bin\"\n";
   script << "  apm_path__add_pkg_bins \"$APM_COMMANDS_DIR\"\n";
   script << "  apm_path__add_pkg_bins \"$APM_DEPENDENCIES_DIR\"\n";
-  script << "  apm_path__add_pkg_bins \"$APM_TERMUX_INSTALLED_DIR\"\n";
   script << "  export PATH\n";
   script << "}\n\n";
 
