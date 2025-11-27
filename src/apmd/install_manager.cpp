@@ -55,11 +55,6 @@ using apm::repo::PackageEntry;
 using apm::repo::PackageList;
 using apm::repo::RepoIndexList;
 
-static bool copyTermuxTree(const std::string &srcDir, const std::string &dstDir,
-                           const std::string &relativeBase,
-                           std::vector<std::string> &installedPaths,
-                           bool skipExisting);
-
 // ---------------------------------------------------------------------
 // Small helpers
 // ---------------------------------------------------------------------
@@ -262,78 +257,7 @@ static void removeDirRecursive(const std::string &path) {
   ::rmdir(path.c_str());
 }
 
-// Some older builds used /data/apm/termux as the Termux root. Migrate any
-// leftovers into the current layout and drop a compatibility symlink so
-// accidental writes to the legacy location still land in the right place.
-static void migrateLegacyTermuxRoot() {
-  static constexpr const char *kLegacyTermuxRoot = "/data/apm/termux";
-
-  if (std::string(kLegacyTermuxRoot) == apm::config::TERMUX_ROOT)
-    return;
-
-  struct stat st{};
-  if (::lstat(kLegacyTermuxRoot, &st) != 0) {
-    // Nothing present at the legacy path; drop a symlink for forward
-    // compatibility and return.
-    if (::symlink(apm::config::TERMUX_ROOT, kLegacyTermuxRoot) != 0 &&
-        errno != EEXIST) {
-      apm::logger::warn(
-          "install_manager: failed to create Termux compatibility symlink");
-    }
-    return;
-  }
-
-  if (S_ISLNK(st.st_mode)) {
-    std::vector<char> buf(4096, 0);
-    ssize_t len =
-        ::readlink(kLegacyTermuxRoot, buf.data(), buf.size() - 1);
-    if (len > 0) {
-      buf[static_cast<std::size_t>(len)] = '\0';
-      if (std::string(buf.data()) == apm::config::TERMUX_ROOT) {
-        return; // already pointing at the correct location
-      }
-    }
-  }
-
-  bool migratedOk = false;
-
-  if (!apm::fs::pathExists(apm::config::TERMUX_ROOT)) {
-    // Fast path: move the directory wholesale if the new root is empty.
-    if (::rename(kLegacyTermuxRoot, apm::config::TERMUX_ROOT) == 0) {
-      migratedOk = true;
-    }
-  }
-
-  if (!migratedOk) {
-    // Ensure the new root exists before copying anything into it.
-    if (!apm::fs::createDirs(apm::config::TERMUX_ROOT)) {
-      apm::logger::warn(
-          "install_manager: failed to create Termux root for migration");
-      return;
-    }
-
-    std::vector<std::string> migrated;
-    migratedOk = copyTermuxTree(kLegacyTermuxRoot, apm::config::TERMUX_ROOT, "",
-                                migrated, true);
-    if (!migratedOk) {
-      apm::logger::warn(
-          "install_manager: failed to migrate legacy Termux contents");
-    }
-  }
-
-  if (migratedOk) {
-    apm::fs::removeDirRecursive(kLegacyTermuxRoot);
-    if (::symlink(apm::config::TERMUX_ROOT, kLegacyTermuxRoot) != 0 &&
-        errno != EEXIST) {
-      apm::logger::warn(
-          "install_manager: failed to create Termux compatibility symlink");
-    }
-  }
-}
-
 static bool ensureTermuxRuntimeDirs() {
-  migrateLegacyTermuxRoot();
-
   bool ok = true;
   auto mk = [&](const std::string &path) {
     ok = apm::fs::createDirs(path) && ok;
@@ -459,8 +383,7 @@ static bool copySymlink(const std::string &src, const std::string &dst) {
 
 static bool copyTermuxTree(const std::string &srcDir, const std::string &dstDir,
                            const std::string &relativeBase,
-                           std::vector<std::string> &installedPaths,
-                           bool skipExisting) {
+                           std::vector<std::string> &installedPaths) {
   if (!apm::fs::createDirs(dstDir)) {
     apm::logger::warn("install_manager: failed to create Termux dest " +
                       dstDir);
@@ -490,15 +413,10 @@ static bool copyTermuxTree(const std::string &srcDir, const std::string &dstDir,
     }
 
     if (S_ISDIR(st.st_mode)) {
-      if (!copyTermuxTree(srcPath, dstPath, relPath, installedPaths,
-                          skipExisting)) {
+      if (!copyTermuxTree(srcPath, dstPath, relPath, installedPaths)) {
         ::closedir(dir);
         return false;
       }
-      continue;
-    }
-
-    if (skipExisting && apm::fs::pathExists(dstPath)) {
       continue;
     }
 
@@ -623,7 +541,7 @@ static bool rewriteTermuxPathsDuringExtraction(
   }
 
   if (!copyTermuxTree(termuxUsr, apm::config::TERMUX_PREFIX, "usr",
-                      installedPaths, false)) {
+                      installedPaths)) {
     if (errorMsg)
       *errorMsg = "Failed to rewrite Termux paths during extraction";
     return false;

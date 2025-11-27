@@ -87,6 +87,7 @@ bool ensureCommandsPathHelperScript() {
   script << "APM_DEPENDENCIES_DIR=\"" << apm::config::DEPENDENCIES_DIR
          << "\"\n";
   script << "APM_SHIM_DIR=\"" << apm::config::APM_BIN_DIR << "\"\n\n";
+  script << "APM_TERMUX_ROOT=\"" << apm::config::TERMUX_ROOT << "\"\n";
   script << "APM_TERMUX_PREFIX=\"" << apm::config::TERMUX_PREFIX << "\"\n";
   script << "APM_TERMUX_INSTALLED_DIR=\"" << apm::config::TERMUX_INSTALLED_DIR
          << "\"\n";
@@ -140,6 +141,7 @@ bool ensureCommandsPathHelperScript() {
   script << "  apm_path__add \"$APM_COMMANDS_DIR\"\n";
   script << "  apm_path__add \"$APM_DEPENDENCIES_DIR\"\n";
   script << "  [ -f \"$APM_TERMUX_ENV\" ] && . \"$APM_TERMUX_ENV\"\n";
+  script << "  apm_path__add \"$APM_TERMUX_ROOT/bin\"\n";
   script << "  apm_path__add \"$APM_TERMUX_PREFIX/bin\"\n";
   script << "  apm_path__add_pkg_bins \"$APM_COMMANDS_DIR\"\n";
   script << "  apm_path__add_pkg_bins \"$APM_DEPENDENCIES_DIR\"\n";
@@ -158,6 +160,7 @@ bool ensureCommandsPathHelperScript() {
   script << "unset APM_SHIM_DIR\n";
   script << "unset APM_DEPENDENCIES_DIR\n";
   script << "unset APM_COMMANDS_DIR\n";
+  script << "unset APM_TERMUX_ROOT\n";
   script << "unset APM_TERMUX_PREFIX\n";
   script << "unset APM_TERMUX_INSTALLED_DIR\n";
   script << "unset APM_TERMUX_ENV\n";
