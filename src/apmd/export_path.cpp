@@ -130,6 +130,7 @@ bool ensureCommandsPathHelperScript() {
   script << "    esac\n";
   script << "    apm_path__add \"$pkg_dir/bin\"\n";
   script << "    apm_path__add \"$pkg_dir/usr/bin\"\n";
+  script << "    apm_path__add \"$pkg_dir/data/data/com.termux/files/usr/bin\"\n";
   script << "  done\n";
   script << "  return 0\n";
   script << "}\n\n";

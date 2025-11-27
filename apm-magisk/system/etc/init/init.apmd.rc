@@ -35,7 +35,7 @@ on post-fs-data
     mkdir /data/ams 0755 root root
     start apmd-bootstrap
 
-service apmd /system/bin/apmd
+service apmd /system/bin/apmd --socket /dev/socket/apmd
     class late_start
     user root
     group root system
@@ -69,6 +69,10 @@ service apmd-watchdog /system/bin/sh -c '\
         if /system/bin/grep -q "[[:space:]]/data[[:space:]]" /proc/mounts && /system/bin/touch /data/.apmd-ready 2>/dev/null; then \
             /system/bin/rm -f /data/.apmd-ready; \
             /system/bin/setprop ctl.start apmd; \
+            /system/bin/sleep 1; \
+            if ! /system/bin/pidof apmd >/dev/null 2>&1; then \
+                /system/bin/apmd --socket /dev/socket/apmd >> /data/apm/logs/apmd.log 2>&1 & \
+            fi; \
         fi; \
         /system/bin/sleep 5; \
     done'
