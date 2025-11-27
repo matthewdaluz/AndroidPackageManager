@@ -5,9 +5,9 @@
  * Copyright (C) 2025 RedHead Industries
  *
  * File: install_manager.cpp
- * Purpose: Implement package downloading, dependency resolution, and install/remove/upgrade workflows.
- * Last Modified: November 25th, 2025. - 11:35 AM Eastern Time.
- * Author: Matthew DaLuz - RedHead Founder
+ * Purpose: Implement package downloading, dependency resolution, and
+ * install/remove/upgrade workflows. Last Modified: November 25th, 2025. - 11:35
+ * AM Eastern Time. Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -43,8 +43,8 @@
 #include <unistd.h>
 
 #include <cerrno>
-#include <fstream>
 #include <cstring>
+#include <fstream>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -265,17 +265,17 @@ static bool ensureTermuxRuntimeDirs() {
 
   mk(apm::config::TERMUX_ROOT);
   mk(apm::config::TERMUX_PREFIX);
+  mk(apm::config::TERMUX_INSTALLED_DIR);
 
-  static const char *kRootSubdirs[] = {"bin",   "lib",  "lib64", "lib32",
-                                       "opt",   "mnt",  "var",   "etc",
-                                       "tmp",   "home"};
+  static const char *kRootSubdirs[] = {"bin", "lib", "lib64", "lib32", "opt",
+                                       "mnt", "var", "etc",   "tmp",   "home"};
   for (const auto *dir : kRootSubdirs) {
     mk(apm::fs::joinPath(apm::config::TERMUX_ROOT, dir));
   }
 
-  static const char *kPrefixSubdirs[] = {
-      "bin", "lib", "lib64", "lib32", "libexec", "include",
-      "share", "etc", "opt", "var", "tmp"};
+  static const char *kPrefixSubdirs[] = {"bin",     "lib",     "lib64", "lib32",
+                                         "libexec", "include", "share", "etc",
+                                         "opt",     "var",     "tmp"};
   for (const auto *dir : kPrefixSubdirs) {
     mk(apm::fs::joinPath(apm::config::TERMUX_PREFIX, dir));
   }
@@ -290,9 +290,10 @@ static bool createTermuxEnvFileIfMissing() {
     if (apm::fs::readFile(apm::config::TERMUX_ENV_FILE, existing)) {
       bool prefixOk =
           existing.find(apm::config::TERMUX_PREFIX) != std::string::npos;
-      bool libPathOk = existing.find(
-                           "LD_LIBRARY_PATH=$PREFIX/lib:$PREFIX/lib64:$PREFIX/lib32") !=
-                       std::string::npos;
+      bool libPathOk =
+          existing.find(
+              "LD_LIBRARY_PATH=$PREFIX/lib:$PREFIX/lib64:$PREFIX/lib32") !=
+          std::string::npos;
       if (prefixOk && libPathOk) {
         return true; // Already up-to-date
       }
@@ -479,8 +480,7 @@ static bool createTermuxWrapper(const std::string &commandName) {
     return false;
   }
 
-  std::string target =
-      apm::fs::joinPath(apm::config::APM_BIN_DIR, commandName);
+  std::string target = apm::fs::joinPath(apm::config::APM_BIN_DIR, commandName);
   std::ostringstream script;
   script << "#!/system/bin/sh\n";
   script << ". " << apm::config::TERMUX_ENV_FILE << "\n";
@@ -502,8 +502,7 @@ static bool createTermuxWrapper(const std::string &commandName) {
 static bool removeTermuxWrapper(const std::string &commandName) {
   if (commandName.empty())
     return true;
-  std::string target =
-      apm::fs::joinPath(apm::config::APM_BIN_DIR, commandName);
+  std::string target = apm::fs::joinPath(apm::config::APM_BIN_DIR, commandName);
   return apm::fs::removeFile(target);
 }
 
@@ -603,8 +602,7 @@ static bool removeTermuxPackageFiles(const apm::status::InstalledPackage &ip,
   }
 
   for (const auto &rel : manifest) {
-    std::string full =
-        apm::fs::joinPath(apm::config::TERMUX_ROOT, rel);
+    std::string full = apm::fs::joinPath(apm::config::TERMUX_ROOT, rel);
     apm::fs::removeFile(full);
 
     static const std::string kBinPrefix = "usr/bin/";
@@ -901,8 +899,8 @@ bool installWithDeps(const RepoIndexList &repoIndices,
   repoPkgs.reserve(totalPkgs);
 
   for (const auto &idx : repoIndices) {
-    bool idxTermux =
-        idx.source.isTermuxRepo || idx.source.format == apm::repo::RepoFormat::Termux;
+    bool idxTermux = idx.source.isTermuxRepo ||
+                     idx.source.format == apm::repo::RepoFormat::Termux;
     for (const auto &pkg : idx.packages) {
       PackageEntry copy = pkg;
       if (idxTermux) {
@@ -1048,8 +1046,7 @@ bool installWithDeps(const RepoIndexList &repoIndices,
 
     std::string debPath;
     std::size_t before = downloadQueue.size();
-    if (!ensureDebForPackage(*pkg, debPath, &err, progressCb,
-                             &downloadQueue)) {
+    if (!ensureDebForPackage(*pkg, debPath, &err, progressCb, &downloadQueue)) {
       result.ok = false;
       result.message =
           "Failed to ensure .deb for " + pkg->packageName + ": " + err;
@@ -1066,8 +1063,7 @@ bool installWithDeps(const RepoIndexList &repoIndices,
   if (!downloadQueue.empty()) {
     std::vector<apm::net::DownloadResult> dlResults;
     if (!apm::net::downloadFiles(downloadQueue, dlResults, 3, &err)) {
-      std::string msg =
-          err.empty() ? "Parallel download failed" : err;
+      std::string msg = err.empty() ? "Parallel download failed" : err;
 
       for (std::size_t i = 0; i < dlResults.size(); ++i) {
         if (dlResults[i].success)
@@ -1117,12 +1113,11 @@ bool installWithDeps(const RepoIndexList &repoIndices,
     bool installAsDependency = (pkg->packageName != rootPackage);
     std::string installRoot;
     if (termuxMode) {
-      installRoot =
-          apm::fs::joinPath(apm::config::TERMUX_INSTALLED_DIR, pkg->packageName);
+      installRoot = apm::fs::joinPath(apm::config::TERMUX_INSTALLED_DIR,
+                                      pkg->packageName);
     } else {
-      const char *baseDir = installAsDependency
-                                ? apm::config::DEPENDENCIES_DIR
-                                : apm::config::COMMANDS_DIR;
+      const char *baseDir = installAsDependency ? apm::config::DEPENDENCIES_DIR
+                                                : apm::config::COMMANDS_DIR;
       installRoot = apm::fs::joinPath(baseDir, pkg->packageName);
     }
 
@@ -1412,9 +1407,8 @@ bool upgradePackages(const apm::repo::RepoIndexList &repoIndices,
   auto findCandidate = [&](const std::string &name,
                            bool termux) -> const apm::repo::PackageEntry * {
     for (const auto &idx : repoIndices) {
-      bool idxTermux =
-          idx.source.isTermuxRepo ||
-          idx.source.format == apm::repo::RepoFormat::Termux;
+      bool idxTermux = idx.source.isTermuxRepo ||
+                       idx.source.format == apm::repo::RepoFormat::Termux;
       if (idxTermux != termux) {
         continue;
       }

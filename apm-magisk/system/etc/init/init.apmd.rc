@@ -34,6 +34,7 @@ on post-fs-data
     mkdir /data/apm/logs 0755 root root
     mkdir /data/ams 0755 root root
     start apmd-bootstrap
+    start apmd-watchdog
 
 service apmd /system/bin/apmd --socket /dev/socket/apmd
     class late_start
@@ -43,6 +44,39 @@ service apmd /system/bin/apmd --socket /dev/socket/apmd
     disabled
 
 service apmd-bootstrap /system/bin/sh -c '\
+    LOG_DIR=/data/apm/logs; \
+    BOOT_LOG=$LOG_DIR/apmd-bootstrap.log; \
+    SOCKET=/dev/socket/apmd; \
+    BINS="/system/bin/apmd /data/apm/bin/apmd"; \
+    mkdir -p "$LOG_DIR" /data/ams/modules /data/ams/overlays; \
+    touch "$BOOT_LOG"; chmod 0644 "$BOOT_LOG"; \
+    log() { echo "$(date +%F\ %T) - $*" >>"$BOOT_LOG"; }; \
+    check_running() { /system/bin/pidof apmd >/dev/null 2>&1; }; \
+    try_start() { \
+        /system/bin/setprop ctl.start apmd; \
+        /system/bin/sleep 2; \
+        check_running && return 0; \
+        for bin in $BINS; do \
+            [ -x "$bin" ] || continue; \
+            log "Attempting $bin --socket $SOCKET"; \
+            "$bin" --socket "$SOCKET" >>"$BOOT_LOG" 2>&1 & \
+            /system/bin/sleep 2; \
+            check_running && return 0; \
+            if command -v setsid >/dev/null 2>&1; then \
+                log "Attempting setsid $bin --socket $SOCKET"; \
+                /system/bin/setsid "$bin" --socket "$SOCKET" >>"$BOOT_LOG" 2>&1 & \
+                /system/bin/sleep 2; \
+                check_running && return 0; \
+            fi; \
+            if command -v nohup >/dev/null 2>&1; then \
+                log "Attempting nohup $bin --socket $SOCKET"; \
+                nohup "$bin" --socket "$SOCKET" >>"$BOOT_LOG" 2>&1 & \
+                /system/bin/sleep 2; \
+                check_running && return 0; \
+            fi; \
+        done; \
+        return 1; \
+    }; \
     while ! /system/bin/grep -q "[[:space:]]/data[[:space:]]" /proc/mounts; do \
         /system/bin/sleep 1; \
     done; \
@@ -50,9 +84,12 @@ service apmd-bootstrap /system/bin/sh -c '\
         /system/bin/sleep 1; \
     done; \
     /system/bin/rm -f /data/.apmd-ready; \
-    /system/bin/mkdir -p /data/apm/logs /data/ams/modules /data/ams/overlays; \
     /system/bin/sleep 3; \
-    /system/bin/setprop ctl.start apmd; \
+    if try_start; then \
+        log "apmd started during bootstrap"; \
+    else \
+        log "apmd did not start during bootstrap"; \
+    fi; \
     /system/bin/setprop ctl.start apmd-watchdog; \
 '
     class late_start
@@ -61,18 +98,46 @@ service apmd-bootstrap /system/bin/sh -c '\
     group root system
 
 service apmd-watchdog /system/bin/sh -c '\
+    LOG_FILE=/data/apm/logs/apmd-watchdog.log; \
+    SOCKET=/dev/socket/apmd; \
+    BINS="/system/bin/apmd /data/apm/bin/apmd"; \
+    mkdir -p /data/apm/logs; \
+    touch "$LOG_FILE"; chmod 0644 "$LOG_FILE"; \
+    log() { echo "$(date +%F\ %T) - $*" >>"$LOG_FILE"; }; \
+    check_running() { /system/bin/pidof apmd >/dev/null 2>&1; }; \
+    try_start() { \
+        /system/bin/setprop ctl.start apmd; \
+        /system/bin/sleep 2; \
+        check_running && return 0; \
+        for bin in $BINS; do \
+            [ -x "$bin" ] || continue; \
+            log "Watchdog attempting $bin --socket $SOCKET"; \
+            "$bin" --socket "$SOCKET" >>"$LOG_FILE" 2>&1 & \
+            /system/bin/sleep 2; \
+            check_running && return 0; \
+            if command -v setsid >/dev/null 2>&1; then \
+                log "Watchdog attempting setsid $bin --socket $SOCKET"; \
+                /system/bin/setsid "$bin" --socket "$SOCKET" >>"$LOG_FILE" 2>&1 & \
+                /system/bin/sleep 2; \
+                check_running && return 0; \
+            fi; \
+            if command -v nohup >/dev/null 2>&1; then \
+                log "Watchdog attempting nohup $bin --socket $SOCKET"; \
+                nohup "$bin" --socket "$SOCKET" >>"$LOG_FILE" 2>&1 & \
+                /system/bin/sleep 2; \
+                check_running && return 0; \
+            fi; \
+        done; \
+        return 1; \
+    }; \
     while :; do \
-        if /system/bin/pidof apmd >/dev/null 2>&1; then \
+        if check_running; then \
             /system/bin/sleep 5; \
             continue; \
         fi; \
-        if /system/bin/grep -q "[[:space:]]/data[[:space:]]" /proc/mounts && /system/bin/touch /data/.apmd-ready 2>/dev/null; then \
-            /system/bin/rm -f /data/.apmd-ready; \
-            /system/bin/setprop ctl.start apmd; \
-            /system/bin/sleep 1; \
-            if ! /system/bin/pidof apmd >/dev/null 2>&1; then \
-                /system/bin/apmd --socket /dev/socket/apmd >> /data/apm/logs/apmd.log 2>&1 & \
-            fi; \
+        log "Watchdog detected apmd not running; trying restart methods"; \
+        if /system/bin/grep -q "[[:space:]]/data[[:space:]]" /proc/mounts; then \
+            try_start || log "Watchdog could not start apmd"; \
         fi; \
         /system/bin/sleep 5; \
     done'

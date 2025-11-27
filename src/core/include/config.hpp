@@ -36,7 +36,7 @@ inline constexpr const char *COMMANDS_DIR = "/data/apm/installed/commands";
 inline constexpr const char *DEPENDENCIES_DIR =
     "/data/apm/installed/dependencies";
 inline constexpr const char *TERMUX_INSTALLED_DIR =
-    "/data/apm/installed/termux";
+    "/data/apm/installed/termux/usr/.apm-installed";
 inline constexpr const char *COMMANDS_PATH_HELPER =
     "/data/apm/installed/commands/apm-path.sh";
 inline constexpr const char *COMMANDS_EXPORT_SCRIPT =

@@ -178,7 +178,9 @@ bool ensureExportScript() {
   script << "APM_PATH_HELPER=\"" << apm::config::COMMANDS_PATH_HELPER << "\"\n";
   script << "APM_PROFILE_FILE=\"" << apm::config::GLOBAL_PROFILE_FILE << "\"\n";
   script << "APM_PROFILE_MARK=\"" << apm::config::GLOBAL_PROFILE_SOURCED_MARK
-         << "\"\n\n";
+         << "\"\n";
+  script << "APM_TERMUX_ROOT=\"" << apm::config::TERMUX_ROOT << "\"\n";
+  script << "APM_TERMUX_PREFIX=\"" << apm::config::TERMUX_PREFIX << "\"\n\n";
 
   script << "prepare_profile_dir() {\n";
   script << "  profile_dir=$(dirname \"$APM_PROFILE_FILE\")\n";
@@ -206,6 +208,14 @@ bool ensureExportScript() {
   script << "  *:\"$APM_COMMANDS_DIR\":*) ;;\n";
   script << "  *) PATH=\"$APM_COMMANDS_DIR:$PATH\" ;;\n";
   script << "esac\n";
+  script << "case \":$PATH:\" in\n";
+  script << "  *:\"$APM_TERMUX_ROOT/bin\":*) ;;\n";
+  script << "  *) PATH=\"$APM_TERMUX_ROOT/bin:$PATH\" ;;\n";
+  script << "esac\n";
+  script << "case \":$PATH:\" in\n";
+  script << "  *:\"$APM_TERMUX_PREFIX/bin\":*) ;;\n";
+  script << "  *) PATH=\"$APM_TERMUX_PREFIX/bin:$PATH\" ;;\n";
+  script << "esac\n";
   script << "export PATH\n";
   script << "if [ -f \"$APM_PATH_HELPER\" ]; then\n";
   script << "  . \"$APM_PATH_HELPER\"\n";
@@ -218,6 +228,8 @@ bool ensureExportScript() {
   script << "unset APM_SHIM_DIR\n";
   script << "unset APM_PATH_HELPER\n";
   script << "unset APM_PROFILE_MARK\n";
+  script << "unset APM_TERMUX_ROOT\n";
+  script << "unset APM_TERMUX_PREFIX\n";
   script << "APM_PROFILE\n";
   script << "  chmod 0644 \"$APM_PROFILE_FILE\" >/dev/null 2>&1 || true\n";
   script << "  return 0\n";
@@ -325,18 +337,13 @@ void refreshPathEnvironment() {
     return;
   }
 
-  if (!apm::fs::pathExists(apm::config::GLOBAL_PROFILE_SOURCED_MARK)) {
-    sourceProfileFile();
-  }
+  sourceProfileFile();
 }
 
 // Guarantee that at least one shell has sourced the generated profile file so
 // that future shells inherit PATH updates through ENV.
 void ensureProfileLoaded() {
-  if (apm::fs::pathExists(apm::config::GLOBAL_PROFILE_SOURCED_MARK)) {
-    return;
-  }
-
+  // Always try to (re)source the profile so PATH stays current after installs.
   if (!apm::fs::pathExists(apm::config::GLOBAL_PROFILE_FILE)) {
     refreshPathEnvironment();
     return;

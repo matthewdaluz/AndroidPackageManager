@@ -5,9 +5,9 @@
  * Copyright (C) 2025 RedHead Industries
  *
  * File: apmd.cpp
- * Purpose: Bootstrap apmd, configure logging, and run the IPC server event loop.
- * Last Modified: November 18th, 2025. - 3:00 PM Eastern Time.
- * Author: Matthew DaLuz - RedHead Founder
+ * Purpose: Bootstrap apmd, configure logging, and run the IPC server event
+ * loop. Last Modified: November 18th, 2025. - 3:00 PM Eastern Time. Author:
+ * Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,20 +24,46 @@
  *
  */
 
-#include "ams/module_manager.hpp"
 #include "apmd.hpp"
+#include "ams/module_manager.hpp"
 #include "export_path.hpp"
 #include "ipc_server.hpp"
 #include "logger.hpp"
 
 #include <iostream>
 #include <string>
+#include <sys/stat.h>
+#include <thread>
+#include <unistd.h>
+
+namespace {
+
+bool isDataAccessible() {
+  struct stat st{};
+  if (stat("/data", &st) != 0) {
+    return false;
+  }
+  return access("/data", R_OK | W_OK | X_OK) == 0;
+}
+
+// Poll until /data is mounted and accessible to avoid crashing on startup.
+void waitForDataReady() {
+  using namespace std::chrono_literals;
+  while (!isDataAccessible()) {
+    std::cerr << "apmd: waiting for /data to become available..." << std::endl;
+    std::this_thread::sleep_for(5s);
+  }
+}
+
+} // namespace
 
 namespace apm::daemon {
 
 // Configure logging, ensure the PATH/profile helper is loaded, and launch the
 // IPC server loop.
 int runDaemon(const std::string &socketPath) {
+  waitForDataReady();
+
   apm::logger::setLogFile("/data/apm/logs/apmd.log");
   apm::logger::setMinLogLevel(apm::logger::Level::Info);
 
@@ -48,8 +74,7 @@ int runDaemon(const std::string &socketPath) {
   apm::ams::ModuleManager moduleManager;
   std::string moduleErr;
   if (!moduleManager.applyEnabledModules(&moduleErr)) {
-    apm::logger::warn("runDaemon: module initialization failed: " +
-                      moduleErr);
+    apm::logger::warn("runDaemon: module initialization failed: " + moduleErr);
   } else {
     moduleManager.startEnabledModules();
   }
