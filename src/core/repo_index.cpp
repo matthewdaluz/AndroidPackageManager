@@ -1317,69 +1317,146 @@ bool updateFromSourcesList(const std::string &sourcesPath,
     }
 
     // ---------------------------------------------------------
-    // 2) Handle each component under this source
+    // 2) Handle each component under this source (parallel downloads)
     // ---------------------------------------------------------
+    struct PackagesDownload {
+      std::string component;
+      std::string fileBase;
+      std::string gzUrl;
+      std::string plainUrl;
+      std::string gzDest;
+      std::string plainDest;
+      apm::net::TransferProgressCallback gzProgressCb;
+      apm::net::TransferProgressCallback plainProgressCb;
+      bool succeeded = false;
+      std::string downloadedPath;
+    };
+
+    std::vector<PackagesDownload> pkgPlans;
+    pkgPlans.reserve(src.components.size());
+    std::vector<apm::net::DownloadRequest> primaryRequests;
+    primaryRequests.reserve(src.components.size());
+
     for (const auto &comp : src.components) {
-      // Try formats in APT's order:
-      struct Format {
-        const char *suffix;     // e.g. "Packages.gz"
-        const char *releaseKey; // e.g. "Packages.gz"
-      };
+      PackagesDownload plan;
+      plan.component = comp;
 
-      static const Format formats[] = {{".gz", "Packages.gz"},
-                                       {"", "Packages"}};
-
-      // Build base URL: <uri>/dists/<dist>/<comp>/binary-<arch>/
       std::string pkgUrlBase =
           makeDistBaseUrl(src) + "/" + comp + "/binary-" + archToUse + "/";
+      plan.fileBase = makePackagesFilename(src, comp, archToUse, listsDir);
+      plan.gzUrl = pkgUrlBase + "Packages.gz";
+      plan.plainUrl = pkgUrlBase + "Packages";
+      plan.gzDest = plan.fileBase + ".gz";
+      plan.plainDest = plan.fileBase;
 
-      // Build base local filename
-      std::string fileBase =
-          makePackagesFilename(src, comp, archToUse, listsDir);
+      std::string gzDesc =
+          comp + " [" + archToUse + "] Packages.gz";
+      plan.gzProgressCb = makeDownloadCallback(
+          RepoUpdateStage::DownloadPackages, gzDesc, &plan.component);
 
-      std::string downloadedPath;
-      bool gotIndex = false;
+      std::string plainDesc =
+          comp + " [" + archToUse + "] Packages";
+      plan.plainProgressCb = makeDownloadCallback(
+          RepoUpdateStage::DownloadPackages, plainDesc, &plan.component);
 
-      for (const auto &fmt : formats) {
-        std::string url = pkgUrlBase + fmt.releaseKey;
-        std::string dest = fileBase + fmt.suffix;
+      apm::net::DownloadRequest req;
+      req.url = plan.gzUrl;
+      req.destination = plan.gzDest;
+      req.progressCb = plan.gzProgressCb;
+      primaryRequests.push_back(req);
 
-        dlErr.clear();
-        apm::logger::info("Trying Packages format: " + url);
+      pkgPlans.push_back(std::move(plan));
+    }
 
-        std::string stageDesc = comp + " [" + archToUse + "] " + fmt.releaseKey;
-        auto pkgCb = makeDownloadCallback(RepoUpdateStage::DownloadPackages,
-                                          stageDesc, &comp);
+    std::vector<apm::net::DownloadResult> primaryResults;
+    if (!primaryRequests.empty()) {
+      apm::net::downloadFiles(primaryRequests, primaryResults, 3);
+    }
 
-        if (apm::net::downloadFile(url, dest, &dlErr, pkgCb)) {
-          std::string plainPackages;
-          if (!preparePackagesTextFile(fileBase, dest, fmt.suffix,
-                                       plainPackages, &src, &comp,
-                                       progressCb)) {
-            apm::logger::warn("Failed to unpack downloaded Packages file " +
-                              dest);
-            continue;
-          }
-          apm::logger::info("Downloaded: " + url + " → " + dest);
-          downloadedPath = plainPackages;
-          gotIndex = true;
-          break;
-        } else {
-          apm::logger::warn("Failed to download " + url + ": " + dlErr);
+    std::vector<apm::net::DownloadRequest> fallbackRequests;
+    std::vector<std::size_t> fallbackIndices;
+    fallbackRequests.reserve(pkgPlans.size());
+    fallbackIndices.reserve(pkgPlans.size());
+
+    for (std::size_t i = 0; i < pkgPlans.size(); ++i) {
+      auto &plan = pkgPlans[i];
+      bool gzSuccess = (i < primaryResults.size() && primaryResults[i].success);
+
+      if (gzSuccess) {
+        std::string plainPackages;
+        if (preparePackagesTextFile(plan.fileBase, plan.gzDest, ".gz",
+                                    plainPackages, &src, &plan.component,
+                                    progressCb)) {
+          apm::logger::info("Downloaded: " + plan.gzUrl + " → " + plan.gzDest);
+          plan.downloadedPath = plainPackages;
+          plan.succeeded = true;
+          continue;
         }
+        apm::logger::warn("Failed to unpack downloaded Packages file " +
+                          plan.gzDest);
+      } else if (i < primaryResults.size()) {
+        apm::logger::warn("Failed to download " + plan.gzUrl + ": " +
+                          primaryResults[i].errorMsg);
+      } else {
+        apm::logger::warn("Failed to download " + plan.gzUrl);
       }
 
-      if (!gotIndex) {
+      fallbackIndices.push_back(i);
+      apm::net::DownloadRequest req;
+      req.url = plan.plainUrl;
+      req.destination = plan.plainDest;
+      req.progressCb = plan.plainProgressCb;
+      fallbackRequests.push_back(std::move(req));
+    }
+
+    if (!fallbackRequests.empty()) {
+      std::vector<apm::net::DownloadResult> fallbackResults;
+      apm::net::downloadFiles(fallbackRequests, fallbackResults, 3);
+
+      for (std::size_t j = 0; j < fallbackRequests.size(); ++j) {
+        std::size_t planIndex =
+            (j < fallbackIndices.size()) ? fallbackIndices[j] : pkgPlans.size();
+        if (planIndex >= pkgPlans.size())
+          continue;
+
+        auto &plan = pkgPlans[planIndex];
+        bool plainSuccess =
+            (j < fallbackResults.size() && fallbackResults[j].success);
+
+        if (plainSuccess) {
+          std::string plainPackages;
+          if (preparePackagesTextFile(plan.fileBase, plan.plainDest, "",
+                                      plainPackages, &src, &plan.component,
+                                      progressCb)) {
+            apm::logger::info("Downloaded: " + plan.plainUrl + " → " +
+                              plan.plainDest);
+            plan.downloadedPath = plainPackages;
+            plan.succeeded = true;
+            continue;
+          }
+          apm::logger::warn("Failed to unpack downloaded Packages file " +
+                            plan.plainDest);
+        } else if (j < fallbackResults.size()) {
+          apm::logger::warn("Failed to download " + plan.plainUrl + ": " +
+                            fallbackResults[j].errorMsg);
+        } else {
+          apm::logger::warn("Failed to download " + plan.plainUrl);
+        }
+      }
+    }
+
+    for (const auto &plan : pkgPlans) {
+      if (!plan.succeeded) {
         apm::logger::warn(
             "updateFromSourcesList: could not obtain ANY Packages index for " +
-            src.uri + " " + src.dist + " " + comp + " [" + archToUse + "]");
+            src.uri + " " + src.dist + " " + plan.component + " [" +
+            archToUse + "]");
         continue;
       }
 
       apm::logger::warn("SHA256 verification DISABLED (REASON: Gotta rework "
                         "it): accepting Packages index " +
-                        downloadedPath);
-
+                        plan.downloadedPath);
       ok++;
     }
   }

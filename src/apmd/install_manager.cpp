@@ -111,9 +111,10 @@ static std::string determineRepoArch(const RepoIndexList &repoIndices) {
 //   - Else if Filename is full URL, download from it
 //   - Else if repoUri is set, download repoUri + "/" + Filename
 //   - Else ask user to place .deb manually
-static bool ensureDebForPackage(const PackageEntry &pkg, std::string &debPath,
-                                std::string *errorMsg,
-                                const InstallProgressCallback &progressCb) {
+static bool ensureDebForPackage(
+    const PackageEntry &pkg, std::string &debPath, std::string *errorMsg,
+    const InstallProgressCallback &progressCb,
+    std::vector<apm::net::DownloadRequest> *pendingDownloads = nullptr) {
   std::string debName = makeDebFileName(pkg);
   debPath = apm::fs::joinPath(apm::config::PKGS_DIR, debName);
 
@@ -181,7 +182,6 @@ static bool ensureDebForPackage(const PackageEntry &pkg, std::string &debPath,
   apm::logger::info("ensureDebForPackage: downloading " + url + " -> " +
                     debPath);
 
-  std::string dlErr;
   apm::net::TransferProgressCallback downloadProgress;
   if (progressCb) {
     const std::string pkgName = pkg.packageName;
@@ -203,6 +203,16 @@ static bool ensureDebForPackage(const PackageEntry &pkg, std::string &debPath,
     };
   }
 
+  if (pendingDownloads) {
+    apm::net::DownloadRequest req;
+    req.url = url;
+    req.destination = debPath;
+    req.progressCb = downloadProgress;
+    pendingDownloads->push_back(std::move(req));
+    return true;
+  }
+
+  std::string dlErr;
   if (!apm::net::downloadFile(url, debPath, &dlErr, downloadProgress)) {
     std::string msg = "Download failed for " + url + ": " + dlErr;
     if (errorMsg)
@@ -994,6 +1004,16 @@ bool installWithDeps(const RepoIndexList &repoIndices,
   }
 
   // Real install
+  struct PlannedInstall {
+    const PackageEntry *pkg = nullptr;
+    std::string debPath;
+  };
+
+  std::vector<PlannedInstall> plannedInstalls;
+  plannedInstalls.reserve(res.installOrder.size());
+  std::vector<apm::net::DownloadRequest> downloadQueue;
+  std::vector<std::string> downloadPkgNames;
+
   for (const auto *pkg : res.installOrder) {
     if (!pkg)
       continue;
@@ -1006,19 +1026,67 @@ bool installWithDeps(const RepoIndexList &repoIndices,
       result.skippedPackages.push_back(pkg->packageName);
       continue;
     }
-    if (effectiveOpts.reinstall && existing != installedDb.end() &&
-        termuxMode && existing->second.termuxPackage) {
-      removeTermuxPackageFiles(existing->second, nullptr);
-    }
 
     std::string debPath;
-    if (!ensureDebForPackage(*pkg, debPath, &err, progressCb)) {
+    std::size_t before = downloadQueue.size();
+    if (!ensureDebForPackage(*pkg, debPath, &err, progressCb,
+                             &downloadQueue)) {
       result.ok = false;
       result.message =
           "Failed to ensure .deb for " + pkg->packageName + ": " + err;
       apm::logger::error("installWithDeps: " + result.message);
       return false;
     }
+    if (downloadQueue.size() > before) {
+      downloadPkgNames.push_back(pkg->packageName);
+    }
+
+    plannedInstalls.push_back({pkg, debPath});
+  }
+
+  if (!downloadQueue.empty()) {
+    std::vector<apm::net::DownloadResult> dlResults;
+    if (!apm::net::downloadFiles(downloadQueue, dlResults, 3, &err)) {
+      std::string msg =
+          err.empty() ? "Parallel download failed" : err;
+
+      for (std::size_t i = 0; i < dlResults.size(); ++i) {
+        if (dlResults[i].success)
+          continue;
+        std::string label;
+        if (i < downloadPkgNames.size()) {
+          label = downloadPkgNames[i];
+        } else if (!dlResults[i].url.empty()) {
+          label = dlResults[i].url;
+        } else {
+          label = "unknown package";
+        }
+        msg = "Download failed for " + label;
+        if (!dlResults[i].errorMsg.empty()) {
+          msg += ": " + dlResults[i].errorMsg;
+        }
+        break;
+      }
+
+      result.ok = false;
+      result.message = msg;
+      apm::logger::error("installWithDeps: " + result.message);
+      return false;
+    }
+  }
+
+  for (const auto &plan : plannedInstalls) {
+    if (!plan.pkg)
+      continue;
+
+    const auto *pkg = plan.pkg;
+    auto existing = installedDb.find(pkg->packageName);
+    if (effectiveOpts.reinstall && existing != installedDb.end() &&
+        termuxMode && existing->second.termuxPackage) {
+      removeTermuxPackageFiles(existing->second, nullptr);
+    }
+
+    const std::string &debPath = plan.debPath;
 
     // ---------------------------------------------------------
     // SHA256 verification (strict mode)

@@ -5,8 +5,8 @@
  * Copyright (C) 2025 RedHead Industries
  *
  * File: downloader.cpp
- * Purpose: Implement libcurl downloads with progress reporting and CA bundle management.
- * Last Modified: November 18th, 2025. - 3:00 PM Eastern Time.
+ * Purpose: Implement libcurl downloads with progress reporting and CA bundle
+ * management. Last Modified: November 18th, 2025. - 3:00 PM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -30,13 +30,16 @@
 
 #include <curl/curl.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <mutex>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -68,8 +71,7 @@ void ensurePsaInitialized() {
       return;
     int status = psa_crypto_init();
     if (status != 0) {
-      apm::logger::warn("psa_crypto_init() failed: " +
-                        std::to_string(status));
+      apm::logger::warn("psa_crypto_init() failed: " + std::to_string(status));
     } else {
       apm::logger::debug("psa_crypto_init() completed");
     }
@@ -281,6 +283,34 @@ void emitFinalProgress(const CurlProgressContext &ctx, bool success) {
   ctx.cb(finalProgress);
 }
 
+bool prepareOutputFile(const std::string &dest, FILE *&outFile,
+                       std::string *errorMsg, const char *logPrefix) {
+  auto pos = dest.find_last_of('/');
+  if (pos != std::string::npos) {
+    std::string parent = dest.substr(0, pos);
+    if (!apm::fs::createDirs(parent)) {
+      if (errorMsg)
+        *errorMsg = "Failed to create directory: " + parent;
+      apm::logger::error(std::string(logPrefix) +
+                         ": cannot create directory: " + parent);
+      return false;
+    }
+  }
+
+  outFile = std::fopen(dest.c_str(), "wb");
+  if (!outFile) {
+    if (errorMsg) {
+      *errorMsg =
+          "Failed to open destination '" + dest + "': " + std::strerror(errno);
+    }
+    apm::logger::error(std::string(logPrefix) +
+                       ": cannot open destination: " + dest);
+    return false;
+  }
+
+  return true;
+}
+
 } // namespace
 
 namespace apm::net {
@@ -296,27 +326,11 @@ bool downloadFile(const std::string &url, const std::string &dest,
     return false;
   }
 
-  // Ensure parent directory exists
-  auto pos = dest.find_last_of('/');
-  if (pos != std::string::npos) {
-    std::string parent = dest.substr(0, pos);
-    if (!apm::fs::createDirs(parent)) {
-      if (errorMsg)
-        *errorMsg = "Failed to create directory: " + parent;
-      apm::logger::error("downloadFile: cannot create directory: " + parent);
-      return false;
-    }
-  }
-
   ensureCurlInitialized();
   ensurePsaInitialized();
 
-  FILE *outFile = std::fopen(dest.c_str(), "wb");
-  if (!outFile) {
-    if (errorMsg)
-      *errorMsg =
-          "Failed to open destination '" + dest + "': " + std::strerror(errno);
-    apm::logger::error("downloadFile: cannot open destination: " + dest);
+  FILE *outFile = nullptr;
+  if (!prepareOutputFile(dest, outFile, errorMsg, "downloadFile")) {
     return false;
   }
 
@@ -359,8 +373,8 @@ bool downloadFile(const std::string &url, const std::string &dest,
 
   if (res != CURLE_OK) {
     if (errorMsg)
-      *errorMsg = "curl_easy_perform() failed: " +
-                  std::string(curl_easy_strerror(res));
+      *errorMsg =
+          "curl_easy_perform() failed: " + std::string(curl_easy_strerror(res));
     apm::logger::error("downloadFile: curl failed: " +
                        std::string(curl_easy_strerror(res)));
     std::remove(dest.c_str());
@@ -368,6 +382,210 @@ bool downloadFile(const std::string &url, const std::string &dest,
   }
 
   return true;
+}
+
+bool downloadFiles(const std::vector<DownloadRequest> &requests,
+                   std::vector<DownloadResult> &results,
+                   std::size_t maxParallel, std::string *errorMsg) {
+  results.clear();
+  results.resize(requests.size());
+
+  if (requests.empty())
+    return true;
+
+  const std::size_t parallel =
+      std::max<std::size_t>(1, std::min<std::size_t>(3, maxParallel));
+
+  ensureCurlInitialized();
+  ensurePsaInitialized();
+
+  CURLM *multi = curl_multi_init();
+  if (!multi) {
+    if (errorMsg)
+      *errorMsg = "curl_multi_init() failed";
+    apm::logger::error("downloadFiles: curl_multi_init() failed");
+    return false;
+  }
+
+  struct ActiveTransfer {
+    std::size_t requestIndex = 0;
+    const DownloadRequest *request = nullptr;
+    DownloadResult *result = nullptr;
+    std::unique_ptr<FILE, decltype(&std::fclose)> file{nullptr, &std::fclose};
+    CURL *easy = nullptr;
+    CurlProgressContext progress;
+  };
+
+  std::vector<std::unique_ptr<ActiveTransfer>> active;
+  active.reserve(parallel);
+  bool allOk = true;
+  std::size_t nextIndex = 0;
+
+  auto startTransfer = [&](std::size_t idx) {
+    const auto &req = requests[idx];
+    DownloadResult &res = results[idx];
+    res.url = req.url;
+    res.destination = req.destination;
+    res.success = false;
+    res.errorMsg.clear();
+
+    if (req.url.empty() || req.destination.empty()) {
+      res.errorMsg = "URL or dest is empty";
+      allOk = false;
+      return;
+    }
+
+    auto transfer = std::make_unique<ActiveTransfer>();
+    transfer->requestIndex = idx;
+    transfer->request = &req;
+    transfer->result = &res;
+
+    FILE *file = nullptr;
+    if (!prepareOutputFile(req.destination, file, &res.errorMsg,
+                           "downloadFiles")) {
+      allOk = false;
+      return;
+    }
+    transfer->file.reset(file);
+
+    transfer->progress.cb = req.progressCb;
+    transfer->progress.url = req.url;
+    transfer->progress.dest = req.destination;
+
+    transfer->easy = curl_easy_init();
+    if (!transfer->easy) {
+      res.errorMsg = "curl_easy_init() failed";
+      std::remove(req.destination.c_str());
+      transfer->file.reset();
+      allOk = false;
+      return;
+    }
+
+    curl_easy_setopt(transfer->easy, CURLOPT_URL, req.url.c_str());
+    curl_easy_setopt(transfer->easy, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(transfer->easy, CURLOPT_FAILONERROR, 1L);
+    curl_easy_setopt(transfer->easy, CURLOPT_SSLVERSION,
+                     CURL_SSLVERSION_TLSv1_2);
+    curl_easy_setopt(transfer->easy, CURLOPT_WRITEFUNCTION, &writeCallback);
+    curl_easy_setopt(transfer->easy, CURLOPT_WRITEDATA,
+                     static_cast<void *>(transfer->file.get()));
+    ensureCurlCaBundle(transfer->easy);
+
+    if (transfer->progress.cb) {
+      curl_easy_setopt(transfer->easy, CURLOPT_NOPROGRESS, 0L);
+      curl_easy_setopt(transfer->easy, CURLOPT_XFERINFOFUNCTION,
+                       &curlProgressCallback);
+      curl_easy_setopt(transfer->easy, CURLOPT_XFERINFODATA,
+                       static_cast<void *>(&transfer->progress));
+    } else {
+      curl_easy_setopt(transfer->easy, CURLOPT_NOPROGRESS, 1L);
+    }
+
+    curl_easy_setopt(transfer->easy, CURLOPT_PRIVATE,
+                     static_cast<void *>(transfer.get()));
+
+    CURLMcode addRes = curl_multi_add_handle(multi, transfer->easy);
+    if (addRes != CURLM_OK) {
+      res.errorMsg = "curl_multi_add_handle() failed: " +
+                     std::string(curl_multi_strerror(addRes));
+      curl_easy_cleanup(transfer->easy);
+      transfer->easy = nullptr;
+      std::remove(req.destination.c_str());
+      transfer->file.reset();
+      allOk = false;
+      return;
+    }
+
+    active.push_back(std::move(transfer));
+  };
+
+  auto launchAvailable = [&]() {
+    while (nextIndex < requests.size() && active.size() < parallel) {
+      startTransfer(nextIndex);
+      ++nextIndex;
+    }
+  };
+
+  launchAvailable();
+
+  int stillRunning = 0;
+  curl_multi_perform(multi, &stillRunning);
+
+  while (!active.empty()) {
+    int numfds = 0;
+    curl_multi_wait(multi, nullptr, 0, 1000, &numfds);
+    curl_multi_perform(multi, &stillRunning);
+
+    CURLMsg *msg;
+    int msgsLeft = 0;
+    while ((msg = curl_multi_info_read(multi, &msgsLeft))) {
+      if (!msg || msg->msg != CURLMSG_DONE) {
+        continue;
+      }
+
+      ActiveTransfer *transfer = nullptr;
+      curl_easy_getinfo(msg->easy_handle, CURLINFO_PRIVATE,
+                        reinterpret_cast<void **>(&transfer));
+      if (!transfer) {
+        continue;
+      }
+
+      const bool success = (msg->data.result == CURLE_OK);
+      if (!success) {
+        transfer->result->errorMsg =
+            "curl_easy_perform() failed: " +
+            std::string(curl_easy_strerror(msg->data.result));
+        allOk = false;
+      } else {
+        transfer->result->success = true;
+        transfer->result->errorMsg.clear();
+      }
+
+      curl_off_t downloaded = 0;
+      curl_off_t uploaded = 0;
+      curl_easy_getinfo(msg->easy_handle, CURLINFO_SIZE_DOWNLOAD_T,
+                        &downloaded);
+      curl_easy_getinfo(msg->easy_handle, CURLINFO_SIZE_UPLOAD_T, &uploaded);
+      transfer->progress.lastDownloaded =
+          static_cast<std::uint64_t>(downloaded);
+      transfer->progress.lastUploaded = static_cast<std::uint64_t>(uploaded);
+      emitFinalProgress(transfer->progress, success);
+
+      curl_multi_remove_handle(multi, msg->easy_handle);
+      curl_easy_cleanup(msg->easy_handle);
+
+      if (transfer->file) {
+        transfer->file.reset();
+      }
+      if (!success && transfer->request) {
+        std::remove(transfer->request->destination.c_str());
+      }
+
+      auto it =
+          std::find_if(active.begin(), active.end(),
+                       [transfer](const std::unique_ptr<ActiveTransfer> &ptr) {
+                         return ptr.get() == transfer;
+                       });
+      if (it != active.end()) {
+        active.erase(it);
+      }
+    }
+
+    launchAvailable();
+  }
+
+  curl_multi_cleanup(multi);
+
+  if (!allOk && errorMsg) {
+    for (const auto &res : results) {
+      if (!res.success && !res.errorMsg.empty()) {
+        *errorMsg = res.errorMsg;
+        break;
+      }
+    }
+  }
+
+  return allOk;
 }
 
 } // namespace apm::net

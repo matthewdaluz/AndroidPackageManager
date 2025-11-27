@@ -29,6 +29,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace apm::net {
 
@@ -49,9 +50,30 @@ struct TransferProgress {
 
 using TransferProgressCallback = std::function<void(const TransferProgress &)>;
 
+struct DownloadRequest {
+  std::string url;
+  std::string destination;
+  TransferProgressCallback progressCb;
+};
+
+struct DownloadResult {
+  std::string url;
+  std::string destination;
+  bool success = false;
+  std::string errorMsg;
+};
+
 // Download a file from URL into dest using libcurl while reporting progress.
 bool downloadFile(const std::string &url, const std::string &dest,
                   std::string *errorMsg = nullptr,
                   TransferProgressCallback progressCb = {});
+
+// Download multiple files in parallel with a cap on concurrent transfers.
+// Results are ordered to match the requests vector. Returns true only if every
+// transfer succeeds.
+bool downloadFiles(const std::vector<DownloadRequest> &requests,
+                   std::vector<DownloadResult> &results,
+                   std::size_t maxParallel = 3,
+                   std::string *errorMsg = nullptr);
 
 } // namespace apm::net
