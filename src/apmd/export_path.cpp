@@ -41,6 +41,10 @@
 
 namespace {
 
+// PID marker used by the shell helper to avoid spawning multiple keepalive
+// loops when apmd refreshes PATH repeatedly.
+constexpr const char *kPathKeepalivePid = "/data/apm/.apm_path_keepalive.pid";
+
 // Create parent directories for a file path if they do not exist.
 bool ensureParentDir(const std::string &path) {
   auto pos = path.find_last_of('/');
@@ -180,7 +184,12 @@ bool ensureExportScript() {
   script << "APM_PROFILE_MARK=\"" << apm::config::GLOBAL_PROFILE_SOURCED_MARK
          << "\"\n";
   script << "APM_TERMUX_ROOT=\"" << apm::config::TERMUX_ROOT << "\"\n";
-  script << "APM_TERMUX_PREFIX=\"" << apm::config::TERMUX_PREFIX << "\"\n\n";
+  script << "APM_TERMUX_PREFIX=\"" << apm::config::TERMUX_PREFIX << "\"\n";
+  script << "APM_KEEPALIVE_PID=\"" << kPathKeepalivePid << "\"\n";
+  script << "APM_PATH_HOOK_TARGETS=\"/system/etc/profile /system/etc/mkshrc "
+            "/etc/profile /data/local/userinit.sh /data/local/tmp/.profile "
+            "/data/local/tmp/.mkshrc\"\n";
+  script << "APM_SERVICE_HOOK=\"/data/adb/service.d/99apm-path.sh\"\n\n";
 
   script << "prepare_profile_dir() {\n";
   script << "  profile_dir=$(dirname \"$APM_PROFILE_FILE\")\n";
@@ -235,6 +244,63 @@ bool ensureExportScript() {
   script << "  return 0\n";
   script << "}\n\n";
 
+  script << "apm_path__line_exists() {\n";
+  script << "  file=\"$1\"\n";
+  script << "  needle=\"$2\"\n";
+  script << "  [ -f \"$file\" ] && /system/bin/grep -F -q \"$needle\" \"$file\" "
+            "2>/dev/null\n";
+  script << "}\n\n";
+
+  script << "apm_path__append_hook() {\n";
+  script << "  file=\"$1\"\n";
+  script << "  line=\"$2\"\n";
+  script << "  dir=$(dirname \"$file\")\n";
+  script << "  mkdir -p \"$dir\" >/dev/null 2>&1 || true\n";
+  script << "  [ -f \"$file\" ] || touch \"$file\" >/dev/null 2>&1 || true\n";
+  script << "  if apm_path__line_exists \"$file\" \"$line\"; then\n";
+  script << "    return 0\n";
+  script << "  fi\n";
+  script << "  printf \"\\n%s\\n\" \"$line\" >>\"$file\" 2>/dev/null || true\n";
+  script << "}\n\n";
+
+  script << "apm_path__install_hooks() {\n";
+  script << "  hook=\"[ -f \\\"$APM_PROFILE_FILE\\\" ] && . "
+            "\\\"$APM_PROFILE_FILE\\\"\"\n";
+  script << "  for target in $APM_PATH_HOOK_TARGETS; do\n";
+  script << "    apm_path__append_hook \"$target\" \"$hook\"\n";
+  script << "  done\n";
+  script << "  if [ -d \"/data/adb/service.d\" ]; then\n";
+  script << "    if ! apm_path__line_exists \"$APM_SERVICE_HOOK\" \"$hook\"; "
+            "then\n";
+  script << "      printf '#!/system/bin/sh\\n%s\\n' \"$hook\" "
+            ">\"$APM_SERVICE_HOOK\" 2>/dev/null || true\n";
+  script << "      chmod 0755 \"$APM_SERVICE_HOOK\" >/dev/null 2>&1 || true\n";
+  script << "    fi\n";
+  script << "  fi\n";
+  script << "}\n\n";
+
+  script << "apm_path__start_keepalive() {\n";
+  script << "  pid_file=\"$APM_KEEPALIVE_PID\"\n";
+  script << "  if [ -f \"$pid_file\" ]; then\n";
+  script << "    old_pid=$(cat \"$pid_file\" 2>/dev/null || true)\n";
+  script << "    case \"$old_pid\" in\n";
+  script << "      ''|*[!0-9]*) old_pid='' ;;\n";
+  script << "    esac\n";
+  script << "    if [ -n \"$old_pid\" ] && kill -0 \"$old_pid\" 2>/dev/null; "
+            "then\n";
+  script << "      return 0\n";
+  script << "    fi\n";
+  script << "  fi\n";
+  script << "  mkdir -p \"$(dirname \"$pid_file\")\" >/dev/null 2>&1 || true\n";
+  script << "  ( while :; do\n";
+  script << "      apm_path__install_hooks\n";
+  script << "      [ -f \"$APM_PATH_HELPER\" ] && . \"$APM_PATH_HELPER\" "
+            ">/dev/null 2>&1\n";
+  script << "      sleep 5\n";
+  script << "    done ) >/dev/null 2>&1 &\n";
+  script << "  echo $! > \"$pid_file\" 2>/dev/null || true\n";
+  script << "}\n\n";
+
   script << "refresh_shell_now() {\n";
   script << "  if [ -f \"$APM_PROFILE_FILE\" ]; then\n";
   script << "    . \"$APM_PROFILE_FILE\" >/dev/null 2>&1\n";
@@ -245,7 +311,9 @@ bool ensureExportScript() {
   script << "}\n\n";
 
   script << "write_profile_file\n";
+  script << "apm_path__install_hooks\n";
   script << "refresh_shell_now\n";
+  script << "apm_path__start_keepalive\n";
 
   return writeExecutableScript(apm::config::COMMANDS_EXPORT_SCRIPT,
                                script.str());

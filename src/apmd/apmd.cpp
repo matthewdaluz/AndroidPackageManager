@@ -30,6 +30,7 @@
 #include "ipc_server.hpp"
 #include "logger.hpp"
 
+#include <atomic>
 #include <iostream>
 #include <string>
 #include <sys/stat.h>
@@ -59,6 +60,22 @@ void waitForDataReady() {
 
 namespace apm::daemon {
 
+// Keep PATH/profile helpers fresh in the background so Termux commands stay
+// reachable even if shells clear ENV. Runs until the daemon shuts down.
+static void startPathMaintenance(std::atomic<bool> &runFlag,
+                                 std::thread &worker) {
+  runFlag.store(true);
+  worker = std::thread([&runFlag]() {
+    using namespace std::chrono_literals;
+    while (runFlag.load()) {
+      apm::daemon::path::refreshPathEnvironment();
+      for (int i = 0; i < 5 && runFlag.load(); ++i) {
+        std::this_thread::sleep_for(1s);
+      }
+    }
+  });
+}
+
 // Configure logging, ensure the PATH/profile helper is loaded, and launch the
 // IPC server loop.
 int runDaemon(const std::string &socketPath) {
@@ -71,6 +88,10 @@ int runDaemon(const std::string &socketPath) {
 
   apm::daemon::path::ensureProfileLoaded();
 
+  std::atomic<bool> pathLoopRun{false};
+  std::thread pathLoopThread;
+  startPathMaintenance(pathLoopRun, pathLoopThread);
+
   apm::ams::ModuleManager moduleManager;
   std::string moduleErr;
   if (!moduleManager.applyEnabledModules(&moduleErr)) {
@@ -82,10 +103,18 @@ int runDaemon(const std::string &socketPath) {
   apm::ipc::IpcServer server(socketPath, moduleManager);
   if (!server.start()) {
     apm::logger::error("runDaemon: failed to start IPC server");
+    pathLoopRun.store(false);
+    if (pathLoopThread.joinable()) {
+      pathLoopThread.join();
+    }
     return 1;
   }
 
   server.run();
+  pathLoopRun.store(false);
+  if (pathLoopThread.joinable()) {
+    pathLoopThread.join();
+  }
   apm::logger::info("apmd exiting");
   return 0;
 }

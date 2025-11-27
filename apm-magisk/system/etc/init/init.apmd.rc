@@ -48,6 +48,7 @@ service apmd-bootstrap /system/bin/sh -c '\
     BOOT_LOG=$LOG_DIR/apmd-bootstrap.log; \
     SOCKET=/dev/socket/apmd; \
     BINS="/system/bin/apmd /data/apm/bin/apmd"; \
+    SU_BIN=$(command -v su 2>/dev/null || true); \
     mkdir -p "$LOG_DIR" /data/ams/modules /data/ams/overlays; \
     touch "$BOOT_LOG"; chmod 0644 "$BOOT_LOG"; \
     log() { echo "$(date +%F\ %T) - $*" >>"$BOOT_LOG"; }; \
@@ -71,6 +72,16 @@ service apmd-bootstrap /system/bin/sh -c '\
             if command -v nohup >/dev/null 2>&1; then \
                 log "Attempting nohup $bin --socket $SOCKET"; \
                 nohup "$bin" --socket "$SOCKET" >>"$BOOT_LOG" 2>&1 & \
+                /system/bin/sleep 2; \
+                check_running && return 0; \
+            fi; \
+            if [ -n "$SU_BIN" ]; then \
+                log "Attempting su -c $bin --socket $SOCKET"; \
+                "$SU_BIN" -c "$bin --socket $SOCKET" >>"$BOOT_LOG" 2>&1 & \
+                /system/bin/sleep 2; \
+                check_running && return 0; \
+                log "Attempting su 0 $bin --socket $SOCKET"; \
+                "$SU_BIN" 0 "$bin" --socket "$SOCKET" >>"$BOOT_LOG" 2>&1 & \
                 /system/bin/sleep 2; \
                 check_running && return 0; \
             fi; \
@@ -101,6 +112,7 @@ service apmd-watchdog /system/bin/sh -c '\
     LOG_FILE=/data/apm/logs/apmd-watchdog.log; \
     SOCKET=/dev/socket/apmd; \
     BINS="/system/bin/apmd /data/apm/bin/apmd"; \
+    SU_BIN=$(command -v su 2>/dev/null || true); \
     mkdir -p /data/apm/logs; \
     touch "$LOG_FILE"; chmod 0644 "$LOG_FILE"; \
     log() { echo "$(date +%F\ %T) - $*" >>"$LOG_FILE"; }; \
@@ -124,6 +136,16 @@ service apmd-watchdog /system/bin/sh -c '\
             if command -v nohup >/dev/null 2>&1; then \
                 log "Watchdog attempting nohup $bin --socket $SOCKET"; \
                 nohup "$bin" --socket "$SOCKET" >>"$LOG_FILE" 2>&1 & \
+                /system/bin/sleep 2; \
+                check_running && return 0; \
+            fi; \
+            if [ -n "$SU_BIN" ]; then \
+                log "Watchdog attempting su -c $bin --socket $SOCKET"; \
+                "$SU_BIN" -c "$bin --socket $SOCKET" >>"$LOG_FILE" 2>&1 & \
+                /system/bin/sleep 2; \
+                check_running && return 0; \
+                log "Watchdog attempting su 0 $bin --socket $SOCKET"; \
+                "$SU_BIN" 0 "$bin" --socket "$SOCKET" >>"$LOG_FILE" 2>&1 & \
                 /system/bin/sleep 2; \
                 check_running && return 0; \
             fi; \

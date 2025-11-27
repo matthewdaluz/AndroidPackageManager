@@ -165,13 +165,59 @@ service apmd-setup /system/bin/sh -c '\
     seclabel u:r:init:s0
 
 service apmd-keeper /system/bin/sh -c '\
+    LOG_FILE=/data/apm/logs/apmd-keeper.log; \
+    SOCKET=/dev/socket/apmd; \
+    BINS="/system/bin/apmd /data/apm/bin/apmd"; \
+    SU_BIN=$(command -v su 2>/dev/null || true); \
+    mkdir -p /data/apm/logs; \
+    touch "$LOG_FILE"; chmod 0644 "$LOG_FILE"; \
+    log() { echo "$(date +%F\ %T) - $*" >>"$LOG_FILE"; }; \
+    check_running() { /system/bin/pidof apmd >/dev/null 2>&1; }; \
+    try_start() { \
+        /system/bin/setprop ctl.start apmd; \
+        /system/bin/sleep 2; \
+        check_running && return 0; \
+        for bin in $BINS; do \
+            [ -x "$bin" ] || continue; \
+            log "Attempting $bin --socket $SOCKET"; \
+            "$bin" --socket "$SOCKET" >>"$LOG_FILE" 2>&1 & \
+            /system/bin/sleep 2; \
+            check_running && return 0; \
+            if command -v setsid >/dev/null 2>&1; then \
+                log "Attempting setsid $bin --socket $SOCKET"; \
+                /system/bin/setsid "$bin" --socket "$SOCKET" >>"$LOG_FILE" 2>&1 & \
+                /system/bin/sleep 2; \
+                check_running && return 0; \
+            fi; \
+            if command -v nohup >/dev/null 2>&1; then \
+                log "Attempting nohup $bin --socket $SOCKET"; \
+                nohup "$bin" --socket "$SOCKET" >>"$LOG_FILE" 2>&1 & \
+                /system/bin/sleep 2; \
+                check_running && return 0; \
+            fi; \
+            if [ -n "$SU_BIN" ]; then \
+                log "Attempting su -c $bin --socket $SOCKET"; \
+                "$SU_BIN" -c "$bin --socket $SOCKET" >>"$LOG_FILE" 2>&1 & \
+                /system/bin/sleep 2; \
+                check_running && return 0; \
+                log "Attempting su 0 $bin --socket $SOCKET"; \
+                "$SU_BIN" 0 "$bin" --socket "$SOCKET" >>"$LOG_FILE" 2>&1 & \
+                /system/bin/sleep 2; \
+                check_running && return 0; \
+            fi; \
+        done; \
+        return 1; \
+    }; \
     while ! /system/bin/grep -q "[[:space:]]/data[[:space:]]" /proc/mounts; do \
         /system/bin/sleep 1; \
     done; \
     while :; do \
-        if ! /system/bin/pidof apmd >/dev/null 2>&1; then \
-            /system/bin/setprop ctl.start apmd; \
+        if check_running; then \
+            /system/bin/sleep 5; \
+            continue; \
         fi; \
+        log "apmd not running; trying restart methods"; \
+        try_start || log "apmd start failed"; \
         /system/bin/sleep 5; \
     done'
     class late_start
@@ -180,9 +226,10 @@ service apmd-keeper /system/bin/sh -c '\
     disabled
     seclabel u:r:init:s0
 
-service apmd /system/bin/apmd
+service apmd /system/bin/apmd --socket /dev/socket/apmd
     class late_start
     user root
     group root system inet shell
+    socket apmd stream 660 root system
     disabled
     seclabel u:r:init:s0
