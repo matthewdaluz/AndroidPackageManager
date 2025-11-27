@@ -1163,6 +1163,8 @@ bool updateFromSourcesList(const std::string &sourcesPath,
                            const std::string &defaultArch,
                            std::string *summaryMsg, std::string *errorMsg,
                            RepoUpdateProgressCallback progressCb) {
+  if (summaryMsg)
+    summaryMsg->clear();
   RepoSourceList sources;
   if (!loadSourcesList(sourcesPath, sources, errorMsg)) {
     return false;
@@ -1393,6 +1395,9 @@ bool updateFromSourcesList(const std::string &sourcesPath,
 
   apm::logger::info("updateFromSourcesList: built " + std::to_string(ok) +
                     " repo index(es)");
+  if (summaryMsg) {
+    *summaryMsg = "Built " + std::to_string(ok) + " repo index(es)";
+  }
   return true;
 }
 

@@ -121,11 +121,11 @@ for bin in "$BIN_DIR"/*; do
     bind_mount "$bin" "$SYS_ALT/bin/$(basename "$bin")"
   fi
 done
-bind_mount "$INIT_SRC" "$SYS_BASE/etc/init/init.apmd.rc"
-if [ "$SYS_ALT" != "$SYS_BASE" ]; then
-  bind_mount "$INIT_SRC" "$SYS_ALT/etc/init/init.apmd.rc"
-fi
-log "Overlay bind mounts complete"
+  bind_mount "$INIT_SRC" "$SYS_BASE/etc/init/init.apmd.rc"
+  if [ "$SYS_ALT" != "$SYS_BASE" ]; then
+    bind_mount "$INIT_SRC" "$SYS_ALT/etc/init/init.apmd.rc"
+  fi
+  log "Overlay bind mounts complete"
 exit 0
 EOF
 
@@ -144,32 +144,18 @@ log() {
   echo "$(date '+%F %T') - $*" >>"$LOG_FILE"
 }
 
-log "Starting SELinux rule application"
-
-if [ ! -d "$TE_DIR" ]; then
-  log "No SELinux rules directory found; nothing to do"
-  exit 0
+log "apm-policy removed; SELinux contexts will be refreshed by init.apmd.rc"
+if [ -d "$TE_DIR" ]; then
+  for te in "$TE_DIR"/*.te; do
+    [ -f "$te" ] || continue
+    chown 0:0 "$te" 2>/dev/null || true
+    chmod 0644 "$te" 2>/dev/null || true
+  done
 fi
-
-applied=0
-for te in "$TE_DIR"/*.te; do
-  [ -f "$te" ] || continue
-  log "Applying $(basename "$te")"
-  if [ -x "$SYS_BASE/bin/apm-policy" ] && "$SYS_BASE/bin/apm-policy" "$te" >>"$LOG_FILE" 2>&1; then
-    log "Applied $(basename "$te")"
-  elif [ "$SYS_ALT" != "$SYS_BASE" ] && [ -x "$SYS_ALT/bin/apm-policy" ] && "$SYS_ALT/bin/apm-policy" "$te" >>"$LOG_FILE" 2>&1; then
-    log "Applied $(basename "$te") via alt path"
-  else
-    log "Failed to apply $(basename "$te")"
-  fi
-  applied=1
-done
-
-if [ "$applied" -eq 0 ]; then
-  log "No .te files found to apply"
+if command -v restorecon >/dev/null 2>&1; then
+  restorecon -RF "$TE_DIR" 2>/dev/null || true
 fi
-
-log "apm-sepolicy finished"
+log "apm-sepolicy stub complete"
 exit 0
 EOF
 

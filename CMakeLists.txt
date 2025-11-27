@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.14)
 project(APM)
-
+include_directories(SYSTEM /usr/include /usr/include/openssl)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -381,6 +381,7 @@ if(NOT DEFINED MBEDTLS_LIBRARIES OR MBEDTLS_LIBRARIES STREQUAL "")
   unset(_APM_MBEDTLS_LIBDIR)
 endif()
 
+
 # ======================================================
 # APM Client Binary
 # ======================================================
@@ -424,6 +425,7 @@ target_include_directories(apm PRIVATE
     src/util/include
     src/util/crypto
     src/apm/commands/include
+    /usr/include
     ${MBEDTLS_INCLUDE_DIRS}
     include
 )
@@ -475,15 +477,19 @@ target_include_directories(apmd PRIVATE
     src/util/include
     src/util/crypto
     src/apm/commands/include
+    /usr/include
     ${MBEDTLS_INCLUDE_DIRS}
     include
 )
+
 
 target_link_libraries(apmd PRIVATE
     CURL::libcurl
     ZLIB::ZLIB
     ${APM_BUNDLED_TLS_LIBS}
 )
+
+
 
 if(TARGET mbedcrypto)
   add_dependencies(apm mbedcrypto)

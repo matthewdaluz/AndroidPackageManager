@@ -5,8 +5,8 @@
  * Copyright (C) 2025 RedHead Industries
  *
  * File: mbedtls_client.cpp
- * Purpose: Local symmetric crypto engine built on BoringSSL (AES-256-GCM +
- * PBKDF2). Last Modified: November 25th, 2025. - 11:45 AM Eastern Time.
+ * Purpose: Local symmetric crypto engine built on mbedTLS (AES-256-GCM +
+ * PBKDF2). Last Modified: November 23rd, 2025. - 12:06 PM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -30,14 +30,13 @@
 #include "fs.hpp"
 #include "security.hpp"
 
-#include <algorithm>
 #include <fstream>
 #include <sys/stat.h>
 
-#include <openssl/evp.h>
-#include <openssl/err.h>
-#include <openssl/hmac.h>
-#include <openssl/rand.h>
+#include <mbedtls/error.h>
+#include <mbedtls/gcm.h>
+#include <mbedtls/md.h>
+#include <mbedtls/pkcs5.h>
 
 namespace apm::daemon {
 
@@ -54,12 +53,8 @@ constexpr unsigned int kPbkdf2Iterations = 200000;
 CryptoEngine::CryptoEngine() : m_masterKeyLoaded(false) {}
 
 std::string CryptoEngine::formatError(int code) const {
-  (void)code;
-  char buf[256] = {0};
-  unsigned long err = ERR_get_error();
-  if (err == 0)
-    return "OpenSSL error";
-  ERR_error_string_n(err, buf, sizeof(buf));
+  char buf[128] = {0};
+  mbedtls_strerror(code, buf, sizeof(buf));
   return std::string(buf);
 }
 
@@ -158,69 +153,34 @@ bool CryptoEngine::encrypt(const std::vector<uint8_t> &plaintext,
   if (!randomBytes(kGcmIvLen, ivOut, errorMsg))
     return false;
 
-  EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
-  if (!ctx) {
-    if (errorMsg)
-      *errorMsg = "Failed to allocate cipher context";
-    return false;
-  }
-
-  if (EVP_EncryptInit_ex(ctx, EVP_aes_256_gcm(), nullptr, nullptr, nullptr) !=
-      1) {
-    if (errorMsg)
-      *errorMsg = "AES-GCM init failed: " + formatError(0);
-    EVP_CIPHER_CTX_free(ctx);
-    return false;
-  }
-
-  if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN,
-                          static_cast<int>(ivOut.size()), nullptr) != 1) {
-    if (errorMsg)
-      *errorMsg = "AES-GCM IV length set failed: " + formatError(0);
-    EVP_CIPHER_CTX_free(ctx);
-    return false;
-  }
-
-  if (EVP_EncryptInit_ex(ctx, nullptr, nullptr, m_masterKey.data(),
-                         ivOut.data()) != 1) {
-    if (errorMsg)
-      *errorMsg = "AES-GCM key/iv set failed: " + formatError(0);
-    EVP_CIPHER_CTX_free(ctx);
-    return false;
-  }
+  mbedtls_gcm_context ctx;
+  mbedtls_gcm_init(&ctx);
 
   ciphertextOut.resize(plaintext.size());
-  int outLen = 0;
-  int total = 0;
-  if (EVP_EncryptUpdate(ctx, ciphertextOut.data(), &outLen, plaintext.data(),
-                        static_cast<int>(plaintext.size())) != 1) {
-    if (errorMsg)
-      *errorMsg = "AES-GCM encrypt failed: " + formatError(0);
-    EVP_CIPHER_CTX_free(ctx);
-    return false;
-  }
-  total = outLen;
-
-  if (EVP_EncryptFinal_ex(ctx, ciphertextOut.data() + total, &outLen) != 1) {
-    if (errorMsg)
-      *errorMsg = "AES-GCM final failed: " + formatError(0);
-    EVP_CIPHER_CTX_free(ctx);
-    return false;
-  }
-  total += outLen;
-  ciphertextOut.resize(static_cast<std::size_t>(total));
-
   tagOut.resize(kGcmTagLen);
-  if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG,
-                          static_cast<int>(tagOut.size()),
-                          tagOut.data()) != 1) {
+
+  int ret =
+      mbedtls_gcm_setkey(&ctx, MBEDTLS_CIPHER_ID_AES, m_masterKey.data(),
+                         static_cast<unsigned int>(m_masterKey.size() * 8));
+  if (ret != 0) {
     if (errorMsg)
-      *errorMsg = "AES-GCM tag retrieval failed: " + formatError(0);
-    EVP_CIPHER_CTX_free(ctx);
+      *errorMsg = "Failed to set AES-GCM key: " + formatError(ret);
+    mbedtls_gcm_free(&ctx);
     return false;
   }
 
-  EVP_CIPHER_CTX_free(ctx);
+  ret = mbedtls_gcm_crypt_and_tag(&ctx, MBEDTLS_GCM_ENCRYPT, plaintext.size(),
+                                  ivOut.data(), ivOut.size(), nullptr, 0,
+                                  plaintext.data(), ciphertextOut.data(),
+                                  tagOut.size(), tagOut.data());
+
+  mbedtls_gcm_free(&ctx);
+
+  if (ret != 0) {
+    if (errorMsg)
+      *errorMsg = "AES-GCM encryption failed: " + formatError(ret);
+    return false;
+  }
 
   return true;
 }
@@ -245,71 +205,33 @@ bool CryptoEngine::decrypt(const std::vector<uint8_t> &iv,
     return false;
   }
 
-  EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
-  if (!ctx) {
-    if (errorMsg)
-      *errorMsg = "Failed to allocate cipher context";
-    return false;
-  }
-
-  if (EVP_DecryptInit_ex(ctx, EVP_aes_256_gcm(), nullptr, nullptr, nullptr) !=
-      1) {
-    if (errorMsg)
-      *errorMsg = "AES-GCM init failed: " + formatError(0);
-    EVP_CIPHER_CTX_free(ctx);
-    return false;
-  }
-
-  if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN,
-                          static_cast<int>(iv.size()), nullptr) != 1) {
-    if (errorMsg)
-      *errorMsg = "AES-GCM IV length set failed: " + formatError(0);
-    EVP_CIPHER_CTX_free(ctx);
-    return false;
-  }
-
-  if (EVP_DecryptInit_ex(ctx, nullptr, nullptr, m_masterKey.data(),
-                         iv.data()) != 1) {
-    if (errorMsg)
-      *errorMsg = "AES-GCM key/iv set failed: " + formatError(0);
-    EVP_CIPHER_CTX_free(ctx);
-    return false;
-  }
+  mbedtls_gcm_context ctx;
+  mbedtls_gcm_init(&ctx);
 
   plaintextOut.resize(ciphertext.size());
-  int outLen = 0;
-  int total = 0;
-  if (EVP_DecryptUpdate(ctx, plaintextOut.data(), &outLen, ciphertext.data(),
-                        static_cast<int>(ciphertext.size())) != 1) {
-    if (errorMsg)
-      *errorMsg = "AES-GCM decrypt failed: " + formatError(0);
-    EVP_CIPHER_CTX_free(ctx);
-    plaintextOut.clear();
-    return false;
-  }
-  total = outLen;
 
-  if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG,
-                          static_cast<int>(tag.size()),
-                          const_cast<uint8_t *>(tag.data())) != 1) {
+  int ret =
+      mbedtls_gcm_setkey(&ctx, MBEDTLS_CIPHER_ID_AES, m_masterKey.data(),
+                         static_cast<unsigned int>(m_masterKey.size() * 8));
+  if (ret != 0) {
     if (errorMsg)
-      *errorMsg = "AES-GCM tag set failed: " + formatError(0);
-    EVP_CIPHER_CTX_free(ctx);
-    plaintextOut.clear();
+      *errorMsg = "Failed to set AES-GCM key: " + formatError(ret);
+    mbedtls_gcm_free(&ctx);
     return false;
   }
 
-  if (EVP_DecryptFinal_ex(ctx, plaintextOut.data() + total, &outLen) != 1) {
+  ret = mbedtls_gcm_auth_decrypt(&ctx, ciphertext.size(), iv.data(), iv.size(),
+                                 nullptr, 0, tag.data(), tag.size(),
+                                 ciphertext.data(), plaintextOut.data());
+
+  mbedtls_gcm_free(&ctx);
+
+  if (ret != 0) {
     if (errorMsg)
-      *errorMsg = "AES-GCM authentication failed: " + formatError(0);
-    EVP_CIPHER_CTX_free(ctx);
+      *errorMsg = "AES-GCM decryption failed: " + formatError(ret);
     plaintextOut.clear();
     return false;
   }
-  total += outLen;
-  plaintextOut.resize(static_cast<std::size_t>(total));
-
-  EVP_CIPHER_CTX_free(ctx);
 
   return true;
 }
@@ -319,11 +241,14 @@ bool CryptoEngine::derivePasswordKey(const std::string &secret,
                                      std::vector<uint8_t> &derivedOut,
                                      std::string *errorMsg) {
   derivedOut.assign(kMasterKeyLen, 0);
-  if (PKCS5_PBKDF2_HMAC(secret.data(), secret.size(), salt.data(), salt.size(),
-                        kPbkdf2Iterations, EVP_sha256(), derivedOut.size(),
-                        derivedOut.data()) != 1) {
+  const int ret = mbedtls_pkcs5_pbkdf2_hmac_ext(
+      MBEDTLS_MD_SHA256, reinterpret_cast<const unsigned char *>(secret.data()),
+      secret.size(), salt.data(), salt.size(), kPbkdf2Iterations,
+      static_cast<uint32_t>(derivedOut.size()), derivedOut.data());
+
+  if (ret != 0) {
     if (errorMsg)
-      *errorMsg = "PBKDF2 derivation failed: " + formatError(0);
+      *errorMsg = "PBKDF2 derivation failed: " + formatError(ret);
     return false;
   }
 
@@ -335,21 +260,27 @@ bool CryptoEngine::deriveKeyMaterial(std::vector<uint8_t> &materialOut,
   if (!ensureMasterKey(errorMsg))
     return false;
 
-  const std::string label = "apm-session-derive";
-  materialOut.assign(kSessionKeyLen, 0);
-
-  unsigned int macLen = 0;
-  unsigned char mac[EVP_MAX_MD_SIZE] = {0};
-  if (!HMAC(EVP_sha256(), m_masterKey.data(), static_cast<int>(m_masterKey.size()),
-            reinterpret_cast<const unsigned char *>(label.data()),
-            label.size(), mac, &macLen)) {
+  const mbedtls_md_info_t *info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+  if (!info) {
     if (errorMsg)
-      *errorMsg = "HMAC derivation failed: " + formatError(0);
-    materialOut.clear();
+      *errorMsg = "Unable to get SHA-256 md info";
     return false;
   }
 
-  materialOut.assign(mac, mac + std::min<std::size_t>(macLen, kSessionKeyLen));
+  const std::string label = "apm-session-derive";
+  materialOut.assign(kSessionKeyLen, 0);
+
+  const int ret =
+      mbedtls_md_hmac(info, m_masterKey.data(), m_masterKey.size(),
+                      reinterpret_cast<const unsigned char *>(label.data()),
+                      label.size(), materialOut.data());
+
+  if (ret != 0) {
+    if (errorMsg)
+      *errorMsg = "HMAC derivation failed: " + formatError(ret);
+    materialOut.clear();
+    return false;
+  }
 
   return true;
 }

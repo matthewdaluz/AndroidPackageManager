@@ -5,8 +5,9 @@
  * Copyright (C) 2025 RedHead Industries
  *
  * File: apm.cpp
- * Purpose: Implement the apm CLI, including local commands and IPC-backed operations.
- * Last Modified: November 25th, 2025. - 11:35 AM Eastern Time.
+ * Purpose: Implement the apm CLI, including local commands and IPC-backed
+ * operations.
+ * Last Modified: November 27th, 2025. - 8:10 AM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -28,33 +29,37 @@
 #include "control_parser.hpp"
 #include "deb_extractor.hpp"
 #include "export_path.hpp"
+#include "fs.hpp"
+#include "gpg_verify.hpp"
 #include "ipc_client.hpp"
 #include "logger.hpp"
 #include "manual_package.hpp"
 #include "repo_index.hpp"
 #include "search.hpp"
-#include "gpg_verify.hpp"
+#include "security.hpp"
 #include "status_db.hpp"
 #include "tar_extractor.hpp"
-#include "fs.hpp"
-#include "security.hpp"
 
 #include <algorithm>
-#include <cerrno>
 #include <cctype>
+#include <cerrno>
 #include <chrono>
-#include <cstdlib>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <dirent.h>
 #include <iomanip>
 #include <iostream>
-#include <sys/stat.h>
 #include <sstream>
 #include <string>
+#include <sys/stat.h>
 #include <vector>
 
 namespace {
+
+// Editable CLI metadata.
+static constexpr const char *kApmVersion = "1.4.0b - Closed Beta";
+static constexpr const char *kApmBuildDate = "November 27th, 2025 - 8:10 AM ET";
 
 // -----------------------------------------------------------------------------
 // Progress formatting + helper utilities
@@ -255,15 +260,15 @@ static bool loadActiveSessionToken(std::string &tokenOut, bool &hadSession) {
     return false;
 
   hadSession = true;
-  if (apm::security::isSessionExpired(state, apm::security::currentUnixSeconds()))
+  if (apm::security::isSessionExpired(state,
+                                      apm::security::currentUnixSeconds()))
     return false;
 
   tokenOut = state.token;
   return true;
 }
 
-static bool promptForSecret(const std::string &prompt,
-                            std::string &secretOut) {
+static bool promptForSecret(const std::string &prompt, std::string &secretOut) {
   std::cout << prompt << std::flush;
   if (!std::getline(std::cin, secretOut))
     return false;
@@ -307,8 +312,7 @@ static bool requestSessionUnlock(const std::string &socketPath,
   }
 
   if (!resp.success) {
-    std::cerr << (resp.message.empty() ? "Authentication failed"
-                                       : resp.message)
+    std::cerr << (resp.message.empty() ? "Authentication failed" : resp.message)
               << "\n";
     return false;
   }
@@ -367,11 +371,10 @@ static void attachSession(apm::ipc::Request &req,
 
 static bool requiresAuthSession(const std::string &cmd) {
   return cmd == "update" || cmd == "install" || cmd == "remove" ||
-         cmd == "upgrade" || cmd == "autoremove" ||
-         cmd == "module-install" || cmd == "module-list" ||
-         cmd == "module-enable" || cmd == "module-disable" ||
-         cmd == "module-remove" || cmd == "apk-install" ||
-         cmd == "apk-uninstall";
+         cmd == "upgrade" || cmd == "autoremove" || cmd == "module-install" ||
+         cmd == "module-list" || cmd == "module-enable" ||
+         cmd == "module-disable" || cmd == "module-remove" ||
+         cmd == "apk-install" || cmd == "apk-uninstall";
 }
 
 static bool ensureManualSlotAvailable(const std::string &pkgName,
@@ -388,8 +391,8 @@ static bool ensureManualSlotAvailable(const std::string &pkgName,
   }
   if (apm::status::isInstalled(pkgName, nullptr, nullptr)) {
     if (errorMsg)
-      *errorMsg = "Package '" + pkgName +
-                  "' is already installed via 'apm install'";
+      *errorMsg =
+          "Package '" + pkgName + "' is already installed via 'apm install'";
     return false;
   }
   return true;
@@ -404,11 +407,10 @@ static bool collectFilesRecursive(const std::string &root,
   std::string absPath =
       relative.empty() ? root : apm::fs::joinPath(root, relative);
 
-  struct stat st {};
+  struct stat st{};
   if (::lstat(absPath.c_str(), &st) != 0) {
     if (errorMsg)
-      *errorMsg =
-          "Failed to stat " + absPath + ": " + std::strerror(errno);
+      *errorMsg = "Failed to stat " + absPath + ": " + std::strerror(errno);
     return false;
   }
 
@@ -416,8 +418,8 @@ static bool collectFilesRecursive(const std::string &root,
     DIR *dir = ::opendir(absPath.c_str());
     if (!dir) {
       if (errorMsg)
-        *errorMsg = "Failed to open directory " + absPath + ": " +
-                    std::strerror(errno);
+        *errorMsg =
+            "Failed to open directory " + absPath + ": " + std::strerror(errno);
       return false;
     }
 
@@ -426,8 +428,8 @@ static bool collectFilesRecursive(const std::string &root,
       const char *name = ent->d_name;
       if (std::strcmp(name, ".") == 0 || std::strcmp(name, "..") == 0)
         continue;
-      std::string childRel = relative.empty() ? std::string(name)
-                                              : relative + "/" + name;
+      std::string childRel =
+          relative.empty() ? std::string(name) : relative + "/" + name;
       if (!collectFilesRecursive(root, childRel, out, errorMsg)) {
         ::closedir(dir);
         return false;
@@ -462,11 +464,9 @@ static bool collectInstalledFiles(const std::string &root,
 
 // Discover which directory within an extracted archive actually contains the
 // package-info.json metadata we expect.
-static bool findPackageInfoRoot(const std::string &baseDir,
-                                std::string &out,
+static bool findPackageInfoRoot(const std::string &baseDir, std::string &out,
                                 std::string *errorMsg) {
-  std::string infoAtRoot =
-      apm::fs::joinPath(baseDir, "package-info.json");
+  std::string infoAtRoot = apm::fs::joinPath(baseDir, "package-info.json");
   if (apm::fs::isFile(infoAtRoot)) {
     out = baseDir;
     return true;
@@ -480,13 +480,11 @@ static bool findPackageInfoRoot(const std::string &baseDir,
     std::string subdir = apm::fs::joinPath(baseDir, entry);
     if (!apm::fs::isDirectory(subdir))
       continue;
-    std::string candidate =
-        apm::fs::joinPath(subdir, "package-info.json");
+    std::string candidate = apm::fs::joinPath(subdir, "package-info.json");
     if (apm::fs::isFile(candidate)) {
       if (!found.empty()) {
         if (errorMsg)
-          *errorMsg =
-              "Multiple package-info.json files found in archive";
+          *errorMsg = "Multiple package-info.json files found in archive";
         return false;
       }
       found = subdir;
@@ -672,8 +670,7 @@ static bool installManualPackageFromArchive(const std::string &archivePath,
   if (!findPackageInfoRoot(extractDir, packageRoot, errorMsg))
     return false;
 
-  std::string infoPath =
-      apm::fs::joinPath(packageRoot, "package-info.json");
+  std::string infoPath = apm::fs::joinPath(packageRoot, "package-info.json");
   apm::manual::PackageInfo info;
   if (!apm::manual::readPackageInfoFile(infoPath, info, errorMsg))
     return false;
@@ -690,8 +687,7 @@ static bool installManualPackageFromArchive(const std::string &archivePath,
   if (!prefixWithinInstalledRoot(info.prefix)) {
     if (errorMsg)
       *errorMsg =
-          "prefix must be under " +
-          std::string(apm::config::INSTALLED_DIR);
+          "prefix must be under " + std::string(apm::config::INSTALLED_DIR);
     return false;
   }
 
@@ -703,8 +699,7 @@ static bool installManualPackageFromArchive(const std::string &archivePath,
 
   if (apm::fs::pathExists(info.prefix)) {
     if (errorMsg)
-      *errorMsg =
-          "Install directory already exists: " + info.prefix;
+      *errorMsg = "Install directory already exists: " + info.prefix;
     return false;
   }
 
@@ -792,6 +787,7 @@ void printUsage() {
       << "  list                        Show installed packages\n"
       << "  info <pkg>                  Show detailed package information\n"
       << "  search <pattern>            Search available repo packages\n"
+      << "  version                     Show APM version and build date\n"
       << "  key-add <file.asc|.gpg>     Import a trusted public key\n"
       << "\n"
       << "  help                        Show this help\n"
@@ -823,9 +819,9 @@ int cmdPing(const std::string &socketPath) {
   return resp.success ? 0 : 1;
 }
 
-// Trigger repository metadata refresh via the daemon so Packages lists stay current.
-int cmdUpdate(const std::string &socketPath,
-              const std::string &sessionToken) {
+// Trigger repository metadata refresh via the daemon so Packages lists stay
+// current.
+int cmdUpdate(const std::string &socketPath, const std::string &sessionToken) {
   apm::ipc::Request req;
   req.type = apm::ipc::RequestType::Update;
   req.id = "update-1";
@@ -887,8 +883,7 @@ int cmdUpdate(const std::string &socketPath,
       line << formatBytes(total);
     else
       line << "??";
-    line << "  " << formatSpeed(dlSpeed) << "↓ " << formatSpeed(ulSpeed)
-         << "↑";
+    line << "  " << formatSpeed(dlSpeed) << "↓ " << formatSpeed(ulSpeed) << "↑";
 
     std::cout << line.str() << std::flush;
 
@@ -914,8 +909,7 @@ int cmdUpdate(const std::string &socketPath,
 }
 
 // Ask the daemon to install a package along with its dependencies.
-int cmdInstall(const std::string &socketPath,
-               const std::string &sessionToken,
+int cmdInstall(const std::string &socketPath, const std::string &sessionToken,
                const std::string &pkg) {
   auto parsePackageList = [](const apm::ipc::Response &resp,
                              const std::string &field) {
@@ -947,8 +941,7 @@ int cmdInstall(const std::string &socketPath,
 
   if (!planResp.success) {
     std::cerr << "Install failed: "
-              << (planResp.message.empty() ? "unknown error"
-                                           : planResp.message)
+              << (planResp.message.empty() ? "unknown error" : planResp.message)
               << "\n";
     return 1;
   }
@@ -1046,7 +1039,8 @@ int cmdInstall(const std::string &socketPath,
       ui.lineActive = true;
     }
 
-    std::string label = pkgName.empty() ? fileLabel : pkgName + " - " + fileLabel;
+    std::string label =
+        pkgName.empty() ? fileLabel : pkgName + " - " + fileLabel;
 
     std::ostringstream line;
     line << "\r" << label << " " << buildProgressBar(ratio) << " "
@@ -1055,8 +1049,7 @@ int cmdInstall(const std::string &socketPath,
       line << formatBytes(total);
     else
       line << "??";
-    line << "  " << formatSpeed(dlSpeed) << "↓ " << formatSpeed(ulSpeed)
-         << "↑";
+    line << "  " << formatSpeed(dlSpeed) << "↓ " << formatSpeed(ulSpeed) << "↑";
 
     std::cout << line.str() << std::flush;
 
@@ -1081,7 +1074,8 @@ int cmdInstall(const std::string &socketPath,
   return resp.success ? 0 : 1;
 }
 
-// Install a manually provided archive (.deb/.tar.*) entirely from the CLI without daemon IPC.
+// Install a manually provided archive (.deb/.tar.*) entirely from the CLI
+// without daemon IPC.
 int cmdPackageInstall(const std::string &packagePath) {
   if (packagePath.empty()) {
     std::cerr << "apm: 'package-install' requires a file path\n";
@@ -1089,8 +1083,7 @@ int cmdPackageInstall(const std::string &packagePath) {
   }
 
   if (!apm::fs::isFile(packagePath)) {
-    std::cerr << "apm package-install: file not found: " << packagePath
-              << "\n";
+    std::cerr << "apm package-install: file not found: " << packagePath << "\n";
     return 1;
   }
 
@@ -1107,8 +1100,7 @@ int cmdPackageInstall(const std::string &packagePath) {
 }
 
 // Ask the daemon to remove a package and clean up metadata.
-int cmdRemove(const std::string &socketPath,
-              const std::string &sessionToken,
+int cmdRemove(const std::string &socketPath, const std::string &sessionToken,
               const std::string &pkg) {
   std::string manualMsg;
   std::string manualErr;
@@ -1142,7 +1134,8 @@ int cmdRemove(const std::string &socketPath,
   return resp.success ? 0 : 1;
 }
 
-// Forward an APK install request to the daemon, optionally forcing a system install overlay.
+// Forward an APK install request to the daemon, optionally forcing a system
+// install overlay.
 int cmdApkInstall(const std::string &socketPath,
                   const std::string &sessionToken, const std::string &apk,
                   bool installAsSystem) {
@@ -1193,8 +1186,8 @@ int cmdApkUninstall(const std::string &socketPath,
 }
 
 // Request upgrades for either all installed packages or a provided subset.
-int cmdUpgrade(const std::string &socketPath,
-               const std::string &sessionToken, int argc, char **argv) {
+int cmdUpgrade(const std::string &socketPath, const std::string &sessionToken,
+               int argc, char **argv) {
   apm::ipc::Request req;
   req.type = apm::ipc::RequestType::Upgrade;
   req.id = "upgrade-1";
@@ -1270,8 +1263,7 @@ int cmdModuleInstall(const std::string &socketPath,
 
 static int runModuleToggle(const std::string &socketPath,
                            const std::string &sessionToken,
-                           apm::ipc::RequestType type,
-                           const std::string &name,
+                           apm::ipc::RequestType type, const std::string &name,
                            const std::string &verb) {
   apm::ipc::Request req;
   req.type = type;
@@ -1295,24 +1287,21 @@ static int runModuleToggle(const std::string &socketPath,
 }
 
 int cmdModuleEnable(const std::string &socketPath,
-                    const std::string &sessionToken,
-                    const std::string &name) {
+                    const std::string &sessionToken, const std::string &name) {
   return runModuleToggle(socketPath, sessionToken,
                          apm::ipc::RequestType::ModuleEnable, name,
                          "Module enable");
 }
 
 int cmdModuleDisable(const std::string &socketPath,
-                     const std::string &sessionToken,
-                     const std::string &name) {
+                     const std::string &sessionToken, const std::string &name) {
   return runModuleToggle(socketPath, sessionToken,
                          apm::ipc::RequestType::ModuleDisable, name,
                          "Module disable");
 }
 
 int cmdModuleRemove(const std::string &socketPath,
-                    const std::string &sessionToken,
-                    const std::string &name) {
+                    const std::string &sessionToken, const std::string &name) {
   return runModuleToggle(socketPath, sessionToken,
                          apm::ipc::RequestType::ModuleRemove, name,
                          "Module remove");
@@ -1336,7 +1325,8 @@ int cmdModuleList(const std::string &socketPath,
   if (!resp.message.empty())
     std::cout << resp.message << "\n";
   else
-    std::cout << (resp.success ? "No modules installed." : "Module list unavailable")
+    std::cout << (resp.success ? "No modules installed."
+                               : "Module list unavailable")
               << "\n";
   return resp.success ? 0 : 1;
 }
@@ -1472,15 +1462,23 @@ int cmdSearchLocal(int argc, char **argv) {
   return apm::cli::searchPackages(patterns);
 }
 
+// Print the CLI version/build metadata.
+int cmdVersion() {
+  std::cout << "APM version " << kApmVersion;
+  if (kApmBuildDate && std::strlen(kApmBuildDate) > 0)
+    std::cout << " (built " << kApmBuildDate << ")";
+  std::cout << "\n";
+  return 0;
+}
+
 // Import an ASCII-armored public key into the trusted key directory.
 int cmdKeyAdd(const std::string &path) {
   std::string fingerprint;
   std::string storedPath;
   std::string error;
 
-  if (!apm::crypto::importTrustedPublicKey(
-          path, apm::config::TRUSTED_KEYS_DIR, &fingerprint, &storedPath,
-          &error)) {
+  if (!apm::crypto::importTrustedPublicKey(path, apm::config::TRUSTED_KEYS_DIR,
+                                           &fingerprint, &storedPath, &error)) {
     std::cerr << "Failed to import key: " << error << "\n";
     return 1;
   }
@@ -1500,7 +1498,8 @@ int cmdKeyAdd(const std::string &path) {
 // ============================================================
 //
 
-// Entry point that parses global options, dispatches to subcommands, and wires IPC/socket overrides.
+// Entry point that parses global options, dispatches to subcommands, and wires
+// IPC/socket overrides.
 int main(int argc, char **argv) {
   apm::logger::setLogFile("apm-cli.log");
   apm::logger::setMinLogLevel(apm::logger::Level::Debug);
@@ -1658,6 +1657,8 @@ int main(int argc, char **argv) {
     int remaining = argc - i;
     return cmdSearchLocal(remaining, argv + i);
   }
+  if (cmd == "version")
+    return cmdVersion();
   if (cmd == "key-add") {
     if (i >= argc) {
       std::cerr << "apm: 'key-add' requires a .asc file\n";

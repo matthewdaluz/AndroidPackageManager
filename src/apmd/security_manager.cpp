@@ -6,7 +6,7 @@
  *
  * File: security_manager.cpp
  * Purpose: Implement daemon-side password/PIN handling plus session issuance
- * and validation using BoringSSL primitives. Last Modified: November 25th, 2025. - 11:45 AM Eastern Time.
+ * and validation using mbedTLS primitives. Last Modified: November 25th, 2025. - 11:45 AM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -38,8 +38,8 @@
 #include <sys/stat.h>
 #include <vector>
 
-#include <openssl/err.h>
-#include <openssl/hmac.h>
+#include <mbedtls/error.h>
+#include <mbedtls/md.h>
 
 namespace apm::daemon {
 
@@ -50,12 +50,9 @@ constexpr std::size_t kDerivedLen = 32;
 constexpr std::size_t kIvLen = 12;
 constexpr std::size_t kTagLen = 16;
 
-std::string formatOpenSslError() {
-  char buf[256] = {0};
-  unsigned long code = ERR_get_error();
-  if (code == 0)
-    return "OpenSSL error";
-  ERR_error_string_n(code, buf, sizeof(buf));
+std::string formatMbedtlsError(int code) {
+  char buf[128] = {0};
+  mbedtls_strerror(code, buf, sizeof(buf));
   return std::string(buf);
 }
 
@@ -225,17 +222,26 @@ bool SecurityManager::deriveHmac(const apm::security::SessionState &state,
     return false;
 
   const std::string payload = apm::security::buildSessionPayload(state);
-  unsigned int macLen = 0;
-  unsigned char mac[EVP_MAX_MD_SIZE] = {0};
-  if (!HMAC(EVP_sha256(), key.data(), static_cast<int>(key.size()),
-            reinterpret_cast<const unsigned char *>(payload.data()),
-            payload.size(), mac, &macLen)) {
+  const mbedtls_md_info_t *info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+  if (!info) {
     if (errorMsg)
-      *errorMsg = "Session HMAC failed: " + formatOpenSslError();
+      *errorMsg = "Session HMAC failed: SHA256 unavailable";
     return false;
   }
 
-  out = bytesToHex(std::vector<uint8_t>(mac, mac + macLen));
+  std::vector<uint8_t> mac(mbedtls_md_get_size(info), 0);
+  const int ret = mbedtls_md_hmac(
+      info, key.data(), key.size(),
+      reinterpret_cast<const unsigned char *>(payload.data()), payload.size(),
+      mac.data());
+
+  if (ret != 0) {
+    if (errorMsg)
+      *errorMsg = "Session HMAC failed: " + formatMbedtlsError(ret);
+    return false;
+  }
+
+  out = bytesToHex(mac);
   return true;
 }
 
