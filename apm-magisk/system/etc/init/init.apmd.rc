@@ -35,6 +35,13 @@ on post-fs-data
     mkdir /data/ams 0755 root root
     start apmd-bootstrap
 
+service apmd /system/bin/apmd
+    class late_start
+    user root
+    group root system
+    socket apmd stream 660 root system
+    disabled
+
 service apmd-bootstrap /system/bin/sh -c '\
     while ! /system/bin/grep -q "[[:space:]]/data[[:space:]]" /proc/mounts; do \
         /system/bin/sleep 1; \
@@ -44,14 +51,27 @@ service apmd-bootstrap /system/bin/sh -c '\
     done; \
     /system/bin/rm -f /data/.apmd-ready; \
     /system/bin/mkdir -p /data/apm/logs /data/ams/modules /data/ams/overlays; \
+    /system/bin/sleep 3; \
+    /system/bin/setprop ctl.start apmd; \
+    /system/bin/setprop ctl.start apmd-watchdog; \
+'
+    class late_start
+    oneshot
+    user root
+    group root system
+
+service apmd-watchdog /system/bin/sh -c '\
     while :; do \
         if /system/bin/pidof apmd >/dev/null 2>&1; then \
-            exit 0; \
+            /system/bin/sleep 5; \
+            continue; \
         fi; \
-        /system/bin/apmd >> /data/apm/logs/apmd.log 2>&1 & \
+        if /system/bin/grep -q "[[:space:]]/data[[:space:]]" /proc/mounts && /system/bin/touch /data/.apmd-ready 2>/dev/null; then \
+            /system/bin/rm -f /data/.apmd-ready; \
+            /system/bin/setprop ctl.start apmd; \
+        fi; \
         /system/bin/sleep 5; \
     done'
     class late_start
-    oneshot
     user root
     group root system
