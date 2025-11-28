@@ -30,7 +30,7 @@
 #include "fs.hpp"
 #include "security.hpp"
 
-#include <openssl/base.h>
+#include <memory>
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
@@ -145,7 +145,8 @@ bool CryptoEngine::encrypt(const std::vector<uint8_t> &plaintext,
   if (!randomBytes(kGcmIvLen, ivOut, errorMsg))
     return false;
 
-  bssl::UniquePtr<EVP_CIPHER_CTX> ctx(EVP_CIPHER_CTX_new());
+  std::unique_ptr<EVP_CIPHER_CTX, decltype(&EVP_CIPHER_CTX_free)> ctx(
+      EVP_CIPHER_CTX_new(), &EVP_CIPHER_CTX_free);
   if (!ctx) {
     if (errorMsg)
       *errorMsg = "Failed to allocate cipher context";
@@ -219,7 +220,8 @@ bool CryptoEngine::decrypt(const std::vector<uint8_t> &iv,
     return false;
   }
 
-  bssl::UniquePtr<EVP_CIPHER_CTX> ctx(EVP_CIPHER_CTX_new());
+  std::unique_ptr<EVP_CIPHER_CTX, decltype(&EVP_CIPHER_CTX_free)> ctx(
+      EVP_CIPHER_CTX_new(), &EVP_CIPHER_CTX_free);
   if (!ctx) {
     if (errorMsg)
       *errorMsg = "Failed to allocate cipher context";
