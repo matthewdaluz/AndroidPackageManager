@@ -5,8 +5,9 @@
  * Copyright (C) 2025 RedHead Industries
  *
  * File: apk_install.cpp
- * Purpose: Implement the CLI wrapper for forwarding apk-install requests to the daemon.
- * Last Modified: November 18th, 2025. - 3:00 PM Eastern Time.
+ * Purpose: Implement the CLI wrapper for forwarding apk-install requests to
+ * the daemon.
+ * Last Modified: November 28th, 2025. - 8:59 AM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -26,7 +27,7 @@
 
 #include "apk_install.hpp"
 #include "config.hpp"
-#include "ipc_client.hpp"
+#include "binder_client.hpp"
 
 #include <iostream>
 
@@ -57,14 +58,14 @@ int apkInstall(const std::vector<std::string> &args) {
   apm::ipc::Request req;
   req.type = apm::ipc::RequestType::ApkInstall;
 
-  // Store fields as rawFields (matches ipc_server.cpp)
+  // Store fields as rawFields (matches daemon request parsing)
   req.rawFields["apkPath"] = apkPath;
   req.rawFields["installAsSystem"] = installAsSystem ? "1" : "0";
 
   apm::ipc::Response resp;
   std::string err;
 
-  if (!apm::ipc::sendRequest(req, resp, apm::config::SOCKET_PATH, &err)) {
+  if (!apm::ipc::sendRequest(req, resp, apm::config::BINDER_SERVICE, &err)) {
     std::cerr << "APK install failed: " << err << "\n";
     return 1;
   }

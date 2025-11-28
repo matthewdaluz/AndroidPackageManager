@@ -6,7 +6,7 @@
  *
  * File: config.hpp
  * Purpose: Declare filesystem layout constants used by both CLI and daemon.
- * Last Modified: November 23rd, 2025. - 12:06 PM Eastern Time.
+ * Last Modified: November 28th, 2025. - 8:59 AM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -25,6 +25,8 @@
  */
 
 #pragma once
+
+#include "binder_defs.hpp"
 
 namespace apm::config {
 
@@ -85,8 +87,8 @@ inline constexpr const char *SOURCES_LIST_D =
 // For repo_index, this is treated as the “sources root” (dir).
 inline constexpr const char *SOURCES_LIST = SOURCES_DIR;
 
-// apmd UNIX socket
-inline constexpr const char *SOCKET_PATH = "/dev/socket/apmd";
+// Binder endpoint
+inline constexpr const char *BINDER_SERVICE = apm::binder::SERVICE_NAME;
 
 // Default architecture for Debian-style repos
 inline constexpr const char *DEFAULT_ARCH = "arm64";

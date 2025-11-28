@@ -5,9 +5,10 @@
  * Copyright (C) 2025 RedHead Industries
  *
  * File: apmd.cpp
- * Purpose: Bootstrap apmd, configure logging, and run the IPC server event
- * loop. Last Modified: November 18th, 2025. - 3:00 PM Eastern Time. Author:
- * Matthew DaLuz - RedHead Founder
+ * Purpose: Bootstrap apmd, configure logging, and run the Binder-backed
+ * service loop.
+ * Last Modified: November 28th, 2025. - 8:59 AM Eastern Time. Author: Matthew
+ * DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,9 +27,10 @@
 
 #include "apmd.hpp"
 #include "ams/module_manager.hpp"
+#include "binder_service.hpp"
 #include "export_path.hpp"
-#include "ipc_server.hpp"
 #include "logger.hpp"
+#include "security_manager.hpp"
 
 #include <atomic>
 #include <iostream>
@@ -77,14 +79,14 @@ static void startPathMaintenance(std::atomic<bool> &runFlag,
 }
 
 // Configure logging, ensure the PATH/profile helper is loaded, and launch the
-// IPC server loop.
-int runDaemon(const std::string &socketPath) {
+// Binder service loop.
+int runDaemon(const std::string &serviceName) {
   waitForDataReady();
 
   apm::logger::setLogFile("/data/apm/logs/apmd.log");
   apm::logger::setMinLogLevel(apm::logger::Level::Info);
 
-  apm::logger::info("apmd starting, socket: " + socketPath);
+  apm::logger::info("apmd starting, service: " + serviceName);
 
   apm::daemon::path::ensureProfileLoaded();
 
@@ -100,42 +102,46 @@ int runDaemon(const std::string &socketPath) {
     moduleManager.startEnabledModules();
   }
 
-  apm::ipc::IpcServer server(socketPath, moduleManager);
-  if (!server.start()) {
-    apm::logger::error("runDaemon: failed to start IPC server");
+  apm::daemon::SecurityManager securityManager;
+  apm::ipc::BinderService binderService(serviceName, moduleManager,
+                                        securityManager);
+  std::string binderErr;
+  if (binderService.start(&binderErr)) {
+    binderService.joinThreadPool();
     pathLoopRun.store(false);
     if (pathLoopThread.joinable()) {
       pathLoopThread.join();
     }
-    return 1;
+    apm::logger::info("apmd exiting Binder thread pool");
+    return 0;
   }
 
-  server.run();
+  apm::logger::error("runDaemon: failed to start Binder service: " +
+                     (binderErr.empty() ? "unknown error" : binderErr));
   pathLoopRun.store(false);
   if (pathLoopThread.joinable()) {
     pathLoopThread.join();
   }
-  apm::logger::info("apmd exiting");
-  return 0;
+  return 1;
 }
 
 } // namespace apm::daemon
 
 // Thin wrapper around runDaemon that parses --socket/--help flags.
 int main(int argc, char **argv) {
-  std::string socketPath = apm::daemon::DEFAULT_SOCKET_PATH;
+  std::string serviceName = apm::daemon::DEFAULT_SERVICE_NAME;
 
-  // Simple arg parser: apmd [--socket /path/to.sock]
+  // Simple arg parser: apmd [--service name]
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
-    if (arg == "--socket" && i + 1 < argc) {
-      socketPath = argv[++i];
+    if ((arg == "--service" || arg == "--svc") && i + 1 < argc) {
+      serviceName = argv[++i];
     } else if (arg == "--help" || arg == "-h") {
       std::cout << "apmd - APM daemon\n"
-                << "Usage: apmd [--socket <path>]\n";
+                << "Usage: apmd [--service <name>]\n";
       return 0;
     }
   }
 
-  return apm::daemon::runDaemon(socketPath);
+  return apm::daemon::runDaemon(serviceName);
 }

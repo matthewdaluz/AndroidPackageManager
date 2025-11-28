@@ -5,8 +5,9 @@
  * Copyright (C) 2025 RedHead Industries
  *
  * File: apmd.hpp
- * Purpose: Declare the apmd entry point along with the default socket path constant.
- * Last Modified: November 18th, 2025. - 3:00 PM Eastern Time.
+ * Purpose: Declare the apmd entry point along with the default Binder service
+ * name constant.
+ * Last Modified: November 28th, 2025. - 8:59 AM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -26,17 +27,17 @@
 
 #pragma once
 
+#include "binder_defs.hpp"
 #include <string>
 
 namespace apm::daemon {
 
-// Default UNIX socket path for apmd.
-// On Android this should be /data/apm/apmd.sock (adjustable if needed).
-inline constexpr const char *DEFAULT_SOCKET_PATH = "/data/apm/apmd.sock";
+// Default Binder service name for apmd.
+inline constexpr const char *DEFAULT_SERVICE_NAME = apm::binder::SERVICE_NAME;
 
 // Main daemon runner.
-// - socketPath: path to the UNIX domain socket to bind to.
+// - serviceName: Binder service instance name (Android).
 // Returns exit code (0 = OK).
-int runDaemon(const std::string &socketPath);
+int runDaemon(const std::string &serviceName);
 
 } // namespace apm::daemon

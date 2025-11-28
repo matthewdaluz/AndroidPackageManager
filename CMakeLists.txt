@@ -383,11 +383,22 @@ endif()
 
 
 # ======================================================
+# BoringSSL/OpenSSL
+# ======================================================
+find_library(OPENSSL_SSL_LIBRARY NAMES ssl)
+find_library(OPENSSL_CRYPTO_LIBRARY NAMES crypto)
+if(NOT OPENSSL_SSL_LIBRARY OR NOT OPENSSL_CRYPTO_LIBRARY)
+  message(FATAL_ERROR "OpenSSL/BoringSSL libraries not found. Install libssl or ensure NDK-provided BoringSSL is available.")
+endif()
+
+
+# ======================================================
 # APM Client Binary
 # ======================================================
 add_executable(apm
     src/apm/apm.cpp
-    src/apm/ipc_client.cpp
+    src/apm/binder_client.cpp
+    src/core/binder_support.cpp
     src/apmd/apk_installer.cpp
     src/apmd/export_path.cpp
     src/apm/commands/apk_install.cpp
@@ -408,6 +419,7 @@ add_executable(apm
     src/core/manual_package.cpp
     src/core/release_parser.cpp
     src/core/security.cpp
+    src/core/binder_support.cpp
     src/ams/module_info.cpp
     src/ams/module_manager.cpp
     src/util/crypto/sha256.cpp
@@ -426,13 +438,14 @@ target_include_directories(apm PRIVATE
     src/util/crypto
     src/apm/commands/include
     /usr/include
-    ${MBEDTLS_INCLUDE_DIRS}
     include
 )
 
 target_link_libraries(apm PRIVATE
     CURL::libcurl
     ZLIB::ZLIB
+    ${OPENSSL_SSL_LIBRARY}
+    ${OPENSSL_CRYPTO_LIBRARY}
     ${APM_BUNDLED_TLS_LIBS}
 )
 
@@ -441,12 +454,13 @@ target_link_libraries(apm PRIVATE
 # ======================================================
 add_executable(apmd
     src/apmd/apmd.cpp
-    src/apmd/ipc_server.cpp
+    src/apmd/binder_service.cpp
+    src/apmd/request_dispatcher.cpp
     src/apmd/protocol.cpp
     src/apmd/install_manager.cpp
     src/apmd/export_path.cpp
     src/apmd/apk_installer.cpp
-    src/apmd/mbedtls_client.cpp
+    src/apmd/boringssl_client.cpp
     src/apmd/factory_reset.cpp
 
     src/core/control_parser.cpp
@@ -479,7 +493,6 @@ target_include_directories(apmd PRIVATE
     src/util/crypto
     src/apm/commands/include
     /usr/include
-    ${MBEDTLS_INCLUDE_DIRS}
     include
 )
 
@@ -487,8 +500,25 @@ target_include_directories(apmd PRIVATE
 target_link_libraries(apmd PRIVATE
     CURL::libcurl
     ZLIB::ZLIB
+    ${OPENSSL_SSL_LIBRARY}
+    ${OPENSSL_CRYPTO_LIBRARY}
     ${APM_BUNDLED_TLS_LIBS}
 )
+
+if(ANDROID)
+  find_library(ANDROID_BINDER_NDK_LIB binder_ndk)
+  find_library(ANDROID_DL_LIB dl)
+
+  if(ANDROID_BINDER_NDK_LIB)
+    target_link_libraries(apm PRIVATE ${ANDROID_BINDER_NDK_LIB})
+    target_link_libraries(apmd PRIVATE ${ANDROID_BINDER_NDK_LIB})
+  endif()
+
+  if(ANDROID_DL_LIB)
+    target_link_libraries(apm PRIVATE ${ANDROID_DL_LIB})
+    target_link_libraries(apmd PRIVATE ${ANDROID_DL_LIB})
+  endif()
+endif()
 
 
 

@@ -41,9 +41,8 @@ cc_defaults {
     shared_libs: [
         "libcurl",
         "libz",
-        "libmbedtls",
-        "libmbedcrypto",
-        "libmbedx509",
+        "libssl",     // BoringSSL
+        "libcrypto",  // BoringSSL
     ],
 }
 
@@ -53,7 +52,7 @@ cc_binary {
     installable: true,
     srcs: [
         "src/apm/apm.cpp",
-        "src/apm/ipc_client.cpp",
+        "src/apm/binder_client.cpp",
         "src/apm/commands/apk_install.cpp",
         "src/apm/commands/list.cpp",
         "src/apm/commands/info.cpp",
@@ -99,7 +98,7 @@ cc_binary {
         "src/apmd/install_manager.cpp",
         "src/apmd/export_path.cpp",
         "src/apmd/apk_installer.cpp",
-        "src/apmd/mbedtls_client.cpp",
+        "src/apmd/boringssl_client.cpp",
         "src/apmd/protocol.cpp",
         "src/apmd/factory_reset.cpp",
         "src/apmd/security_manager.cpp",
