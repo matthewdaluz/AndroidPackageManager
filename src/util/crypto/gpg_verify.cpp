@@ -6,8 +6,9 @@
  *
  * File: gpg_verify.cpp
  * Purpose: Implement OpenPGP RSA/SHA256 detached signature verification and key
- * import helpers using BoringSSL primitives. Last Modified: November 25th,
- * 2025. - 11:45 AM Eastern Time. Author: Matthew DaLuz - RedHead Founder
+ * import helpers using BoringSSL primitives.
+ * Last Modified: November 28th, 2025. - 10:37 AM Eastern Time.
+ * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -38,15 +39,79 @@
 #include <sstream>
 #include <vector>
 
-#include <openssl/base.h>
-#include <openssl/bn.h>
 #include <openssl/bio.h>
+#include <openssl/bn.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/rsa.h>
 #include <openssl/sha.h>
 #include <openssl/x509.h>
+
+// Compatibility shim: some systems (OpenSSL builds) do not provide BoringSSL's
+// <openssl/base.h> and therefore do not define bssl::UniquePtr; implement a
+// minimal replacement here so the code can compile against OpenSSL as well.
+namespace bssl {
+
+template <typename T> struct Deleter;
+
+// Specialize deleters for the OpenSSL types used in this file.
+template <> struct Deleter<BIO> {
+  static void Free(BIO *p) { BIO_free(p); }
+};
+template <> struct Deleter<EVP_PKEY> {
+  static void Free(EVP_PKEY *p) { EVP_PKEY_free(p); }
+};
+template <> struct Deleter<RSA> {
+  static void Free(RSA *p) { RSA_free(p); }
+};
+template <> struct Deleter<BIGNUM> {
+  static void Free(BIGNUM *p) { BN_free(p); }
+};
+template <> struct Deleter<EVP_MD_CTX> {
+  static void Free(EVP_MD_CTX *p) { EVP_MD_CTX_free(p); }
+};
+
+// Minimal UniquePtr implementation with move semantics and the operations
+// used by this translation unit (get, release, reset, operator->, bool).
+template <typename T> class UniquePtr {
+public:
+  UniquePtr() noexcept : ptr_(nullptr) {}
+  explicit UniquePtr(T *p) noexcept : ptr_(p) {}
+  UniquePtr(UniquePtr &&o) noexcept : ptr_(o.ptr_) { o.ptr_ = nullptr; }
+  UniquePtr &operator=(UniquePtr &&o) noexcept {
+    if (this != &o) {
+      reset(o.ptr_);
+      o.ptr_ = nullptr;
+    }
+    return *this;
+  }
+
+  UniquePtr(const UniquePtr &) = delete;
+  UniquePtr &operator=(const UniquePtr &) = delete;
+
+  ~UniquePtr() { reset(); }
+
+  T *get() const noexcept { return ptr_; }
+  T *release() noexcept {
+    T *p = ptr_;
+    ptr_ = nullptr;
+    return p;
+  }
+  void reset(T *p = nullptr) noexcept {
+    if (ptr_)
+      Deleter<T>::Free(ptr_);
+    ptr_ = p;
+  }
+
+  T *operator->() const noexcept { return ptr_; }
+  explicit operator bool() const noexcept { return ptr_ != nullptr; }
+
+private:
+  T *ptr_;
+};
+
+} // namespace bssl
 
 namespace apm::crypto {
 
@@ -182,6 +247,34 @@ bool decodeArmoredBlock(const std::string &text, std::vector<uint8_t> &out,
     return true;
 
   out.assign(text.begin(), text.end());
+  return true;
+}
+
+// Extract only the PGP SIGNATURE armored block from a blob of text. Returns
+// false if no signature block is found so callers can fall back to the full
+// content (e.g. for binary signatures).
+bool extractSignatureArmor(const std::string &text, std::string &out) {
+  static const std::string beginMarker = "-----BEGIN PGP SIGNATURE-----";
+  static const std::string endMarker = "-----END PGP SIGNATURE-----";
+
+  auto beginPos = text.find(beginMarker);
+  if (beginPos == std::string::npos)
+    return false;
+
+  auto endPos = text.find(endMarker, beginPos);
+  if (endPos == std::string::npos)
+    return false;
+
+  endPos += endMarker.size();
+
+  out = text.substr(beginPos, endPos - beginPos);
+
+  while (endPos < text.size() &&
+         (text[endPos] == '\n' || text[endPos] == '\r')) {
+    out.push_back(text[endPos]);
+    ++endPos;
+  }
+
   return true;
 }
 
@@ -495,10 +588,9 @@ bool parseSignaturePacket(const std::vector<uint8_t> &blob,
 
 std::string sha256Hex(const std::vector<uint8_t> &data) {
   std::array<unsigned char, SHA256_DIGEST_LENGTH> digest{};
-  const unsigned char *input = data.empty()
-                                   ? nullptr
-                                   : reinterpret_cast<const unsigned char *>(
-                                         data.data());
+  const unsigned char *input =
+      data.empty() ? nullptr
+                   : reinterpret_cast<const unsigned char *>(data.data());
 
   if (!SHA256(input, data.size(), digest.data()))
     return {};
@@ -582,10 +674,10 @@ bool buildKeyFromBlob(const std::vector<uint8_t> &blob, LoadedKey &keyOut,
   }
 
   bssl::UniquePtr<RSA> rsa(RSA_new());
-  bssl::UniquePtr<BIGNUM> N(BN_bin2bn(n.data(), static_cast<int>(n.size()),
-                                      nullptr));
-  bssl::UniquePtr<BIGNUM> E(BN_bin2bn(e.data(), static_cast<int>(e.size()),
-                                      nullptr));
+  bssl::UniquePtr<BIGNUM> N(
+      BN_bin2bn(n.data(), static_cast<int>(n.size()), nullptr));
+  bssl::UniquePtr<BIGNUM> E(
+      BN_bin2bn(e.data(), static_cast<int>(e.size()), nullptr));
   if (!rsa || !N || !E) {
     if (errorMsg)
       *errorMsg = "Failed to allocate RSA components";
@@ -772,7 +864,7 @@ bool verifyWithKey(LoadedKey &key, const std::vector<uint8_t> &digest,
     return false;
   }
 
-  RSA *rsa = EVP_PKEY_get0_RSA(key.pkey.get());
+  const RSA *rsa = EVP_PKEY_get0_RSA(key.pkey.get());
   if (!rsa) {
     if (errorMsg)
       *errorMsg = "Loaded key is not RSA";
@@ -786,11 +878,44 @@ bool verifyWithKey(LoadedKey &key, const std::vector<uint8_t> &digest,
     return false;
   }
 
-  if (RSA_verify(NID_sha256, digest.data(),
-                 static_cast<unsigned int>(digest.size()), sigBytes.data(),
-                 static_cast<unsigned int>(sigBytes.size()), rsa) != 1) {
+  // Decrypt the signature with the public key using PKCS#1 v1.5 padding to
+  // recover the DigestInfo and then verify it matches the SHA-256 digest.
+  std::vector<uint8_t> recovered(rsaSize, 0);
+  int recLen = RSA_public_decrypt(
+      static_cast<int>(sigBytes.size()),
+      reinterpret_cast<const unsigned char *>(sigBytes.data()),
+      recovered.data(), const_cast<RSA *>(rsa), RSA_PKCS1_PADDING);
+  if (recLen <= 0) {
     if (errorMsg)
-      *errorMsg = formatOpenSslError();
+      *errorMsg = "RSA_public_decrypt failed: " + formatOpenSslError();
+    return false;
+  }
+
+  // ASN.1 DigestInfo prefix for SHA-256 (DER):
+  // 30 31 30 0d 06 09 60 86 48 01 65 03 04 02 01 05 00 04 20
+  static const uint8_t sha256_prefix[] = {
+      0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01,
+      0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20};
+  const size_t prefix_len = sizeof(sha256_prefix);
+  const size_t expected_len = prefix_len + SHA256_DIGEST_LENGTH;
+
+  if (static_cast<std::size_t>(recLen) != expected_len) {
+    if (errorMsg)
+      *errorMsg = "Decrypted signature has unexpected DigestInfo length";
+    return false;
+  }
+
+  if (!std::equal(sha256_prefix, sha256_prefix + prefix_len,
+                  recovered.data())) {
+    if (errorMsg)
+      *errorMsg = "Decrypted signature DigestInfo prefix mismatch";
+    return false;
+  }
+
+  if (!std::equal(digest.begin(), digest.end(),
+                  recovered.data() + static_cast<std::ptrdiff_t>(prefix_len))) {
+    if (errorMsg)
+      *errorMsg = "Decrypted signature digest mismatch";
     return false;
   }
 
@@ -818,9 +943,26 @@ bool verifyDetachedSignature(const std::string &dataPath,
     return false;
   }
 
+  std::string sigText = sigStream.str();
+
+  auto extPos = sigPath.find_last_of('.');
+  if (extPos != std::string::npos) {
+    std::string ext = sigPath.substr(extPos);
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) {
+      return static_cast<char>(std::tolower(c));
+    });
+
+    if (ext == ".gpg") {
+      std::string sliced;
+      if (extractSignatureArmor(sigText, sliced)) {
+        sigText.swap(sliced);
+      }
+    }
+  }
+
   std::vector<uint8_t> sigBlob;
   bool sigArmored = false;
-  if (!decodeArmoredBlock(sigStream.str(), sigBlob, sigArmored, errorMsg))
+  if (!decodeArmoredBlock(sigText, sigBlob, sigArmored, errorMsg))
     return false;
   (void)sigArmored;
 
