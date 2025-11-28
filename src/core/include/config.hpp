@@ -101,6 +101,10 @@ inline constexpr const char *MASTER_KEY_FILE =
     "/data/apm/.security/masterkey.bin";
 inline constexpr const char *PASS_PIN_FILE = "/data/apm/.security/passpin.bin";
 inline constexpr const char *SESSION_FILE = "/data/apm/.security/session.bin";
+inline constexpr const char *SECURITY_QA_FILE =
+    "/data/apm/.security/security-questions.bin";
+inline constexpr const char *RESET_LOCKOUT_FILE =
+    "/data/apm/.security/reset-lockout.txt";
 inline constexpr const char *PASS_KEY_ALIAS = "apm_passkey";
 
 } // namespace apm::config

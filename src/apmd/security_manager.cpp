@@ -6,7 +6,8 @@
  *
  * File: security_manager.cpp
  * Purpose: Implement daemon-side password/PIN handling plus session issuance
- * and validation using BoringSSL primitives. Last Modified: November 25th, 2025. - 11:45 AM Eastern Time.
+ * and validation using BoringSSL primitives.
+ * Last Modified: November 25th, 2025. - 11:45 AM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -32,6 +33,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
+#include <cstdlib>
 #include <iomanip>
 #include <random>
 #include <sstream>
@@ -51,6 +54,7 @@ constexpr std::size_t kSaltLen = 32;
 constexpr std::size_t kDerivedLen = 32;
 constexpr std::size_t kIvLen = 12;
 constexpr std::size_t kTagLen = 16;
+constexpr std::uint64_t kResetCooldownSeconds = 300;
 
 std::string formatOpenSslError() {
   unsigned long err = ERR_get_error();
@@ -91,6 +95,36 @@ std::string SecurityManager::bytesToHex(const std::vector<uint8_t> &data) {
   return out.str();
 }
 
+bool SecurityManager::hexToBytes(const std::string &hex,
+                                 std::vector<uint8_t> &out) const {
+  out.clear();
+  if (hex.size() % 2 != 0)
+    return false;
+
+  auto decodeNibble = [](char c) -> int {
+    if (c >= '0' && c <= '9')
+      return c - '0';
+    if (c >= 'a' && c <= 'f')
+      return 10 + (c - 'a');
+    if (c >= 'A' && c <= 'F')
+      return 10 + (c - 'A');
+    return -1;
+  };
+
+  out.reserve(hex.size() / 2);
+  for (std::size_t i = 0; i + 1 < hex.size(); i += 2) {
+    int hi = decodeNibble(hex[i]);
+    int lo = decodeNibble(hex[i + 1]);
+    if (hi < 0 || lo < 0) {
+      out.clear();
+      return false;
+    }
+    out.push_back(static_cast<uint8_t>((hi << 4) | lo));
+  }
+
+  return true;
+}
+
 bool SecurityManager::constantTimeEquals(const std::vector<uint8_t> &a,
                                          const std::vector<uint8_t> &b) const {
   if (a.size() != b.size())
@@ -103,6 +137,7 @@ bool SecurityManager::constantTimeEquals(const std::vector<uint8_t> &a,
 }
 
 bool SecurityManager::persistPasspin(const std::string &secret,
+                                     bool allowOverwrite,
                                      std::string *errorMsg) {
   if (secret.empty()) {
     if (errorMsg)
@@ -110,7 +145,7 @@ bool SecurityManager::persistPasspin(const std::string &secret,
     return false;
   }
 
-  if (isPasspinConfigured()) {
+  if (isPasspinConfigured() && !allowOverwrite) {
     if (errorMsg)
       *errorMsg =
           "Password/PIN already set. Factory reset is required to clear it.";
@@ -156,6 +191,223 @@ bool SecurityManager::persistPasspin(const std::string &secret,
   }
 
   ::chmod(apm::config::PASS_PIN_FILE, 0600);
+  return true;
+}
+
+bool SecurityManager::persistSecurityQuestions(
+    const std::vector<std::pair<std::string, std::string>> &questions,
+    std::string *errorMsg) {
+  if (questions.size() != apm::security::SECURITY_QUESTION_COUNT) {
+    if (errorMsg)
+      *errorMsg = "Exactly " +
+                  std::to_string(apm::security::SECURITY_QUESTION_COUNT) +
+                  " security questions are required.";
+    return false;
+  }
+
+  if (!apm::security::ensureSecurityDir(errorMsg))
+    return false;
+
+  if (!m_crypto.ensureMasterKey(errorMsg))
+    return false;
+
+  std::ostringstream plain;
+  for (const auto &qa : questions) {
+    const std::string &prompt = qa.first;
+    const std::string &answer = qa.second;
+    if (prompt.empty() || answer.empty()) {
+      if (errorMsg)
+        *errorMsg = "Security questions and answers cannot be empty";
+      return false;
+    }
+    if (prompt.find('\n') != std::string::npos ||
+        prompt.find('\r') != std::string::npos) {
+      if (errorMsg)
+        *errorMsg = "Security questions cannot contain newlines";
+      return false;
+    }
+
+    std::vector<uint8_t> salt;
+    if (!m_crypto.randomBytes(kSaltLen, salt, errorMsg))
+      return false;
+
+    std::vector<uint8_t> derived;
+    if (!m_crypto.derivePasswordKey(answer, salt, derived, errorMsg))
+      return false;
+
+    plain << "question:" << prompt << "\n";
+    plain << "salt:" << bytesToHex(salt) << "\n";
+    plain << "answer:" << bytesToHex(derived) << "\n\n";
+  }
+
+  std::string plainStr = plain.str();
+  std::vector<uint8_t> iv;
+  std::vector<uint8_t> ciphertext;
+  std::vector<uint8_t> tag;
+  std::vector<uint8_t> plainBytes(plainStr.begin(), plainStr.end());
+
+  if (!m_crypto.encrypt(plainBytes, iv, ciphertext, tag, errorMsg))
+    return false;
+
+  std::string stored;
+  stored.reserve(iv.size() + ciphertext.size() + tag.size());
+  stored.append(reinterpret_cast<const char *>(iv.data()), iv.size());
+  stored.append(reinterpret_cast<const char *>(ciphertext.data()),
+                ciphertext.size());
+  stored.append(reinterpret_cast<const char *>(tag.data()), tag.size());
+
+  if (!apm::fs::writeFile(apm::config::SECURITY_QA_FILE, stored, true)) {
+    if (errorMsg)
+      *errorMsg = "Failed to write security questions to disk";
+    return false;
+  }
+
+  ::chmod(apm::config::SECURITY_QA_FILE, 0600);
+  return true;
+}
+
+bool SecurityManager::loadStoredQuestions(std::vector<StoredQuestion> &out,
+                                          std::string *errorMsg) const {
+  out.clear();
+
+  std::string raw;
+  if (!apm::fs::readFile(apm::config::SECURITY_QA_FILE, raw)) {
+    if (errorMsg)
+      *errorMsg = "Security questions are not configured";
+    return false;
+  }
+
+  if (raw.size() <= kIvLen + kTagLen) {
+    if (errorMsg)
+      *errorMsg = "Stored security questions are corrupted";
+    return false;
+  }
+
+  const std::vector<uint8_t> iv(raw.begin(), raw.begin() + kIvLen);
+  const std::vector<uint8_t> tag(raw.end() - kTagLen, raw.end());
+  const std::vector<uint8_t> ciphertext(raw.begin() + kIvLen,
+                                        raw.end() - kTagLen);
+
+  std::vector<uint8_t> plainBytes;
+  if (!const_cast<decltype(m_crypto) &>(m_crypto).decrypt(iv, ciphertext, tag,
+                                                          plainBytes, errorMsg))
+    return false;
+
+  std::string plain(plainBytes.begin(), plainBytes.end());
+  std::istringstream in(plain);
+  std::string line;
+  StoredQuestion current;
+
+  auto finalizeCurrent = [&]() -> bool {
+    if (current.prompt.empty() && current.salt.empty() &&
+        current.answerHash.empty())
+      return true;
+    if (current.prompt.empty() || current.salt.size() != kSaltLen ||
+        current.answerHash.size() != kDerivedLen)
+      return false;
+    out.push_back(current);
+    current = StoredQuestion{};
+    return true;
+  };
+
+  while (std::getline(in, line)) {
+    if (!line.empty() && line.back() == '\r')
+      line.pop_back();
+
+    if (line.empty()) {
+      if (!finalizeCurrent()) {
+        if (errorMsg)
+          *errorMsg = "Malformed security question entry";
+        return false;
+      }
+      continue;
+    }
+
+    auto pos = line.find(':');
+    if (pos == std::string::npos) {
+      if (errorMsg)
+        *errorMsg = "Malformed security question line";
+      return false;
+    }
+
+    const std::string key = line.substr(0, pos);
+    const std::string value = line.substr(pos + 1);
+
+    if (key == "question") {
+      current.prompt = value;
+    } else if (key == "salt") {
+      if (!hexToBytes(value, current.salt)) {
+        if (errorMsg)
+          *errorMsg = "Malformed salt in security question file";
+        return false;
+      }
+    } else if (key == "answer") {
+      if (!hexToBytes(value, current.answerHash)) {
+        if (errorMsg)
+          *errorMsg = "Malformed answer in security question file";
+        return false;
+      }
+    } else {
+      if (errorMsg)
+        *errorMsg = "Unknown field in security question file";
+      return false;
+    }
+  }
+
+  if (!finalizeCurrent()) {
+    if (errorMsg)
+      *errorMsg = "Incomplete security question entry";
+    return false;
+  }
+
+  if (out.empty() || out.size() != apm::security::SECURITY_QUESTION_COUNT) {
+    if (errorMsg)
+      *errorMsg = "Security question data is incomplete";
+    out.clear();
+    return false;
+  }
+
+  return true;
+}
+
+bool SecurityManager::isLockedOut(std::uint64_t nowSeconds,
+                                  std::uint64_t &unlockAt) const {
+  unlockAt = 0;
+
+  std::string raw;
+  if (!apm::fs::readFile(apm::config::RESET_LOCKOUT_FILE, raw))
+    return false;
+
+  errno = 0;
+  char *end = nullptr;
+  unsigned long long parsed = std::strtoull(raw.c_str(), &end, 10);
+  if (errno != 0 || end == raw.c_str()) {
+    apm::fs::removeFile(apm::config::RESET_LOCKOUT_FILE);
+    return false;
+  }
+
+  unlockAt = static_cast<std::uint64_t>(parsed);
+  if (nowSeconds >= unlockAt) {
+    apm::fs::removeFile(apm::config::RESET_LOCKOUT_FILE);
+    return false;
+  }
+
+  return true;
+}
+
+bool SecurityManager::writeLockoutUntil(std::uint64_t unlockAt,
+                                        std::string *errorMsg) const {
+  if (!apm::security::ensureSecurityDir(errorMsg))
+    return false;
+
+  if (!apm::fs::writeFile(apm::config::RESET_LOCKOUT_FILE,
+                          std::to_string(unlockAt), true)) {
+    if (errorMsg)
+      *errorMsg = "Failed to record reset lockout timer";
+    return false;
+  }
+
+  ::chmod(apm::config::RESET_LOCKOUT_FILE, 0600);
   return true;
 }
 
@@ -221,6 +473,92 @@ bool SecurityManager::verifySecret(const std::string &secret,
   return true;
 }
 
+bool SecurityManager::fetchSecurityQuestions(
+    std::vector<std::string> &questionsOut, std::string *errorMsg) {
+  questionsOut.clear();
+
+  const std::uint64_t now = apm::security::currentUnixSeconds();
+  std::uint64_t unlockAt = 0;
+  if (isLockedOut(now, unlockAt)) {
+    if (errorMsg) {
+      const std::uint64_t remaining = (unlockAt > now) ? (unlockAt - now) : 0;
+      std::ostringstream oss;
+      oss << "Password/PIN reset is locked. Try again in " << (remaining / 60)
+          << "m " << (remaining % 60) << "s.";
+      *errorMsg = oss.str();
+    }
+    return false;
+  }
+
+  std::vector<StoredQuestion> stored;
+  if (!loadStoredQuestions(stored, errorMsg))
+    return false;
+
+  questionsOut.reserve(stored.size());
+  for (const auto &q : stored)
+    questionsOut.push_back(q.prompt);
+
+  return true;
+}
+
+bool SecurityManager::validateSecurityAnswers(
+    const std::vector<std::string> &answers, std::string *errorMsg) {
+  const std::uint64_t now = apm::security::currentUnixSeconds();
+  std::uint64_t unlockAt = 0;
+  if (isLockedOut(now, unlockAt)) {
+    if (errorMsg) {
+      const std::uint64_t remaining = (unlockAt > now) ? (unlockAt - now) : 0;
+      std::ostringstream oss;
+      oss << "Password/PIN reset is locked. Try again in " << (remaining / 60)
+          << "m " << (remaining % 60) << "s.";
+      *errorMsg = oss.str();
+    }
+    return false;
+  }
+
+  std::vector<StoredQuestion> stored;
+  if (!loadStoredQuestions(stored, errorMsg))
+    return false;
+
+  if (answers.size() != stored.size()) {
+    if (errorMsg)
+      *errorMsg = "All security questions must be answered.";
+    return false;
+  }
+
+  for (std::size_t i = 0; i < stored.size(); ++i) {
+    std::vector<uint8_t> attempt;
+    if (!m_crypto.derivePasswordKey(answers[i], stored[i].salt, attempt,
+                                    errorMsg))
+      return false;
+
+    if (!constantTimeEquals(attempt, stored[i].answerHash)) {
+      const std::uint64_t until = now + kResetCooldownSeconds;
+      writeLockoutUntil(until, nullptr);
+      if (errorMsg)
+        *errorMsg =
+            "One or more security answers are incorrect. Try again in 5 "
+            "minutes.";
+      return false;
+    }
+  }
+
+  apm::fs::removeFile(apm::config::RESET_LOCKOUT_FILE);
+  return true;
+}
+
+bool SecurityManager::resetForgottenSecret(
+    const std::string &newSecret, const std::vector<std::string> &answers,
+    apm::security::SessionState &sessionOut, std::string *errorMsg) {
+  if (!validateSecurityAnswers(answers, errorMsg))
+    return false;
+
+  if (!persistPasspin(newSecret, true, errorMsg))
+    return false;
+
+  return issueSession(sessionOut, errorMsg);
+}
+
 bool SecurityManager::deriveHmac(const apm::security::SessionState &state,
                                  std::string &out, std::string *errorMsg) {
   std::vector<uint8_t> key;
@@ -258,18 +596,36 @@ bool SecurityManager::issueSession(apm::security::SessionState &sessionOut,
   return true;
 }
 
-bool SecurityManager::authenticate(const std::string &actionRaw,
-                                   const std::string &secret,
-                                   apm::security::SessionState &sessionOut,
-                                   std::string *errorMsg) {
+bool SecurityManager::authenticate(
+    const std::string &actionRaw, const std::string &secret,
+    const std::vector<std::pair<std::string, std::string>> &securityQuestions,
+    apm::security::SessionState &sessionOut, std::string *errorMsg) {
   std::string action = actionRaw;
   std::transform(action.begin(), action.end(), action.begin(), ::tolower);
   if (action.empty())
     action = "unlock";
 
   if (action == "set") {
-    if (!persistPasspin(secret, errorMsg))
+    if (isPasspinConfigured()) {
+      if (errorMsg)
+        *errorMsg =
+            "Password/PIN already set. Use forgot-password to reset it.";
       return false;
+    }
+
+    if (securityQuestions.size() != apm::security::SECURITY_QUESTION_COUNT) {
+      if (errorMsg)
+        *errorMsg = "Security questions are required to set a password/PIN.";
+      return false;
+    }
+
+    if (!persistSecurityQuestions(securityQuestions, errorMsg))
+      return false;
+
+    if (!persistPasspin(secret, false, errorMsg)) {
+      apm::fs::removeFile(apm::config::SECURITY_QA_FILE);
+      return false;
+    }
   } else {
     if (!verifySecret(secret, errorMsg))
       return false;

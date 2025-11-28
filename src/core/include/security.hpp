@@ -26,10 +26,13 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
 namespace apm::security {
+
+inline constexpr std::size_t SECURITY_QUESTION_COUNT = 3;
 
 struct SessionState {
   std::string token;

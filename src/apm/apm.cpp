@@ -25,13 +25,13 @@
  *
  */
 
+#include "binder_client.hpp"
 #include "config.hpp"
 #include "control_parser.hpp"
 #include "deb_extractor.hpp"
 #include "export_path.hpp"
 #include "fs.hpp"
 #include "gpg_verify.hpp"
-#include "binder_client.hpp"
 #include "logger.hpp"
 #include "manual_package.hpp"
 #include "repo_index.hpp"
@@ -53,13 +53,15 @@
 #include <sstream>
 #include <string>
 #include <sys/stat.h>
+#include <utility>
 #include <vector>
 
 namespace {
 
 // Editable CLI metadata.
-static constexpr const char *kApmVersion = "1.4.0b - Closed Beta";
-static constexpr const char *kApmBuildDate = "November 27th, 2025 - 8:10 AM ET";
+static constexpr const char *kApmVersion = "1.5.0b - Closed Beta";
+static constexpr const char *kApmBuildDate =
+    "November 28th, 2025 - 10:15 AM Eastern Time";
 
 // -----------------------------------------------------------------------------
 // Progress formatting + helper utilities
@@ -253,6 +255,8 @@ static std::uint64_t currentUnixTimestamp() {
 // Session + authentication helpers
 // -----------------------------------------------------------------------------
 
+using SecurityQaList = std::vector<std::pair<std::string, std::string>>;
+
 static bool loadActiveSessionToken(std::string &tokenOut, bool &hadSession) {
   hadSession = false;
   apm::security::SessionState state;
@@ -293,15 +297,48 @@ static bool promptForNewSecret(std::string &secretOut) {
   return true;
 }
 
+static bool promptForSecurityQuestions(SecurityQaList &qaOut) {
+  qaOut.clear();
+  std::cout << "Set security questions (used for password/PIN recovery):\n";
+  for (std::size_t idx = 0; idx < apm::security::SECURITY_QUESTION_COUNT;
+       ++idx) {
+    std::string question;
+    std::cout << "  Question " << (idx + 1) << ": " << std::flush;
+    if (!std::getline(std::cin, question) || question.empty()) {
+      std::cerr << "Security question cannot be empty.\n";
+      return false;
+    }
+
+    std::string answer;
+    std::cout << "  Answer " << (idx + 1) << ": " << std::flush;
+    if (!std::getline(std::cin, answer) || answer.empty()) {
+      std::cerr << "Security answers cannot be empty.\n";
+      return false;
+    }
+
+    qaOut.emplace_back(std::move(question), std::move(answer));
+  }
+
+  return true;
+}
+
 static bool requestSessionUnlock(const std::string &serviceName,
                                  const std::string &action,
                                  const std::string &secret,
+                                 const SecurityQaList &securityQa,
                                  std::string &sessionTokenOut) {
   apm::ipc::Request req;
   req.type = apm::ipc::RequestType::Authenticate;
   req.id = "authenticate-1";
   req.authAction = action;
   req.authSecret = secret;
+
+  for (std::size_t idx = 0; idx < securityQa.size(); ++idx) {
+    req.rawFields["security_q" + std::to_string(idx + 1)] =
+        securityQa[idx].first;
+    req.rawFields["security_a" + std::to_string(idx + 1)] =
+        securityQa[idx].second;
+  }
 
   apm::ipc::Response resp;
   std::string err;
@@ -352,7 +389,8 @@ static bool ensureAuthenticatedSession(const std::string &serviceName,
       std::cerr << "Failed to read password/PIN input.\n";
       return false;
     }
-    return requestSessionUnlock(serviceName, "unlock", secret, sessionTokenOut);
+    return requestSessionUnlock(serviceName, "unlock", secret, SecurityQaList{},
+                                sessionTokenOut);
   }
 
   if (!promptForNewSecret(secret)) {
@@ -360,7 +398,14 @@ static bool ensureAuthenticatedSession(const std::string &serviceName,
     return false;
   }
 
-  return requestSessionUnlock(serviceName, "set", secret, sessionTokenOut);
+  SecurityQaList securityQa;
+  if (!promptForSecurityQuestions(securityQa)) {
+    std::cerr << "Security question setup aborted.\n";
+    return false;
+  }
+
+  return requestSessionUnlock(serviceName, "set", secret, securityQa,
+                              sessionTokenOut);
 }
 
 static void attachSession(apm::ipc::Request &req,
@@ -776,6 +821,8 @@ void printUsage() {
       << "  upgrade [pkgs...]           Upgrade all or selected packages\n"
       << "  autoremove                  Remove unused auto-installed deps\n"
       << "  factory-reset               Reset APM data and installed content\n"
+      << "  forgot-password             Recover access with security "
+         "questions\n"
       << "  module-list                 List installed AMS modules\n"
       << "  module-install <zip>        Install an AMS module from a ZIP\n"
       << "  module-enable <name>        Enable an installed AMS module\n"
@@ -819,6 +866,109 @@ int cmdPing(const std::string &serviceName) {
   std::cout << (resp.success ? "OK: " : "ERROR: ")
             << (resp.message.empty() ? "(no message)" : resp.message) << "\n";
   return resp.success ? 0 : 1;
+}
+
+int cmdForgotPassword(const std::string &serviceName) {
+  apm::ipc::Request qReq;
+  qReq.type = apm::ipc::RequestType::ForgotPassword;
+  qReq.id = "forgot-questions-1";
+  qReq.rawFields["reset_stage"] = "questions";
+
+  apm::ipc::Response qResp;
+  std::string err;
+
+  if (!apm::ipc::sendRequest(qReq, qResp, serviceName, &err)) {
+    std::cerr << "Error: " << err << "\n";
+    return 1;
+  }
+
+  if (!qResp.success) {
+    std::cerr << (qResp.message.empty() ? "Unable to start recovery"
+                                        : qResp.message)
+              << "\n";
+    return 1;
+  }
+
+  std::vector<std::string> questions;
+  for (std::size_t idx = 0; idx < apm::security::SECURITY_QUESTION_COUNT;
+       ++idx) {
+    auto it = qResp.rawFields.find("security_q" + std::to_string(idx + 1));
+    if (it == qResp.rawFields.end() || it->second.empty()) {
+      std::cerr << "Security question data missing. Cannot continue.\n";
+      return 1;
+    }
+    questions.push_back(it->second);
+  }
+
+  std::vector<std::string> answers;
+  answers.reserve(questions.size());
+  for (std::size_t idx = 0; idx < questions.size(); ++idx) {
+    std::cout << "Security question " << (idx + 1) << ": " << questions[idx]
+              << "\n";
+    std::cout << "Answer: " << std::flush;
+    std::string answer;
+    if (!std::getline(std::cin, answer) || answer.empty()) {
+      std::cerr << "Answer cannot be empty. Aborting.\n";
+      return 1;
+    }
+    answers.push_back(std::move(answer));
+  }
+
+  apm::ipc::Request verifyReq;
+  verifyReq.type = apm::ipc::RequestType::ForgotPassword;
+  verifyReq.id = "forgot-verify-1";
+  verifyReq.rawFields["reset_stage"] = "verify";
+  for (std::size_t idx = 0; idx < answers.size(); ++idx) {
+    verifyReq.rawFields["security_a" + std::to_string(idx + 1)] = answers[idx];
+  }
+
+  apm::ipc::Response verifyResp;
+  if (!apm::ipc::sendRequest(verifyReq, verifyResp, serviceName, &err)) {
+    std::cerr << "Error: " << err << "\n";
+    return 1;
+  }
+  if (!verifyResp.success) {
+    std::cerr << (verifyResp.message.empty() ? "Security answers incorrect"
+                                             : verifyResp.message)
+              << "\n";
+    return 1;
+  }
+
+  if (!verifyResp.message.empty())
+    std::cout << verifyResp.message << "\n";
+
+  std::string newSecret;
+  if (!promptForNewSecret(newSecret)) {
+    std::cerr << "Password/PIN reset aborted.\n";
+    return 1;
+  }
+
+  apm::ipc::Request resetReq;
+  resetReq.type = apm::ipc::RequestType::ForgotPassword;
+  resetReq.id = "forgot-reset-1";
+  resetReq.rawFields["reset_stage"] = "reset";
+  resetReq.rawFields["new_secret"] = newSecret;
+  for (std::size_t idx = 0; idx < answers.size(); ++idx) {
+    resetReq.rawFields["security_a" + std::to_string(idx + 1)] = answers[idx];
+  }
+
+  apm::ipc::Response resetResp;
+  if (!apm::ipc::sendRequest(resetReq, resetResp, serviceName, &err)) {
+    std::cerr << "Error: " << err << "\n";
+    return 1;
+  }
+
+  if (!resetResp.success) {
+    std::cerr << (resetResp.message.empty() ? "Failed to reset password/PIN"
+                                            : resetResp.message)
+              << "\n";
+    return 1;
+  }
+
+  if (!resetResp.message.empty())
+    std::cout << resetResp.message << "\n";
+
+  return 0;
 }
 
 // Trigger repository metadata refresh via the daemon so Packages lists stay
@@ -1256,8 +1406,7 @@ int cmdFactoryReset(const std::string &serviceName,
             << "\n";
   std::cout << "  - Delete repository lists under " << apm::config::LISTS_DIR
             << "\n";
-  std::cout
-      << "  - Uninstall system apps staged with --install-as-system\n";
+  std::cout << "  - Uninstall system apps staged with --install-as-system\n";
   std::cout << "Proceed with factory reset? [y/N]: " << std::flush;
 
   std::string response;
@@ -1294,7 +1443,8 @@ int cmdFactoryReset(const std::string &serviceName,
 
   if (!resp.success) {
     std::cerr << "Factory reset failed: "
-              << (resp.message.empty() ? "unknown error" : resp.message) << "\n";
+              << (resp.message.empty() ? "unknown error" : resp.message)
+              << "\n";
     return 1;
   }
 
@@ -1608,6 +1758,8 @@ int main(int argc, char **argv) {
 
   if (cmd == "ping")
     return cmdPing(serviceName);
+  if (cmd == "forgot-password")
+    return cmdForgotPassword(serviceName);
   if (cmd == "update")
     return cmdUpdate(serviceName, sessionToken);
 

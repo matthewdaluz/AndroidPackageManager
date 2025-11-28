@@ -35,6 +35,7 @@ enum class RequestType {
   Unknown = 0,
   Ping,
   Authenticate,
+  ForgotPassword,
   Update,
   Install,
   Remove,

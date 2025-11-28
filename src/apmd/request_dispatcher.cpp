@@ -34,6 +34,7 @@
 #include "install_manager.hpp"
 #include "logger.hpp"
 #include "repo_index.hpp"
+#include "security.hpp"
 
 #include <sstream>
 #include <string>
@@ -117,7 +118,8 @@ void RequestDispatcher::dispatch(const apm::ipc::Request &req,
 
   auto requiresAuth = [](apm::ipc::RequestType t) {
     return !(t == apm::ipc::RequestType::Ping ||
-             t == apm::ipc::RequestType::Authenticate);
+             t == apm::ipc::RequestType::Authenticate ||
+             t == apm::ipc::RequestType::ForgotPassword);
   };
 
   if (requiresAuth(req.type)) {
@@ -137,8 +139,34 @@ void RequestDispatcher::dispatch(const apm::ipc::Request &req,
     apm::logger::info("RequestDispatcher: Authenticate request received");
     apm::security::SessionState session;
     std::string authErr;
+
+    std::vector<std::pair<std::string, std::string>> securityQa;
+    if (req.authAction == "set") {
+      bool complete = true;
+      for (std::size_t idx = 0; idx < apm::security::SECURITY_QUESTION_COUNT;
+           ++idx) {
+        auto qIt =
+            req.rawFields.find("security_q" + std::to_string(idx + 1));
+        auto aIt =
+            req.rawFields.find("security_a" + std::to_string(idx + 1));
+        if (qIt == req.rawFields.end() || aIt == req.rawFields.end() ||
+            qIt->second.empty() || aIt->second.empty()) {
+          complete = false;
+          break;
+        }
+        securityQa.emplace_back(qIt->second, aIt->second);
+      }
+
+      if (!complete) {
+        resp.success = false;
+        resp.message =
+            "Security questions must be provided when setting a password/PIN.";
+        break;
+      }
+    }
+
     if (!m_securityManager.authenticate(req.authAction, req.authSecret,
-                                        session, &authErr)) {
+                                        securityQa, session, &authErr)) {
       resp.success = false;
       resp.message =
           authErr.empty() ? "Authentication failed" : std::move(authErr);
@@ -151,6 +179,105 @@ void RequestDispatcher::dispatch(const apm::ipc::Request &req,
                        : "Session unlocked.";
     resp.rawFields["session_token"] = session.token;
     resp.rawFields["session_expires"] = std::to_string(session.expiresAt);
+    break;
+  }
+
+  case apm::ipc::RequestType::ForgotPassword: {
+    auto collectAnswers = [&](std::vector<std::string> &answersOut) -> bool {
+      answersOut.clear();
+      for (std::size_t idx = 0; idx < apm::security::SECURITY_QUESTION_COUNT;
+           ++idx) {
+        const std::string key = "security_a" + std::to_string(idx + 1);
+        auto it = req.rawFields.find(key);
+        if (it == req.rawFields.end() || it->second.empty())
+          return false;
+        answersOut.push_back(it->second);
+      }
+      return true;
+    };
+
+    std::string stage = "questions";
+    auto itStage = req.rawFields.find("reset_stage");
+    if (itStage != req.rawFields.end() && !itStage->second.empty())
+      stage = itStage->second;
+
+    if (stage == "questions") {
+      std::vector<std::string> questions;
+      std::string err;
+      if (!m_securityManager.fetchSecurityQuestions(questions, &err)) {
+        resp.success = false;
+        resp.message = err.empty() ? "Unable to load security questions" : err;
+        break;
+      }
+
+      resp.success = true;
+      resp.message =
+          "Answer the security questions to reset your password/PIN.";
+      for (std::size_t idx = 0; idx < questions.size(); ++idx) {
+        resp.rawFields["security_q" + std::to_string(idx + 1)] =
+            questions[idx];
+      }
+      break;
+    }
+
+    if (stage == "verify") {
+      std::vector<std::string> answers;
+      if (!collectAnswers(answers)) {
+        resp.success = false;
+        resp.message = "All security questions must be answered.";
+        break;
+      }
+
+      std::string err;
+      if (!m_securityManager.validateSecurityAnswers(answers, &err)) {
+        resp.success = false;
+        resp.message = err.empty() ? "Security answers did not match" : err;
+        break;
+      }
+
+      resp.success = true;
+      resp.message = "Security answers verified. Set a new password/PIN.";
+      break;
+    }
+
+    if (stage == "reset") {
+      std::vector<std::string> answers;
+      if (!collectAnswers(answers)) {
+        resp.success = false;
+        resp.message = "All security questions must be answered.";
+        break;
+      }
+
+      std::string newSecret;
+      auto itSecret = req.rawFields.find("new_secret");
+      if (itSecret != req.rawFields.end())
+        newSecret = itSecret->second;
+
+      if (newSecret.empty()) {
+        resp.success = false;
+        resp.message = "New password/PIN is required.";
+        break;
+      }
+
+      apm::security::SessionState session;
+      std::string err;
+      if (!m_securityManager.resetForgottenSecret(newSecret, answers, session,
+                                                  &err)) {
+        resp.success = false;
+        resp.message =
+            err.empty() ? "Failed to reset password/PIN." : std::move(err);
+        break;
+      }
+
+      resp.success = true;
+      resp.message = "Password/PIN reset. Session active.";
+      resp.rawFields["session_token"] = session.token;
+      resp.rawFields["session_expires"] = std::to_string(session.expiresAt);
+      break;
+    }
+
+    resp.success = false;
+    resp.message = "Unknown forgot-password stage";
     break;
   }
 

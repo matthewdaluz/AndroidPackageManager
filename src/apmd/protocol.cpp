@@ -112,6 +112,8 @@ RequestType parseType(const std::string &sRaw) {
     return RequestType::Ping;
   if (s == "AUTHENTICATE")
     return RequestType::Authenticate;
+  if (s == "FORGOT_PASSWORD")
+    return RequestType::ForgotPassword;
   if (s == "UPDATE")
     return RequestType::Update;
   if (s == "INSTALL")
@@ -149,6 +151,8 @@ std::string typeToString(RequestType t) {
     return "PING";
   case RequestType::Authenticate:
     return "AUTHENTICATE";
+  case RequestType::ForgotPassword:
+    return "FORGOT_PASSWORD";
   case RequestType::Update:
     return "UPDATE";
   case RequestType::Install:
