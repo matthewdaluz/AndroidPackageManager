@@ -35,6 +35,7 @@
 #include "fs.hpp"
 #include "logger.hpp"
 #include "repo_index.hpp"
+#include "sha256.hpp"
 #include "status_db.hpp"
 #include "tar_extractor.hpp"
 
@@ -42,6 +43,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <cctype>
 #include <cerrno>
 #include <cstring>
 #include <fstream>
@@ -74,6 +76,61 @@ static std::string makeDebFileName(const PackageEntry &pkg) {
 
 static bool startsWith(const std::string &s, const std::string &prefix) {
   return s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0;
+}
+
+// Normalize hex for comparison (strip whitespace, lowercase).
+static std::string normalizeHex(const std::string &hex) {
+  std::string out;
+  out.reserve(hex.size());
+  for (char c : hex) {
+    if (c == ' ' || c == '\t' || c == '\n' || c == '\r')
+      continue;
+    out.push_back(
+        static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+  }
+  return out;
+}
+
+// Validate a downloaded .deb against the SHA256 provided in Packages.
+static bool verifyDebSha256(const PackageEntry &pkg, const std::string &debPath,
+                            std::string *errorMsg) {
+  if (pkg.sha256.empty()) {
+    std::string msg = "Packages metadata missing SHA256 for " + pkg.packageName;
+    if (errorMsg)
+      *errorMsg = msg;
+    apm::logger::warn("verifyDebSha256: " + msg);
+    return false;
+  }
+
+  std::string computed;
+  std::string hashErr;
+  if (!apm::crypto::sha256File(debPath, computed, &hashErr)) {
+    std::string msg =
+        "Failed to compute SHA256 for " + debPath + ": " + hashErr;
+    if (errorMsg)
+      *errorMsg = msg;
+    apm::logger::error("verifyDebSha256: " + msg);
+    return false;
+  }
+
+  const std::string expected = normalizeHex(pkg.sha256);
+  const std::string actual = normalizeHex(computed);
+
+  if (expected != actual) {
+    std::string msg = "SHA256 mismatch for " + pkg.packageName + " (" +
+                      debPath + "): expected " + expected + " but got " +
+                      actual;
+    if (errorMsg) {
+      *errorMsg = msg + " (cached file removed; re-run to fetch a fresh copy)";
+    }
+    apm::logger::error("verifyDebSha256: " + msg);
+    apm::fs::removeFile(debPath);
+    return false;
+  }
+
+  apm::logger::info("verifyDebSha256: ok for " + pkg.packageName + " (" +
+                    debPath + ")");
+  return true;
 }
 
 // Determine which architecture should be used for resolver/installer logic.
@@ -1101,14 +1158,46 @@ bool installWithDeps(const RepoIndexList &repoIndices,
       removeTermuxPackageFiles(existing->second, nullptr);
     }
 
-    const std::string &debPath = plan.debPath;
+    std::string debPath = plan.debPath;
 
     // ---------------------------------------------------------
     // SHA256 verification (strict mode)
     // ---------------------------------------------------------
-    // SHA256 for .deb disabled (dev mode)
-    apm::logger::warn(
-        "SHA256 verification DISABLED (dev mode): accepting .deb " + debPath);
+    if (pkg->sha256.empty()) {
+      result.ok = false;
+      result.message =
+          "Packages metadata missing SHA256 for " + pkg->packageName;
+      apm::logger::error("installWithDeps: " + result.message);
+      return false;
+    }
+
+    std::string shaErr;
+    if (!verifyDebSha256(*pkg, debPath, &shaErr)) {
+      apm::logger::warn("installWithDeps: SHA256 check failed for " +
+                        pkg->packageName +
+                        "; attempting to re-download and verify again");
+
+      std::string dlErr;
+      if (!ensureDebForPackage(*pkg, debPath, &dlErr, progressCb)) {
+        result.ok = false;
+        result.message = "SHA256 verification failed for " + pkg->packageName +
+                         ": " + shaErr;
+        if (!dlErr.empty()) {
+          result.message += " (re-download failed: " + dlErr + ")";
+        }
+        apm::logger::error("installWithDeps: " + result.message);
+        return false;
+      }
+
+      shaErr.clear();
+      if (!verifyDebSha256(*pkg, debPath, &shaErr)) {
+        result.ok = false;
+        result.message = "SHA256 verification failed for " + pkg->packageName +
+                         ": " + shaErr;
+        apm::logger::error("installWithDeps: " + result.message);
+        return false;
+      }
+    }
 
     bool installAsDependency = (pkg->packageName != rootPackage);
     std::string installRoot;

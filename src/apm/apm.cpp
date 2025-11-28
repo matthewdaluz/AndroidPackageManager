@@ -53,6 +53,8 @@
 #include <sstream>
 #include <string>
 #include <sys/stat.h>
+#include <unordered_map>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -150,6 +152,48 @@ static std::string buildProgressBar(double ratio) {
   bar += std::to_string(percent);
   bar += "%";
   return bar;
+}
+
+// Maintain and render multiple in-place progress lines (one per download).
+struct MultiProgressUi {
+  std::unordered_map<std::string, std::size_t> index;
+  std::vector<std::string> lines;
+  std::size_t renderedLines = 0;
+  bool supportsAnsi = (::isatty(STDOUT_FILENO) != 0);
+};
+
+static void renderProgressLines(MultiProgressUi &ui) {
+  if (ui.lines.empty())
+    return;
+
+  if (!ui.supportsAnsi) {
+    std::cout << "\r" << ui.lines.back() << std::flush;
+    ui.renderedLines = ui.lines.size();
+    return;
+  }
+
+  if (ui.renderedLines > 0) {
+    std::cout << "\r";
+    if (ui.renderedLines > 1)
+      std::cout << "\033[" << (ui.renderedLines - 1) << "A";
+  }
+
+  for (std::size_t i = 0; i < ui.lines.size(); ++i) {
+    std::cout << "\r\033[K" << ui.lines[i];
+    if (i + 1 < ui.lines.size())
+      std::cout << "\n";
+  }
+
+  ui.renderedLines = ui.lines.size();
+  std::cout << std::flush;
+}
+
+static void finalizeProgressLines(MultiProgressUi &ui) {
+  if (ui.lines.empty() || ui.renderedLines == 0)
+    return;
+
+  std::cout << std::endl;
+  ui.renderedLines = 0;
 }
 
 // Manual package helpers make it possible to install standalone archives
@@ -981,10 +1025,7 @@ int cmdUpdate(const std::string &serviceName, const std::string &sessionToken) {
 
   apm::ipc::Response resp;
   std::string err;
-  struct ProgressUiState {
-    std::string activeKey;
-    bool lineActive = false;
-  } ui;
+  MultiProgressUi ui;
 
   auto onProgress = [&](const apm::ipc::Response &chunk) {
     auto eventIt = chunk.rawFields.find("event");
@@ -1001,11 +1042,14 @@ int cmdUpdate(const std::string &serviceName, const std::string &sessionToken) {
     const std::string component = getField("component");
     const std::string key = stage + ":" + remote + ":" + component;
 
-    if (ui.activeKey != key) {
-      if (ui.lineActive)
-        std::cout << std::endl;
-      ui.activeKey = key;
-      ui.lineActive = true;
+    auto idxIt = ui.index.find(key);
+    std::size_t idx;
+    if (idxIt == ui.index.end()) {
+      idx = ui.lines.size();
+      ui.index.emplace(key, idx);
+      ui.lines.emplace_back();
+    } else {
+      idx = idxIt->second;
     }
 
     std::string description = getField("description");
@@ -1029,29 +1073,27 @@ int cmdUpdate(const std::string &serviceName, const std::string &sessionToken) {
                   : 0.0;
 
     std::ostringstream line;
-    line << "\r" << label << " " << buildProgressBar(ratio) << " "
+    line << label << " " << buildProgressBar(ratio) << " "
          << formatBytes(current) << "/";
     if (total > 0)
       line << formatBytes(total);
     else
       line << "??";
     line << "  " << formatSpeed(dlSpeed) << "↓ " << formatSpeed(ulSpeed) << "↑";
+    if (finished)
+      line << "  done";
 
-    std::cout << line.str() << std::flush;
-
-    if (finished) {
-      std::cout << std::endl;
-      ui.lineActive = false;
-    }
+    ui.lines[idx] = line.str();
+    renderProgressLines(ui);
   };
 
   if (!apm::ipc::sendRequest(req, resp, serviceName, &err, onProgress)) {
+    finalizeProgressLines(ui);
     std::cerr << "Error: " << err << "\n";
     return 1;
   }
 
-  if (ui.lineActive)
-    std::cout << std::endl;
+  finalizeProgressLines(ui);
 
   std::cout << (resp.success ? "Update succeeded" : "Update failed");
   if (!resp.message.empty())
@@ -1145,10 +1187,7 @@ int cmdInstall(const std::string &serviceName, const std::string &sessionToken,
   apm::ipc::Response resp;
   err.clear();
 
-  struct DownloadUiState {
-    std::string activeKey;
-    bool lineActive = false;
-  } ui;
+  MultiProgressUi ui;
 
   auto onProgress = [&](const apm::ipc::Response &chunk) {
     auto eventIt = chunk.rawFields.find("event");
@@ -1184,42 +1223,41 @@ int cmdInstall(const std::string &serviceName, const std::string &sessionToken,
                   : 0.0;
 
     const std::string key = pkgName + ":" + dest;
-    if (ui.activeKey != key) {
-      if (ui.lineActive)
-        std::cout << std::endl;
-      ui.activeKey = key;
-      ui.lineActive = true;
+    auto idxIt = ui.index.find(key);
+    std::size_t idx;
+    if (idxIt == ui.index.end()) {
+      idx = ui.lines.size();
+      ui.index.emplace(key, idx);
+      ui.lines.emplace_back();
+    } else {
+      idx = idxIt->second;
     }
 
     std::string label =
         pkgName.empty() ? fileLabel : pkgName + " - " + fileLabel;
 
     std::ostringstream line;
-    line << "\r" << label << " " << buildProgressBar(ratio) << " "
+    line << label << " " << buildProgressBar(ratio) << " "
          << formatBytes(current) << "/";
     if (total > 0)
       line << formatBytes(total);
     else
       line << "??";
     line << "  " << formatSpeed(dlSpeed) << "↓ " << formatSpeed(ulSpeed) << "↑";
+    if (finished)
+      line << "  done";
 
-    std::cout << line.str() << std::flush;
-
-    if (finished) {
-      std::cout << std::endl;
-      ui.lineActive = false;
-    }
+    ui.lines[idx] = line.str();
+    renderProgressLines(ui);
   };
 
   if (!apm::ipc::sendRequest(req, resp, serviceName, &err, onProgress)) {
-    if (ui.lineActive)
-      std::cout << std::endl;
+    finalizeProgressLines(ui);
     std::cerr << "Error: " << err << "\n";
     return 1;
   }
 
-  if (ui.lineActive)
-    std::cout << std::endl;
+  finalizeProgressLines(ui);
 
   std::cout << (resp.success ? "Install succeeded: " : "Install failed: ")
             << resp.message << "\n";
