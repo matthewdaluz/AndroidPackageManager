@@ -3,7 +3,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="${SCRIPT_DIR}/build"
-DEFAULT_PLATFORM="android-21"
+
+# Default safe platform for Binder NDK
+DEFAULT_PLATFORM="android-34"
 
 echo "Cleaning build directory..."
 rm -rf "${BUILD_DIR}"
@@ -33,6 +35,22 @@ select CHOICE in "${ARCH_CHOICES[@]}" "Custom input"; do
   break
 done
 
+# Allow platform override: ./build_android.sh 33
+if [[ $# -ge 1 ]]; then
+  USER_API=$1
+  DEFAULT_PLATFORM="android-${USER_API}"
+fi
+
+# Guard against unsupported binder APIs
+API_LEVEL=${DEFAULT_PLATFORM#android-}
+if (( API_LEVEL < 29 )); then
+  echo ""
+  echo "⚠ ERROR: Android API < 29 does not support NDK Binder symbols like AIBinder_decStrong."
+  echo "  You selected: ${DEFAULT_PLATFORM}"
+  echo "  APM requires ANDROID_PLATFORM >= android-29 (recommended: 34)"
+  exit 1
+fi
+
 NDK_ROOT="${ANDROID_NDK:-${ANDROID_NDK_HOME:-$HOME/Android/NDK}}"
 TOOLCHAIN_FILE="${NDK_ROOT}/build/cmake/android.toolchain.cmake"
 
@@ -46,14 +64,22 @@ if [[ ! -f "${TOOLCHAIN_FILE}" ]]; then
   exit 1
 fi
 
-echo "Configuring for ABI=${ANDROID_ABI}, platform=${DEFAULT_PLATFORM} using NDK at ${NDK_ROOT}"
+echo ""
+echo "Configuring:"
+echo "  ABI       = ${ANDROID_ABI}"
+echo "  Platform  = ${DEFAULT_PLATFORM}"
+echo "  NDK       = ${NDK_ROOT}"
+echo ""
+
 cmake -S "${SCRIPT_DIR}" -B "${BUILD_DIR}" \
   -G "Unix Makefiles" \
   -DANDROID_ABI="${ANDROID_ABI}" \
   -DANDROID_PLATFORM="${DEFAULT_PLATFORM}" \
-  -DCMAKE_TOOLCHAIN_FILE="${TOOLCHAIN_FILE}"
+  -DCMAKE_TOOLCHAIN_FILE="${TOOLCHAIN_FILE}" \
+  -DANDROID_STL="c++_static"
 
 echo "Building with make -j$(nproc)..."
 cmake --build "${BUILD_DIR}" -- -j"$(nproc)"
 
-echo "Build completed."
+echo "Build completed successfully for API ${API_LEVEL}."
+

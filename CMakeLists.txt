@@ -4,6 +4,9 @@ include_directories(SYSTEM /usr/include /usr/include/openssl)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_SYSTEM_VERSION 29)
+set(CMAKE_ANDROID_API 29)
+
 
 include(FetchContent)
 
@@ -84,6 +87,7 @@ if(ANDROID)
   
   # Set NDK path for CMake
   set(ANDROID_NDK "${ANDROID_NDK_PATH}" CACHE PATH "Path to Android NDK" FORCE)
+  set(CMAKE_ANDROID_API 34 CACHE STRING "Target Android API level" FORCE)
 endif()
 
 # ======================================================
@@ -387,6 +391,17 @@ endif()
 # ======================================================
 find_library(OPENSSL_SSL_LIBRARY NAMES ssl)
 find_library(OPENSSL_CRYPTO_LIBRARY NAMES crypto)
+if((NOT OPENSSL_SSL_LIBRARY OR NOT OPENSSL_CRYPTO_LIBRARY)
+    AND EXISTS "${CMAKE_SOURCE_DIR}/prebuilt/boringssl/libssl.a"
+    AND EXISTS "${CMAKE_SOURCE_DIR}/prebuilt/boringssl/libcrypto.a")
+  # Use the repository's prebuilt BoringSSL as a fallback (primarily for Android toolchain builds).
+  message(STATUS "Using prebuilt BoringSSL from ${CMAKE_SOURCE_DIR}/prebuilt/boringssl")
+  set(OPENSSL_SSL_LIBRARY "${CMAKE_SOURCE_DIR}/prebuilt/boringssl/libssl.a" CACHE FILEPATH "Prebuilt BoringSSL libssl" FORCE)
+  set(OPENSSL_CRYPTO_LIBRARY "${CMAKE_SOURCE_DIR}/prebuilt/boringssl/libcrypto.a" CACHE FILEPATH "Prebuilt BoringSSL libcrypto" FORCE)
+  if(EXISTS "${CMAKE_SOURCE_DIR}/prebuilt/boringssl/include")
+    include_directories(SYSTEM "${CMAKE_SOURCE_DIR}/prebuilt/boringssl/include")
+  endif()
+endif()
 if(NOT OPENSSL_SSL_LIBRARY OR NOT OPENSSL_CRYPTO_LIBRARY)
   message(FATAL_ERROR "OpenSSL/BoringSSL libraries not found. Install libssl or ensure NDK-provided BoringSSL is available.")
 endif()
@@ -438,6 +453,7 @@ target_include_directories(apm PRIVATE
     src/util/crypto
     src/apm/commands/include
     /usr/include
+    src/thirdparty/include
     include
 )
 
@@ -455,6 +471,7 @@ target_link_libraries(apm PRIVATE
 add_executable(apmd
     src/apmd/apmd.cpp
     src/apmd/binder_service.cpp
+    src/core/binder_support.cpp
     src/apmd/request_dispatcher.cpp
     src/apmd/protocol.cpp
     src/apmd/install_manager.cpp
@@ -493,6 +510,7 @@ target_include_directories(apmd PRIVATE
     src/util/crypto
     src/apm/commands/include
     /usr/include
+    src/thirdparty/include
     include
 )
 

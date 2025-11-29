@@ -5,9 +5,9 @@
  * Copyright (C) 2025 RedHead Industries
  *
  * File: install_manager.hpp
- * Purpose: Declare orchestration APIs for installing, removing, and upgrading Debian-style packages.
- * Last Modified: November 22nd, 2025. - 10:30 PM Eastern Time.
- * Author: Matthew DaLuz - RedHead Founder
+ * Purpose: Declare orchestration APIs for installing, removing, and upgrading
+ * Debian-style packages. Last Modified: November 22nd, 2025. - 10:30 PM Eastern
+ * Time. Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,6 +28,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <openssl/posix_time.h>
 #include <string>
 #include <vector>
 
@@ -38,9 +39,7 @@ using RepoIndexList = std::vector<RepoIndex>;
 
 namespace apm::install {
 
-enum class InstallProgressEvent {
-  Download
-};
+enum class InstallProgressEvent { Download };
 
 struct InstallProgress {
   InstallProgressEvent event = InstallProgressEvent::Download;

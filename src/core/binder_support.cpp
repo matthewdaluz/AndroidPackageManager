@@ -95,22 +95,29 @@ bool tryLoadFrom(const char *libName, std::string *errorMsg) {
 }
 
 bool ensureLoaded(std::string *errorMsg) {
-  static std::once_flag flag;
-  static bool loaded = false;
-  std::call_once(flag, [&]() {
-    const std::vector<const char *> candidates = {"libbinder_ndk.so",
-                                                  "libbinder.so"};
-    for (const char *lib : candidates) {
-      if (tryLoadFrom(lib, errorMsg)) {
-        loaded = true;
-        break;
+  if (__builtin_available(android 34, *)) {
+    static std::once_flag flag;
+    static bool loaded = false;
+    std::call_once(flag, [&]() {
+      const std::vector<const char *> candidates = {"libbinder_ndk.so",
+                                                    "libbinder.so"};
+      for (const char *lib : candidates) {
+        if (tryLoadFrom(lib, errorMsg)) {
+          loaded = true;
+          break;
+        }
       }
-    }
-    if (!loaded && errorMsg && errorMsg->empty()) {
-      *errorMsg = "Unable to load Binder runtime (libbinder_ndk.so)";
-    }
-  });
-  return loaded;
+      if (!loaded && errorMsg && errorMsg->empty()) {
+        *errorMsg = "Unable to load Binder runtime (libbinder_ndk.so)";
+      }
+    });
+    return loaded;
+  }
+
+  if (errorMsg) {
+    *errorMsg = "Binder runtime requires Android API level 34 or newer";
+  }
+  return false;
 }
 
 } // namespace
@@ -119,16 +126,16 @@ bool isBinderRuntimeAvailable(std::string *errorMsg) {
   return ensureLoaded(errorMsg);
 }
 
-bool addService(const ndk::SpAIBinder &binder, const std::string &instance,
+bool addService(AIBinder *binder, const std::string &instance,
                 std::string *errorMsg) {
   if (!ensureLoaded(errorMsg))
     return false;
-  if (!binder.get()) {
+  if (!binder) {
     if (errorMsg)
       *errorMsg = "Binder service handle is null";
     return false;
   }
-  auto status = symbols().addService(binder.get(), instance.c_str());
+  auto status = symbols().addService(binder, instance.c_str());
   if (status != STATUS_OK) {
     if (errorMsg)
       *errorMsg = "AServiceManager_addService failed with status " +
@@ -138,9 +145,9 @@ bool addService(const ndk::SpAIBinder &binder, const std::string &instance,
   return true;
 }
 
-ndk::SpAIBinder getService(const std::string &instance, bool wait,
-                           std::string *errorMsg) {
-  ndk::SpAIBinder handle;
+AIBinder *getService(const std::string &instance, bool wait,
+                     std::string *errorMsg) {
+  AIBinder *handle = nullptr;
   if (!ensureLoaded(errorMsg))
     return handle;
 
@@ -155,8 +162,7 @@ ndk::SpAIBinder getService(const std::string &instance, bool wait,
   if (!raw && errorMsg) {
     *errorMsg = "Service " + instance + " not found";
   }
-  handle.set(raw);
-  return handle;
+  return raw;
 }
 
 bool configureThreadPool(int maxThreads, bool callerJoins,
@@ -193,4 +199,4 @@ void joinThreadPool() {
 
 } // namespace apm::binder
 
-#endif // __ANDROID__
+#endif // defined(__ANDROID__)

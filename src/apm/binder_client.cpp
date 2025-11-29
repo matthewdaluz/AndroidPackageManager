@@ -29,7 +29,6 @@
 
 #include "binder_defs.hpp"
 #include "binder_support.hpp"
-#include "config.hpp"
 #include "logger.hpp"
 
 #include <limits>
@@ -37,6 +36,7 @@
 #include <utility>
 
 #if defined(__ANDROID__)
+#include <android/api-level.h>
 #include <android/binder_ibinder.h>
 #include <android/binder_parcel.h>
 
@@ -45,29 +45,45 @@
 
 namespace apm::ipc {
 namespace {
-
 #if defined(__ANDROID__)
 
-class ProgressCallbackReceiver;
-
-AIBinder_Class *getProgressClass() {
-  static AIBinder_Class *cls = nullptr;
-  static std::once_flag flag;
-  std::call_once(flag, [&]() {
-    cls = AIBinder_Class_define(apm::binder::PROGRESS_INTERFACE,
-                                [](void *args) { return args; },
-                                [](void * /*userData*/) {},
-                                [](AIBinder *binder, transaction_code_t code,
-                                   const AParcel *in, AParcel * /*out*/) {
-                                  auto *receiver = static_cast<ProgressCallbackReceiver *>(
-                                      AIBinder_getUserData(binder));
-                                  if (!receiver)
-                                    return STATUS_FAILED_TRANSACTION;
-                                  return receiver->handleTransact(code, in);
-                                });
-  });
-  return cls;
+inline bool isApiAtLeast34() {
+  int api = android_get_device_api_level();
+  return api >= 34;
 }
+
+struct ScopedStrongBinder {
+  explicit ScopedStrongBinder(AIBinder *b = nullptr) : binder(b) {}
+  ~ScopedStrongBinder() {
+    if (binder && isApiAtLeast34()) {
+      AIBinder_decStrong(binder);
+    }
+  }
+  ScopedStrongBinder(const ScopedStrongBinder &) = delete;
+  ScopedStrongBinder &operator=(const ScopedStrongBinder &) = delete;
+  ScopedStrongBinder(ScopedStrongBinder &&other) noexcept
+      : binder(other.binder) {
+    other.binder = nullptr;
+  }
+  ScopedStrongBinder &operator=(ScopedStrongBinder &&other) noexcept {
+    if (this != &other) {
+      if (binder && isApiAtLeast34()) {
+        AIBinder_decStrong(binder);
+      }
+      binder = other.binder;
+      other.binder = nullptr;
+    }
+    return *this;
+  }
+
+  AIBinder *get() const { return binder; }
+
+private:
+  AIBinder *binder;
+};
+
+class ProgressCallbackReceiver;
+AIBinder_Class *getProgressClass();
 
 bool stringAllocator(void *stringData, int32_t length, char **buffer) {
   auto *out = static_cast<std::string *>(stringData);
@@ -82,6 +98,10 @@ bool stringAllocator(void *stringData, int32_t length, char **buffer) {
 }
 
 binder_status_t readParcelString(const AParcel *parcel, std::string &out) {
+  if (!isApiAtLeast34()) {
+    return STATUS_FAILED_TRANSACTION;
+  }
+
   binder_status_t status = AParcel_readString(parcel, &out, stringAllocator);
   if (status != STATUS_OK) {
     return status;
@@ -93,6 +113,10 @@ binder_status_t readParcelString(const AParcel *parcel, std::string &out) {
 }
 
 binder_status_t writeParcelString(AParcel *parcel, const std::string &value) {
+  if (!isApiAtLeast34()) {
+    return STATUS_FAILED_TRANSACTION;
+  }
+
   if (value.size() >
       static_cast<std::size_t>(std::numeric_limits<int32_t>::max())) {
     return STATUS_BAD_VALUE;
@@ -105,22 +129,22 @@ class ProgressCallbackReceiver {
 public:
   explicit ProgressCallbackReceiver(ProgressHandler handler)
       : m_handler(std::move(handler)), m_binder(nullptr) {
-    if (!m_handler)
+    if (!m_handler || !isApiAtLeast34())
       return;
 
     AIBinder_Class *cls = getProgressClass();
     if (!cls) {
-      apm::logger::warn("binder_client: failed to allocate progress binder class");
+      apm::logger::warn(
+          "binder_client: failed to allocate progress binder class");
       return;
     }
 
-    m_binder = ndk::SpAIBinder(AIBinder_new(cls, this));
+    m_binder = ScopedStrongBinder(AIBinder_new(cls, this));
   }
 
-  ndk::SpAIBinder binder() const { return m_binder; }
+  AIBinder *binder() const { return m_binder.get(); }
 
-  binder_status_t handleTransact(transaction_code_t code,
-                                 const AParcel *in) {
+  binder_status_t handleTransact(transaction_code_t code, const AParcel *in) {
     if (code != apm::binder::TX_PROGRESS_EVENT || !m_handler) {
       return STATUS_UNKNOWN_TRANSACTION;
     }
@@ -144,12 +168,46 @@ public:
 
 private:
   ProgressHandler m_handler;
-  ndk::SpAIBinder m_binder;
+  ScopedStrongBinder m_binder;
 };
+
+AIBinder_Class *getProgressClass() {
+  static AIBinder_Class *cls = nullptr;
+  static std::once_flag flag;
+  std::call_once(flag, [&]() {
+    if (!isApiAtLeast34()) {
+      return;
+    }
+    cls = AIBinder_Class_define(
+        apm::binder::PROGRESS_INTERFACE,
+        /* onCreate */ [](void *args) -> void * { return args; },
+        /* onDestroy */ [](void *) {},
+        /* onTransact */
+        [](AIBinder *binder, transaction_code_t code, const AParcel *in,
+           AParcel *) -> binder_status_t {
+          auto *receiver = static_cast<ProgressCallbackReceiver *>(
+              AIBinder_getUserData(binder));
+          if (!receiver)
+            return STATUS_FAILED_TRANSACTION;
+          return receiver->handleTransact(code, in);
+        });
+  });
+
+  return cls;
+}
+
+/* Remove incomplete and duplicate function definition here */
 
 bool sendRequestBinder(const Request &req, Response &resp,
                        const std::string &serviceName, std::string *errorMsg,
                        ProgressHandler progressHandler) {
+  if (!isApiAtLeast34()) {
+    if (errorMsg) {
+      *errorMsg = "NDK Binder requires Android API level 34 or newer";
+    }
+    return false;
+  }
+
   std::string runtimeErr;
   if (!apm::binder::isBinderRuntimeAvailable(&runtimeErr)) {
     if (errorMsg)
@@ -157,8 +215,9 @@ bool sendRequestBinder(const Request &req, Response &resp,
     return false;
   }
 
-  ndk::SpAIBinder service =
-      apm::binder::getService(serviceName, true, &runtimeErr);
+  ScopedStrongBinder service;
+  service = ScopedStrongBinder(
+      apm::binder::getService(serviceName, true, &runtimeErr));
   if (!service.get()) {
     if (errorMsg)
       *errorMsg = runtimeErr;
@@ -167,38 +226,50 @@ bool sendRequestBinder(const Request &req, Response &resp,
 
   ProgressCallbackReceiver progressReceiver(progressHandler);
 
+  // Create a new parcel for the request
   AParcel *parcel = nullptr;
-  if (AIBinder_prepareTransaction(service.get(), &parcel) != STATUS_OK) {
+  binder_status_t parcelStatus =
+      AIBinder_prepareTransaction(service.get(), &parcel);
+  if (parcelStatus != STATUS_OK || !parcel) {
     if (errorMsg)
       *errorMsg = "Failed to prepare Binder transaction";
     return false;
   }
 
-  std::string payload = serializeRequest(req);
-  if (writeParcelString(parcel, payload) != STATUS_OK) {
+  // Write the request to the parcel
+  binder_status_t writeStatus =
+      writeParcelString(parcel, serializeRequest(req));
+  if (writeStatus != STATUS_OK) {
+    if (parcel) {
+      AParcel_delete(parcel);
+    }
     if (errorMsg)
-      *errorMsg = "Failed to write Binder payload";
-    AParcel_delete(parcel);
+      *errorMsg = "Failed to write request to Binder parcel";
     return false;
   }
 
-  binder_status_t status =
-      AParcel_writeStrongBinder(parcel, progressReceiver.binder().get());
-  if (status != STATUS_OK) {
+  // Include the optional progress callback binder so the daemon can send
+  // incremental updates.
+  binder_status_t cbStatus =
+      AParcel_writeStrongBinder(parcel, progressReceiver.binder());
+  if (cbStatus != STATUS_OK) {
+    if (parcel) {
+      AParcel_delete(parcel);
+    }
     if (errorMsg)
-      *errorMsg = "Failed to attach progress callback";
-    AParcel_delete(parcel);
+      *errorMsg = "Failed to attach progress callback binder";
     return false;
   }
 
   AParcel *reply = nullptr;
-  status = AIBinder_transact(service.get(), apm::binder::TX_SEND_REQUEST,
-                             parcel, &reply, 0);
-  AParcel_delete(parcel);
+  binder_status_t status =
+      AIBinder_transact(service.get(), // service binder
+                        apm::binder::TX_SEND_REQUEST, &parcel, &reply,
+                        static_cast<binder_flags_t>(0));
   if (status != STATUS_OK || !reply) {
     if (errorMsg)
-      *errorMsg = "Binder transact failed with status " +
-                  std::to_string(status);
+      *errorMsg =
+          "Binder transact failed with status " + std::to_string(status);
     return false;
   }
 

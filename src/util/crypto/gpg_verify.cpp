@@ -51,6 +51,7 @@
 // Compatibility shim: some systems (OpenSSL builds) do not provide BoringSSL's
 // <openssl/base.h> and therefore do not define bssl::UniquePtr; implement a
 // minimal replacement here so the code can compile against OpenSSL as well.
+#ifndef OPENSSL_HEADER_BASE_H
 namespace bssl {
 
 template <typename T> struct Deleter;
@@ -110,8 +111,8 @@ public:
 private:
   T *ptr_;
 };
-
 } // namespace bssl
+#endif // OPENSSL_HEADER_BASE_H
 
 namespace apm::crypto {
 
@@ -684,14 +685,16 @@ bool buildKeyFromBlob(const std::vector<uint8_t> &blob, LoadedKey &keyOut,
     return false;
   }
 
-  if (RSA_set0_key(rsa.get(), N.get(), E.get(), nullptr) != 1) {
+  BIGNUM *nRaw = N.release();
+  BIGNUM *eRaw = E.release();
+
+  if (RSA_set0_key(rsa.get(), nRaw, eRaw, nullptr) != 1) {
+    BN_free(nRaw);
+    BN_free(eRaw);
     if (errorMsg)
       *errorMsg = "Failed to import RSA key: " + formatOpenSslError();
     return false;
   }
-
-  (void)N.release();
-  (void)E.release();
 
   const BIGNUM *mod = nullptr;
   const BIGNUM *exp = nullptr;

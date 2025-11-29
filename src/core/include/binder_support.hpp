@@ -29,10 +29,7 @@
 
 #include <string>
 
-#if defined(__ANDROID__)
-#include <android/binder_auto_utils.h>
-#include <android/binder_status.h>
-#endif
+struct AIBinder;
 
 namespace apm::binder {
 
@@ -45,13 +42,13 @@ bool isBinderRuntimeAvailable(std::string *errorMsg = nullptr);
 // Register the given Binder service instance with the platform service
 // manager. Returns false if the required symbols are missing or registration
 // fails.
-bool addService(const ndk::SpAIBinder &binder, const std::string &instance,
+bool addService(AIBinder *binder, const std::string &instance,
                 std::string *errorMsg = nullptr);
 
 // Fetch a service by name. When |wait| is true this will block until the
 // service becomes available. Returns an empty SpAIBinder on failure.
-ndk::SpAIBinder getService(const std::string &instance, bool wait,
-                           std::string *errorMsg = nullptr);
+AIBinder *getService(const std::string &instance, bool wait,
+                     std::string *errorMsg = nullptr);
 
 // Configure and start the Binder thread pool. |callerJoins| indicates whether
 // the caller will later invoke joinThreadPool.
@@ -63,22 +60,34 @@ void joinThreadPool();
 
 #else
 
-inline bool isBinderRuntimeAvailable(std::string * /*errorMsg*/) {
+inline bool isBinderRuntimeAvailable(std::string *errorMsg = nullptr) {
+  if (errorMsg) {
+    *errorMsg = "NDK Binder is unavailable on this platform";
+  }
   return false;
 }
 
-inline bool addService(const void * /*binder*/, const std::string & /*instance*/,
-                       std::string * /*errorMsg*/) {
+inline bool addService(AIBinder * /*binder*/, const std::string & /*instance*/,
+                       std::string *errorMsg = nullptr) {
+  if (errorMsg) {
+    *errorMsg = "NDK Binder runtime not available";
+  }
   return false;
 }
 
-inline void *getService(const std::string & /*instance*/, bool /*wait*/,
-                        std::string * /*errorMsg*/) {
+inline AIBinder *getService(const std::string & /*instance*/, bool /*wait*/,
+                            std::string *errorMsg = nullptr) {
+  if (errorMsg) {
+    *errorMsg = "NDK Binder runtime not available";
+  }
   return nullptr;
 }
 
 inline bool configureThreadPool(int /*maxThreads*/, bool /*callerJoins*/,
-                                std::string * /*errorMsg*/) {
+                                std::string *errorMsg = nullptr) {
+  if (errorMsg) {
+    *errorMsg = "NDK Binder runtime not available";
+  }
   return false;
 }
 

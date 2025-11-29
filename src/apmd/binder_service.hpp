@@ -28,13 +28,11 @@
 #pragma once
 
 #include "ams/module_manager.hpp"
+#include "binder_support.hpp"
+#include "request_dispatcher.hpp"
 #include "security_manager.hpp"
 
 #include <string>
-
-#if defined(__ANDROID__)
-#include <android/binder_auto_utils.h>
-#endif
 
 namespace apm::ipc {
 
@@ -43,6 +41,7 @@ public:
   BinderService(const std::string &instanceName,
                 apm::ams::ModuleManager &moduleManager,
                 apm::daemon::SecurityManager &securityManager);
+  ~BinderService();
 
   // Register the service with the platform Service Manager. Returns false on
   // failure (Binder not available, registration failed, etc.).
@@ -54,11 +53,15 @@ public:
   // Whether start() succeeded.
   bool isStarted() const;
 
+  // Internal helper used by the Binder service state to run requests.
+  void dispatchRequest(apm::ipc::Request &req, apm::ipc::Response &resp,
+                       const apm::ipc::ProgressCallback &progressCb);
+
 private:
 #if defined(__ANDROID__)
   std::string m_instanceName;
   apm::ipc::RequestDispatcher m_dispatcher;
-  ndk::SpAIBinder m_binder;
+  AIBinder *m_binder;
   bool m_started;
 #endif
 };

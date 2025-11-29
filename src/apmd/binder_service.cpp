@@ -27,6 +27,12 @@
 
 #include "binder_service.hpp"
 
+#include "binder_defs.hpp"
+#include "binder_support.hpp"
+#include "logger.hpp"
+#include "protocol.hpp"
+#include "request_dispatcher.hpp"
+
 #if defined(__ANDROID__)
 
 #include <android/binder_ibinder.h>
@@ -41,6 +47,45 @@ namespace {
 
 AIBinder_Class *gServiceClass = nullptr;
 
+struct ScopedStrongBinder {
+  explicit ScopedStrongBinder(AIBinder *b = nullptr) : binder(b) {}
+  ~ScopedStrongBinder() {
+    if (binder) {
+      if (__builtin_available(android 34, *)) {
+        AIBinder_decStrong(binder);
+      }
+    }
+  }
+  ScopedStrongBinder(const ScopedStrongBinder &) = delete;
+  ScopedStrongBinder &operator=(const ScopedStrongBinder &) = delete;
+  ScopedStrongBinder(ScopedStrongBinder &&other) noexcept
+      : binder(other.binder) {
+    other.binder = nullptr;
+  }
+  ScopedStrongBinder &operator=(ScopedStrongBinder &&other) noexcept {
+    if (this != &other) {
+      if (binder) {
+        if (__builtin_available(android 34, *)) {
+          AIBinder_decStrong(binder);
+        }
+      }
+      binder = other.binder;
+      other.binder = nullptr;
+    }
+    return *this;
+  }
+
+  AIBinder *get() const { return binder; }
+  AIBinder *release() {
+    AIBinder *tmp = binder;
+    binder = nullptr;
+    return tmp;
+  }
+
+private:
+  AIBinder *binder;
+};
+
 bool stringAllocator(void *stringData, int32_t length, char **buffer) {
   auto *out = static_cast<std::string *>(stringData);
   if (length < 0) {
@@ -54,51 +99,63 @@ bool stringAllocator(void *stringData, int32_t length, char **buffer) {
 }
 
 binder_status_t readParcelString(const AParcel *parcel, std::string &out) {
-  binder_status_t status = AParcel_readString(parcel, &out, stringAllocator);
-  if (status != STATUS_OK) {
-    return status;
+  if (__builtin_available(android 34, *)) {
+    binder_status_t status = AParcel_readString(parcel, &out, stringAllocator);
+    if (status != STATUS_OK) {
+      return status;
+    }
+    if (!out.empty() && out.back() == '\0') {
+      out.pop_back();
+    }
+    return STATUS_OK;
   }
-  if (!out.empty() && out.back() == '\0') {
-    out.pop_back();
-  }
-  return STATUS_OK;
+  return STATUS_FAILED_TRANSACTION;
 }
 
 binder_status_t writeParcelString(AParcel *parcel, const std::string &value) {
-  if (value.size() >
-      static_cast<std::size_t>(std::numeric_limits<int32_t>::max())) {
-    return STATUS_BAD_VALUE;
+  if (__builtin_available(android 34, *)) {
+    if (value.size() >
+        static_cast<std::size_t>(std::numeric_limits<int32_t>::max())) {
+      return STATUS_BAD_VALUE;
+    }
+    return AParcel_writeString(parcel, value.c_str(),
+                               static_cast<int32_t>(value.size()));
   }
-  return AParcel_writeString(parcel, value.c_str(),
-                             static_cast<int32_t>(value.size()));
+  return STATUS_FAILED_TRANSACTION;
 }
 
 // Send a serialized response to a remote binder (progress callback).
-void sendProgressToClient(const ndk::SpAIBinder &callback,
+void sendProgressToClient(AIBinder *callback,
                           const apm::ipc::Response &progress) {
-  if (!callback.get())
-    return;
+  if (__builtin_available(android 34, *)) {
+    if (!callback)
+      return;
 
-  AParcel *parcel = nullptr;
-  if (AIBinder_prepareTransaction(callback.get(), &parcel) != STATUS_OK) {
-    apm::logger::warn("BinderService: failed to prepare progress parcel");
-    return;
-  }
+    AParcel *parcel = nullptr;
+    if (AIBinder_prepareTransaction(callback, &parcel) != STATUS_OK) {
+      apm::logger::warn("BinderService: failed to prepare progress parcel");
+      return;
+    }
 
-  std::string payload = serializeResponse(progress);
-  if (writeParcelString(parcel, payload) != STATUS_OK) {
-    apm::logger::warn("BinderService: failed to encode progress frame");
-    AParcel_delete(parcel);
-    return;
-  }
+    std::string payload = serializeResponse(progress);
+    if (writeParcelString(parcel, payload) != STATUS_OK) {
+      apm::logger::warn("BinderService: failed to encode progress frame");
+      AParcel_delete(parcel);
+      return;
+    }
 
-  binder_status_t txStatus =
-      AIBinder_transact(callback.get(), apm::binder::TX_PROGRESS_EVENT, parcel,
-                        nullptr, FLAG_ONEWAY);
-  AParcel_delete(parcel);
-  if (txStatus != STATUS_OK) {
-    apm::logger::warn("BinderService: progress transact failed with status " +
-                      std::to_string(txStatus));
+    AParcel *reply = nullptr;
+    binder_status_t txStatus = AIBinder_transact(
+        callback, apm::binder::TX_PROGRESS_EVENT, &parcel, &reply,
+        FLAG_ONEWAY);
+    if (reply) {
+      AParcel_delete(reply);
+    }
+    if (txStatus != STATUS_OK) {
+      apm::logger::warn(
+          "BinderService: progress transact failed with status " +
+          std::to_string(txStatus));
+    }
   }
 }
 
@@ -108,43 +165,46 @@ public:
 
   binder_status_t handleTransact(transaction_code_t code, const AParcel *in,
                                  AParcel *out) {
-    if (code != apm::binder::TX_SEND_REQUEST) {
-      return STATUS_UNKNOWN_TRANSACTION;
-    }
+    if (__builtin_available(android 34, *)) {
+      if (code != apm::binder::TX_SEND_REQUEST) {
+        return STATUS_UNKNOWN_TRANSACTION;
+      }
 
-    std::string rawRequest;
-    binder_status_t status = readParcelString(in, rawRequest);
-    if (status != STATUS_OK) {
-      return status;
-    }
+      std::string rawRequest;
+      binder_status_t status = readParcelString(in, rawRequest);
+      if (status != STATUS_OK) {
+        return status;
+      }
 
-    AIBinder *cbRaw = nullptr;
-    status = AParcel_readStrongBinder(in, &cbRaw);
-    if (status != STATUS_OK) {
-      return status;
-    }
-    ndk::SpAIBinder callback(cbRaw);
+      AIBinder *cbRaw = nullptr;
+      status = AParcel_readStrongBinder(in, &cbRaw);
+      if (status != STATUS_OK) {
+        return status;
+      }
+      ScopedStrongBinder callback(cbRaw);
 
-    apm::ipc::Request req;
-    apm::ipc::Response resp;
-    std::string parseErr;
-    if (!parseRequest(rawRequest, req, &parseErr)) {
-      resp.success = false;
-      resp.message =
-          parseErr.empty() ? "Bad request" : ("Bad request: " + parseErr);
-      resp.status = apm::ipc::ResponseStatus::Error;
+      apm::ipc::Request req;
+      apm::ipc::Response resp;
+      std::string parseErr;
+      if (!parseRequest(rawRequest, req, &parseErr)) {
+        resp.success = false;
+        resp.message =
+            parseErr.empty() ? "Bad request" : ("Bad request: " + parseErr);
+        resp.status = apm::ipc::ResponseStatus::Error;
+        std::string payload = serializeResponse(resp);
+        return writeParcelString(out, payload);
+      }
+
+      apm::logger::info("BinderService: received request");
+      auto progressCb = [&](const apm::ipc::Response &progress) {
+        sendProgressToClient(callback.get(), progress);
+      };
+
+      m_owner.dispatchRequest(req, resp, progressCb);
       std::string payload = serializeResponse(resp);
       return writeParcelString(out, payload);
     }
-
-    apm::logger::info("BinderService: received request");
-    auto progressCb = [&](const apm::ipc::Response &progress) {
-      sendProgressToClient(callback, progress);
-    };
-
-    m_owner.m_dispatcher.dispatch(req, resp, progressCb);
-    std::string payload = serializeResponse(resp);
-    return writeParcelString(out, payload);
+    return STATUS_FAILED_TRANSACTION;
   }
 
 private:
@@ -162,10 +222,14 @@ void onDestroy(void *userData) {
 
 binder_status_t onTransact(AIBinder *binder, transaction_code_t code,
                            const AParcel *in, AParcel *out) {
-  auto *state = static_cast<BinderServiceState *>(AIBinder_getUserData(binder));
-  if (!state)
-    return STATUS_FAILED_TRANSACTION;
-  return state->handleTransact(code, in, out);
+  if (__builtin_available(android 34, *)) {
+    auto *state =
+        static_cast<BinderServiceState *>(AIBinder_getUserData(binder));
+    if (!state)
+      return STATUS_FAILED_TRANSACTION;
+    return state->handleTransact(code, in, out);
+  }
+  return STATUS_FAILED_TRANSACTION;
 }
 
 } // namespace
@@ -177,44 +241,73 @@ BinderService::BinderService(const std::string &instanceName,
       m_dispatcher(moduleManager, securityManager), m_binder(nullptr),
       m_started(false) {}
 
+BinderService::~BinderService() {
+  if (__builtin_available(android 34, *)) {
+    if (m_binder) {
+      AIBinder_decStrong(m_binder);
+    }
+  }
+}
+
+void BinderService::dispatchRequest(
+    apm::ipc::Request &req, apm::ipc::Response &resp,
+    const apm::ipc::ProgressCallback &progressCb) {
+  m_dispatcher.dispatch(req, resp, progressCb);
+}
+
 bool BinderService::start(std::string *errorMsg) {
-  if (!apm::binder::isBinderRuntimeAvailable(errorMsg)) {
-    apm::logger::error("BinderService: Binder runtime unavailable");
-    return false;
+  if (__builtin_available(android 34, *)) {
+    if (!apm::binder::isBinderRuntimeAvailable(errorMsg)) {
+      apm::logger::error("BinderService: Binder runtime unavailable");
+      return false;
+    }
+
+    if (!gServiceClass) {
+      gServiceClass = AIBinder_Class_define(apm::binder::INTERFACE, onCreate,
+                                            onDestroy, onTransact);
+    }
+
+    if (!gServiceClass) {
+      if (errorMsg)
+        *errorMsg = "Failed to create Binder class";
+      return false;
+    }
+
+    m_binder = AIBinder_new(gServiceClass, this);
+    if (!m_binder) {
+      if (errorMsg)
+        *errorMsg = "Failed to allocate Binder object";
+      return false;
+    }
+
+    std::string regErr;
+    if (!apm::binder::addService(m_binder, m_instanceName, &regErr)) {
+      if (errorMsg)
+        *errorMsg = regErr;
+      if (__builtin_available(android 34, *)) {
+        AIBinder_decStrong(m_binder);
+      }
+      m_binder = nullptr;
+      return false;
+    }
+
+    if (!apm::binder::configureThreadPool(1, true, errorMsg)) {
+      if (__builtin_available(android 34, *)) {
+        AIBinder_decStrong(m_binder);
+      }
+      m_binder = nullptr;
+      return false;
+    }
+
+    m_started = true;
+    apm::logger::info("BinderService: registered as " + m_instanceName);
+    return true;
   }
 
-  if (!gServiceClass) {
-    gServiceClass = AIBinder_Class_define(apm::binder::INTERFACE, onCreate,
-                                          onDestroy, onTransact);
+  if (errorMsg) {
+    *errorMsg = "NDK Binder requires Android API level 34 or newer";
   }
-
-  if (!gServiceClass) {
-    if (errorMsg)
-      *errorMsg = "Failed to create Binder class";
-    return false;
-  }
-
-  m_binder = ndk::SpAIBinder(AIBinder_new(gServiceClass, this));
-  if (!m_binder.get()) {
-    if (errorMsg)
-      *errorMsg = "Failed to allocate Binder object";
-    return false;
-  }
-
-  std::string regErr;
-  if (!apm::binder::addService(m_binder, m_instanceName, &regErr)) {
-    if (errorMsg)
-      *errorMsg = regErr;
-    return false;
-  }
-
-  if (!apm::binder::configureThreadPool(1, true, errorMsg)) {
-    return false;
-  }
-
-  m_started = true;
-  apm::logger::info("BinderService: registered as " + m_instanceName);
-  return true;
+  return false;
 }
 
 void BinderService::joinThreadPool() {
@@ -222,7 +315,11 @@ void BinderService::joinThreadPool() {
     apm::logger::warn("BinderService: joinThreadPool called before start()");
     return;
   }
-  apm::binder::joinThreadPool();
+  if (__builtin_available(android 34, *)) {
+    apm::binder::joinThreadPool();
+  } else {
+    apm::logger::warn("BinderService: joinThreadPool unavailable below API 34");
+  }
 }
 
 bool BinderService::isStarted() const { return m_started; }
@@ -238,7 +335,20 @@ BinderService::BinderService(
     apm::ams::ModuleManager & /*moduleManager*/,
     apm::daemon::SecurityManager & /*securityManager*/) {}
 
-bool BinderService::start(std::string * /*errorMsg*/) { return false; }
+BinderService::~BinderService() = default;
+
+bool BinderService::start(std::string *errorMsg) {
+#if defined(__ANDROID__)
+  if (errorMsg) {
+    *errorMsg = "NDK Binder support requires Android API level 34 or newer";
+  }
+#else
+  if (errorMsg) {
+    *errorMsg = "Binder transport is only available on Android builds";
+  }
+#endif
+  return false;
+}
 
 void BinderService::joinThreadPool() {}
 

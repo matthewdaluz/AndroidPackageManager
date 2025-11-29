@@ -55,12 +55,13 @@ Needed tools:
 - C++17 compiler + make/ninja
 - git + patch (FetchContent + bundled patches)
 - `zlib` headers; `libcurl` headers if you want to link against the system copy
+- OpenSSL/`libssl` headers (TLS for host builds; the Android build can also use NDK BoringSSL)
 
 Distro-friendly install hints:
-- **Ubuntu/Debian:** `sudo apt update && sudo apt install build-essential cmake pkg-config git patch zlib1g-dev libcurl4-openssl-dev`
-- **Fedora/RHEL:** `sudo dnf groupinstall "Development Tools" && sudo dnf install cmake git patch zlib-devel libcurl-devel`
-- **Arch/Manjaro:** `sudo pacman -S --needed base-devel cmake git patch zlib curl`
-- **openSUSE:** `sudo zypper install -t pattern devel_C_C++ && sudo zypper install cmake git patch zlib-devel libcurl-devel`
+- **Ubuntu/Debian:** `sudo apt update && sudo apt install build-essential cmake pkg-config git patch zlib1g-dev libcurl4-openssl-dev libssl-dev`
+- **Fedora/RHEL:** `sudo dnf groupinstall "Development Tools" && sudo dnf install cmake git patch zlib-devel libcurl-devel openssl-devel`
+- **Arch/Manjaro:** `sudo pacman -S --needed base-devel cmake git patch zlib curl openssl`
+- **openSUSE:** `sudo zypper install -t pattern devel_C_C++ && sudo zypper install cmake git patch zlib-devel libcurl-devel libopenssl-devel`
 
 If you skip the curl/zlib dev packages, CMake will transparently build the bundled versions.
 
