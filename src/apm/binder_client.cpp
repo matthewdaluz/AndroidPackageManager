@@ -65,7 +65,6 @@ static const char *statusToString(binder_status_t status) {
 #endif
 
 namespace apm::ipc {
-namespace {
 #if defined(__ANDROID__)
 
 inline bool isApiAtLeast34() {
@@ -468,9 +467,19 @@ bool sendRequestBinder(const Request &req, Response &resp,
   return true;
 }
 
-#endif // __ANDROID__
+#else // !__ANDROID__
 
-} // namespace
+bool sendRequestBinder(const Request & /*req*/, Response & /*resp*/,
+                       const std::string & /*serviceName*/,
+                       std::string *errorMsg,
+                       ProgressHandler /*progressHandler*/) {
+  if (errorMsg) {
+    *errorMsg = "Binder transport is unavailable on this platform";
+  }
+  return false;
+}
+
+#endif // __ANDROID__
 
 // Removed generic sendRequest wrapper; callers should use
 // transport::sendRequestAuto() which delegates to this when appropriate.

@@ -27,8 +27,72 @@
 #pragma once
 
 #include "binder_defs.hpp"
+#include <string>
 
 namespace apm::config {
+
+// ============================================================================
+// Emulator Mode Control
+// ============================================================================
+
+// Enable or disable emulator mode at runtime (must be called before accessing
+// paths)
+void setEmulatorMode(bool enabled);
+
+// Check if emulator mode is currently active
+bool isEmulatorMode();
+
+// Get the emulator root directory ($HOME/APMEmulator/data/apm)
+std::string getEmulatorRoot();
+
+// ============================================================================
+// Runtime Path Getters (emulator-aware)
+// ============================================================================
+
+std::string getApmRoot();
+std::string getInstalledDir();
+std::string getCommandsDir();
+std::string getDependenciesDir();
+std::string getTermuxInstalledDir();
+std::string getCommandsPathHelper();
+std::string getCommandsExportScript();
+std::string getGlobalProfileFile();
+std::string getGlobalProfileSourcedMark();
+std::string getCacheDir();
+std::string getListsDir();
+std::string getPkgsDir();
+std::string getLogsDir();
+std::string getManualPackagesDir();
+std::string getApmBinDir();
+std::string getTermuxRoot();
+std::string getTermuxPrefix();
+std::string getTermuxEnvFile();
+std::string getTermuxHomeDir();
+std::string getTermuxTmpDir();
+std::string getModulesDir();
+std::string getModuleLogsDir();
+std::string getModuleRuntimeDir();
+std::string getModuleRuntimeUpperDir();
+std::string getModuleRuntimeWorkDir();
+std::string getModuleRuntimeBaseDir();
+std::string getStatusFile();
+std::string getSourcesDir();
+std::string getSourcesMain();
+std::string getSourcesListD();
+std::string getSourcesList();
+std::string getIpcSocketPath();
+std::string getTrustedKeysDir();
+std::string getSecurityDir();
+std::string getMasterKeyFile();
+std::string getPassPinFile();
+std::string getSessionFile();
+std::string getSecurityQaFile();
+std::string getResetLockoutFile();
+std::string getDefaultArch();
+
+// ============================================================================
+// Backward Compatibility Constants (use getter functions in new code)
+// ============================================================================
 
 // Base root for all APM data on Android data partition.
 inline constexpr const char *APM_ROOT = "/data/apm";

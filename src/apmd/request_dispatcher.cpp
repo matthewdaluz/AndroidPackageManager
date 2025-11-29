@@ -287,8 +287,8 @@ void RequestDispatcher::dispatch(const apm::ipc::Request &req,
     apm::repo::RepoIndexList indices;
     std::string err;
     if (!apm::repo::buildRepoIndices(
-            apm::config::SOURCES_LIST, apm::config::LISTS_DIR,
-            apm::config::DEFAULT_ARCH, indices, &err)) {
+            apm::config::getSourcesList(), apm::config::getListsDir(),
+            apm::config::getDefaultArch(), indices, &err)) {
       resp.success = false;
       resp.message =
           err.empty() ? "Failed to load repository metadata (run 'apm update')"
@@ -332,8 +332,8 @@ void RequestDispatcher::dispatch(const apm::ipc::Request &req,
     apm::repo::RepoIndexList indices;
     std::string err;
     if (!apm::repo::buildRepoIndices(
-            apm::config::SOURCES_LIST, apm::config::LISTS_DIR,
-            apm::config::DEFAULT_ARCH, indices, &err)) {
+            apm::config::getSourcesList(), apm::config::getListsDir(),
+            apm::config::getDefaultArch(), indices, &err)) {
       resp.success = false;
       resp.message =
           err.empty() ? "Failed to load repository metadata (run 'apm update')"
@@ -495,8 +495,8 @@ void RequestDispatcher::dispatch(const apm::ipc::Request &req,
     };
 
     bool ok = apm::repo::updateFromSourcesList(
-        apm::config::SOURCES_LIST, apm::config::LISTS_DIR,
-        apm::config::DEFAULT_ARCH, &summary, &err, progressCbWrapper);
+        apm::config::getSourcesList(), apm::config::getListsDir(),
+        apm::config::getDefaultArch(), &summary, &err, progressCbWrapper);
 
     if (ok) {
       resp.success = true;

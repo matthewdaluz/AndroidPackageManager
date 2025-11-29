@@ -30,17 +30,21 @@
 #include "binder_service.hpp"
 #include "config.hpp"
 #include "export_path.hpp"
+#include "fs.hpp"
 #include "ipc_server.hpp"
 #include "logger.hpp"
+#include "process_lock.hpp"
 #include "security_manager.hpp"
 #include "transport.hpp"
 
 #include <atomic>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <sys/stat.h>
 #include <thread>
 #include <unistd.h>
+#include <vector>
 
 namespace {
 
@@ -83,16 +87,62 @@ static void startPathMaintenance(std::atomic<bool> &runFlag,
 
 // Configure logging, ensure the PATH/profile helper is loaded, and launch the
 // Binder service loop.
-int runDaemon(const std::string &serviceName, bool debugMode = false) {
-  waitForDataReady();
+int runDaemon(const std::string &serviceName, bool debugMode,
+              bool emulatorMode) {
+  // Set emulator mode early so path getters work correctly
+  apm::config::setEmulatorMode(emulatorMode);
 
-  apm::logger::setLogFile("/data/apm/logs/apmd.log");
+  // Process lock for emulator mode
+  std::unique_ptr<apm::lock::ProcessLock> processLock;
+
+  if (!emulatorMode) {
+    waitForDataReady();
+  } else {
+    // Create emulator directory structure
+    const std::vector<std::string> emulatorDirs = {
+        apm::config::getApmRoot(),      apm::config::getInstalledDir(),
+        apm::config::getCommandsDir(),  apm::config::getDependenciesDir(),
+        apm::config::getCacheDir(),     apm::config::getPkgsDir(),
+        apm::config::getLogsDir(),      apm::config::getModulesDir(),
+        apm::config::getListsDir(),     apm::config::getManualPackagesDir(),
+        apm::config::getApmBinDir(),    apm::config::getSourcesDir(),
+        apm::config::getSourcesListD(), apm::config::getTrustedKeysDir(),
+        apm::config::getSecurityDir()};
+
+    for (const auto &dir : emulatorDirs) {
+      if (!apm::fs::createDirs(dir)) {
+        std::cerr << "Error: Failed to create emulator directory: " << dir
+                  << std::endl;
+        return 1;
+      }
+    }
+
+    // Acquire process lock
+    std::string lockPath = apm::config::getApmRoot() + "/apmd.lock";
+    processLock = std::make_unique<apm::lock::ProcessLock>(lockPath);
+    std::string lockErr;
+    if (!processLock->acquire(&lockErr)) {
+      std::cerr << "Error: " << lockErr << std::endl;
+      return 1;
+    }
+
+    apm::logger::info("apmd: Created emulator directory structure at " +
+                      apm::config::getApmRoot());
+  }
+
+  std::string logFile = emulatorMode
+                            ? apm::config::getLogsDir() + "/apmd-emulator.log"
+                            : "/data/apm/logs/apmd.log";
+  apm::logger::setLogFile(logFile);
   apm::logger::setMinLogLevel(debugMode ? apm::logger::Level::Debug
                                         : apm::logger::Level::Info);
 
   apm::logger::info("apmd starting, service: " + serviceName);
   if (debugMode) {
     apm::logger::info("apmd: DEBUG mode enabled");
+  }
+  if (emulatorMode) {
+    apm::logger::info("apmd: EMULATOR mode enabled");
   }
 
   apm::daemon::path::ensureProfileLoaded();
@@ -110,7 +160,9 @@ int runDaemon(const std::string &serviceName, bool debugMode = false) {
   }
 
   // Decide transport mode and start appropriate server.
-  auto mode = apm::ipc::detectTransportMode();
+  // Emulator mode always uses IPC-only (no Binder)
+  auto mode = emulatorMode ? apm::ipc::TransportMode::IPC
+                           : apm::ipc::detectTransportMode();
   apm::logger::info(
       std::string("apmd: transport mode = ") +
       (mode == apm::ipc::TransportMode::Binder ? "binder" : "ipc"));
@@ -140,9 +192,9 @@ int runDaemon(const std::string &serviceName, bool debugMode = false) {
     return 1;
   } else {
     // IPC mode
-    apm::logger::info("apmd: starting IPC server on " +
-                      std::string(apm::config::IPC_SOCKET_PATH));
-    apm::ipc::IpcServer server(apm::config::IPC_SOCKET_PATH, moduleManager);
+    std::string socketPath = apm::config::getIpcSocketPath();
+    apm::logger::info("apmd: starting IPC server on " + socketPath);
+    apm::ipc::IpcServer server(socketPath, moduleManager);
     if (!server.start()) {
       apm::logger::error("apmd: failed to start IPC server");
       pathLoopRun.store(false);
@@ -167,21 +219,52 @@ int runDaemon(const std::string &serviceName, bool debugMode = false) {
 int main(int argc, char **argv) {
   std::string serviceName = apm::daemon::DEFAULT_SERVICE_NAME;
   bool debugMode = false;
+  bool emulatorMode = false;
 
-  // Simple arg parser: apmd [--service name] [--debug]
+  // Simple arg parser: apmd [--service name] [--debug] [--emulator]
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
     if ((arg == "--service" || arg == "--svc") && i + 1 < argc) {
       serviceName = argv[++i];
     } else if (arg == "--debug" || arg == "-d") {
       debugMode = true;
+    } else if (arg == "--emulator") {
+#ifndef APM_EMULATOR_MODE
+      std::cerr
+          << "Error: This binary was not compiled with emulator support.\n"
+          << "Please rebuild with -DAPM_EMULATOR_MODE=ON.\n";
+      return 1;
+#else
+      emulatorMode = true;
+#endif
     } else if (arg == "--help" || arg == "-h") {
       std::cout << "apmd - APM daemon\n"
-                << "Usage: apmd [--service <name>] [--debug]\n"
+                << "Usage: apmd [--service <name>] [--debug]";
+#ifdef APM_EMULATOR_MODE
+      std::cout << " [--emulator]";
+#endif
+      std::cout << "\n"
                 << "  --debug, -d    Enable verbose debug logging\n";
+#ifdef APM_EMULATOR_MODE
+      std::cout << "  --emulator     Run in x86_64 emulator mode\n";
+#endif
       return 0;
     }
   }
 
-  return apm::daemon::runDaemon(serviceName, debugMode);
+#ifdef APM_EMULATOR_MODE
+  if (!emulatorMode) {
+    std::cerr << "Error: This binary was compiled with emulator support.\n"
+              << "You must run it with the --emulator flag.\n";
+    return 1;
+  }
+#else
+  if (emulatorMode) {
+    std::cerr << "Error: Emulator mode requested but binary not compiled with "
+                 "emulator support.\n";
+    return 1;
+  }
+#endif
+
+  return apm::daemon::runDaemon(serviceName, debugMode, emulatorMode);
 }

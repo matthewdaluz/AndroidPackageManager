@@ -71,7 +71,7 @@ std::string formatOpenSslError() {
 SecurityManager::SecurityManager() = default;
 
 bool SecurityManager::isPasspinConfigured() const {
-  return apm::fs::isFile(apm::config::PASS_PIN_FILE);
+  return apm::fs::isFile(apm::config::getPassPinFile());
 }
 
 std::string SecurityManager::randomHex(std::size_t bytes) {
@@ -184,13 +184,14 @@ bool SecurityManager::persistPasspin(const std::string &secret,
                 ciphertext.size());
   stored.append(reinterpret_cast<const char *>(tag.data()), tag.size());
 
-  if (!apm::fs::writeFile(apm::config::PASS_PIN_FILE, stored, true)) {
+  const std::string passPinFile = apm::config::getPassPinFile();
+  if (!apm::fs::writeFile(passPinFile, stored, true)) {
     if (errorMsg)
       *errorMsg = "Failed to write encrypted password/PIN";
     return false;
   }
 
-  ::chmod(apm::config::PASS_PIN_FILE, 0600);
+  ::chmod(passPinFile.c_str(), 0600);
   return true;
 }
 
@@ -256,13 +257,14 @@ bool SecurityManager::persistSecurityQuestions(
                 ciphertext.size());
   stored.append(reinterpret_cast<const char *>(tag.data()), tag.size());
 
-  if (!apm::fs::writeFile(apm::config::SECURITY_QA_FILE, stored, true)) {
+  const std::string qaFile = apm::config::getSecurityQaFile();
+  if (!apm::fs::writeFile(qaFile, stored, true)) {
     if (errorMsg)
-      *errorMsg = "Failed to write security questions to disk";
+      *errorMsg = "Failed to write security questions file";
     return false;
   }
 
-  ::chmod(apm::config::SECURITY_QA_FILE, 0600);
+  ::chmod(qaFile.c_str(), 0600);
   return true;
 }
 
@@ -271,7 +273,7 @@ bool SecurityManager::loadStoredQuestions(std::vector<StoredQuestion> &out,
   out.clear();
 
   std::string raw;
-  if (!apm::fs::readFile(apm::config::SECURITY_QA_FILE, raw)) {
+  if (!apm::fs::readFile(apm::config::getSecurityQaFile(), raw)) {
     if (errorMsg)
       *errorMsg = "Security questions are not configured";
     return false;
@@ -375,20 +377,20 @@ bool SecurityManager::isLockedOut(std::uint64_t nowSeconds,
   unlockAt = 0;
 
   std::string raw;
-  if (!apm::fs::readFile(apm::config::RESET_LOCKOUT_FILE, raw))
+  if (!apm::fs::readFile(apm::config::getResetLockoutFile(), raw))
     return false;
 
   errno = 0;
   char *end = nullptr;
   unsigned long long parsed = std::strtoull(raw.c_str(), &end, 10);
   if (errno != 0 || end == raw.c_str()) {
-    apm::fs::removeFile(apm::config::RESET_LOCKOUT_FILE);
+    apm::fs::removeFile(apm::config::getResetLockoutFile());
     return false;
   }
 
   unlockAt = static_cast<std::uint64_t>(parsed);
   if (nowSeconds >= unlockAt) {
-    apm::fs::removeFile(apm::config::RESET_LOCKOUT_FILE);
+    apm::fs::removeFile(apm::config::getResetLockoutFile());
     return false;
   }
 
@@ -400,14 +402,14 @@ bool SecurityManager::writeLockoutUntil(std::uint64_t unlockAt,
   if (!apm::security::ensureSecurityDir(errorMsg))
     return false;
 
-  if (!apm::fs::writeFile(apm::config::RESET_LOCKOUT_FILE,
-                          std::to_string(unlockAt), true)) {
+  const std::string lockoutFile = apm::config::getResetLockoutFile();
+  if (!apm::fs::writeFile(lockoutFile, std::to_string(unlockAt), true)) {
     if (errorMsg)
-      *errorMsg = "Failed to record reset lockout timer";
+      *errorMsg = "Failed to write lockout file";
     return false;
   }
 
-  ::chmod(apm::config::RESET_LOCKOUT_FILE, 0600);
+  ::chmod(lockoutFile.c_str(), 0600);
   return true;
 }
 
@@ -415,7 +417,7 @@ bool SecurityManager::decryptPasspin(std::vector<uint8_t> &saltOut,
                                      std::vector<uint8_t> &derivedOut,
                                      std::string *errorMsg) {
   std::string raw;
-  if (!apm::fs::readFile(apm::config::PASS_PIN_FILE, raw)) {
+  if (!apm::fs::readFile(apm::config::getPassPinFile(), raw)) {
     if (errorMsg)
       *errorMsg = "Password/PIN not configured";
     return false;
@@ -543,7 +545,7 @@ bool SecurityManager::validateSecurityAnswers(
     }
   }
 
-  apm::fs::removeFile(apm::config::RESET_LOCKOUT_FILE);
+  apm::fs::removeFile(apm::config::getResetLockoutFile());
   return true;
 }
 
@@ -623,7 +625,7 @@ bool SecurityManager::authenticate(
       return false;
 
     if (!persistPasspin(secret, false, errorMsg)) {
-      apm::fs::removeFile(apm::config::SECURITY_QA_FILE);
+      apm::fs::removeFile(apm::config::getSecurityQaFile());
       return false;
     }
   } else {

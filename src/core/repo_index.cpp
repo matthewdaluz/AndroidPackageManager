@@ -5,9 +5,9 @@
  * Copyright (C) 2025 RedHead Industries
  *
  * File: repo_index.cpp
- * Purpose: Implement sources.list parsing, repository index downloads, and Packages parsing.
- * Last Modified: November 22nd, 2025. - 10:30 PM Eastern Time.
- * Author: Matthew DaLuz - RedHead Founder
+ * Purpose: Implement sources.list parsing, repository index downloads, and
+ * Packages parsing. Last Modified: November 22nd, 2025. - 10:30 PM Eastern
+ * Time. Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -30,7 +30,9 @@
 #include "fs.hpp"
 #include "gpg_verify.hpp"
 #include "logger.hpp"
+#include "md5.hpp"
 #include "release_parser.hpp"
+#include "sha256.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -156,6 +158,14 @@ static inline void rtrim(std::string &s) {
 static inline void trim(std::string &s) {
   ltrim(s);
   rtrim(s);
+}
+
+static inline std::string toLower(const std::string &s) {
+  std::string out = s;
+  std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c) {
+    return static_cast<char>(std::tolower(c));
+  });
+  return out;
 }
 
 static std::vector<std::string> splitAndTrim(const std::string &input,
@@ -464,7 +474,7 @@ bool parsePackagesString(const std::string &content, PackageList &out,
 
 // Parse a Packages file on disk into a vector of PackageEntry structs.
 bool parsePackagesFile(const std::string &path, PackageList &out,
-                      std::string *errorMsg) {
+                       std::string *errorMsg) {
   std::string content;
   if (!apm::fs::readFile(path, content)) {
     if (errorMsg)
@@ -593,10 +603,9 @@ static bool parseSingleSourcesFile(const std::string &path,
         trim(val);
 
         std::string keyLower = key;
-        std::transform(keyLower.begin(), keyLower.end(), keyLower.begin(),
-                       [](unsigned char c) {
-                         return static_cast<char>(std::tolower(c));
-                       });
+        std::transform(
+            keyLower.begin(), keyLower.end(), keyLower.begin(),
+            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
         if (keyLower == "arch" || keyLower == "architectures") {
           // Take first architecture if multiple
@@ -618,10 +627,9 @@ static bool parseSingleSourcesFile(const std::string &path,
                      valLower == "1") {
             src.trustPolicy = RepoTrustPolicy::Skip;
           } else {
-            apm::logger::warn(
-                "loadSourcesList: unknown trusted value '" + val +
-                "' on line " + std::to_string(lineNo) + " in " + path +
-                " (defaulting to verification)");
+            apm::logger::warn("loadSourcesList: unknown trusted value '" + val +
+                              "' on line " + std::to_string(lineNo) + " in " +
+                              path + " (defaulting to verification)");
             src.trustPolicy = RepoTrustPolicy::Default;
           }
         }
@@ -651,8 +659,8 @@ static bool parseSingleSourcesFile(const std::string &path,
     }
 
     src.format = detectRepoFormat(src, trimmed);
-    src.isTermuxRepo = (src.format == RepoFormat::Termux) ||
-                       detectTermuxRepo(src, trimmed);
+    src.isTermuxRepo =
+        (src.format == RepoFormat::Termux) || detectTermuxRepo(src, trimmed);
     if (src.format == RepoFormat::Termux) {
       apm::logger::info("loadSourcesList: detected Termux repository: " +
                         src.uri);
@@ -1130,8 +1138,7 @@ static bool parseInReleaseFile(const std::string &path, InReleaseParts &out,
       continue;
     }
 
-    if (!line.empty() && line.size() >= 2 && line[0] == '-' &&
-        line[1] == ' ') {
+    if (!line.empty() && line.size() >= 2 && line[0] == '-' && line[1] == ' ') {
       line.erase(0, 2);
     }
 
@@ -1258,9 +1265,8 @@ bool updateFromSourcesList(const std::string &sourcesPath,
       auto relCb = makeDownloadCallback(RepoUpdateStage::DownloadRelease,
                                         "Release", nullptr);
       if (!apm::net::downloadFile(relUrl, relPath, &dlErr, relCb)) {
-        apm::logger::warn(
-            "updateFromSourcesList: failed to download Release " + relUrl +
-            ": " + dlErr);
+        apm::logger::warn("updateFromSourcesList: failed to download Release " +
+                          relUrl + ": " + dlErr);
         continue;
       }
       releaseReady = true;
@@ -1294,16 +1300,16 @@ bool updateFromSourcesList(const std::string &sourcesPath,
 
       std::string sigErr;
       if (!apm::crypto::verifyDetachedSignature(
-              relPath, relGpgPath, apm::config::TRUSTED_KEYS_DIR, &sigErr)) {
+              relPath, relGpgPath, apm::config::getTrustedKeysDir(), &sigErr)) {
         apm::logger::warn("updateFromSourcesList: Release signature "
                           "verification failed for " +
                           src.uri + " " + src.dist + ": " + sigErr);
         continue;
       }
     } else {
-      apm::logger::info(
-          "updateFromSourcesList: trusted=yes for " + src.uri + " " + src.dist +
-          " – skipping Release signature verification");
+      apm::logger::info("updateFromSourcesList: trusted=yes for " + src.uri +
+                        " " + src.dist +
+                        " – skipping Release signature verification");
     }
 
     // Parse Release for SHA256 entries
@@ -1349,13 +1355,11 @@ bool updateFromSourcesList(const std::string &sourcesPath,
       plan.gzDest = plan.fileBase + ".gz";
       plan.plainDest = plan.fileBase;
 
-      std::string gzDesc =
-          comp + " [" + archToUse + "] Packages.gz";
+      std::string gzDesc = comp + " [" + archToUse + "] Packages.gz";
       plan.gzProgressCb = makeDownloadCallback(
           RepoUpdateStage::DownloadPackages, gzDesc, &plan.component);
 
-      std::string plainDesc =
-          comp + " [" + archToUse + "] Packages";
+      std::string plainDesc = comp + " [" + archToUse + "] Packages";
       plan.plainProgressCb = makeDownloadCallback(
           RepoUpdateStage::DownloadPackages, plainDesc, &plan.component);
 
@@ -1383,17 +1387,61 @@ bool updateFromSourcesList(const std::string &sourcesPath,
       bool gzSuccess = (i < primaryResults.size() && primaryResults[i].success);
 
       if (gzSuccess) {
-        std::string plainPackages;
-        if (preparePackagesTextFile(plan.fileBase, plan.gzDest, ".gz",
-                                    plainPackages, &src, &plan.component,
-                                    progressCb)) {
-          apm::logger::info("Downloaded: " + plan.gzUrl + " → " + plan.gzDest);
-          plan.downloadedPath = plainPackages;
-          plan.succeeded = true;
-          continue;
+        // Verify checksum from Release for Packages.gz (prefer SHA256, fallback
+        // MD5).
+        const std::string relName =
+            plan.component + "/binary-" + archToUse + "/Packages.gz";
+        std::string expected;
+        bool verified = false;
+
+        if (findSha256ForPath(relInfo, relName, expected)) {
+          std::string actual;
+          std::string hashErr;
+          if (apm::crypto::sha256File(plan.gzDest, actual, &hashErr)) {
+            if (toLower(actual) == toLower(expected)) {
+              verified = true;
+            } else {
+              apm::logger::warn("SHA256 mismatch for " + relName);
+            }
+          } else {
+            apm::logger::warn("SHA256 compute failed for " + plan.gzDest +
+                              (hashErr.empty() ? "" : (": " + hashErr)));
+          }
         }
-        apm::logger::warn("Failed to unpack downloaded Packages file " +
-                          plan.gzDest);
+
+        if (!verified && findMd5ForPath(relInfo, relName, expected)) {
+          std::string actual;
+          std::string hashErr;
+          if (apm::crypto::md5File(plan.gzDest, actual, &hashErr)) {
+            if (toLower(actual) == toLower(expected)) {
+              verified = true;
+            } else {
+              apm::logger::warn("MD5Sum mismatch for " + relName);
+            }
+          } else {
+            apm::logger::warn("MD5 compute failed for " + plan.gzDest +
+                              (hashErr.empty() ? "" : (": " + hashErr)));
+          }
+        }
+
+        if (verified) {
+          std::string plainPackages;
+          if (preparePackagesTextFile(plan.fileBase, plan.gzDest, ".gz",
+                                      plainPackages, &src, &plan.component,
+                                      progressCb)) {
+            apm::logger::info("Downloaded: " + plan.gzUrl + " → " +
+                              plan.gzDest);
+            plan.downloadedPath = plainPackages;
+            plan.succeeded = true;
+            continue;
+          }
+          apm::logger::warn("Failed to unpack downloaded Packages file " +
+                            plan.gzDest);
+        } else {
+          apm::logger::warn(
+              "Skipping Packages.gz due to checksum verification failure: " +
+              plan.gzUrl);
+        }
       } else if (i < primaryResults.size()) {
         apm::logger::warn("Failed to download " + plan.gzUrl + ": " +
                           primaryResults[i].errorMsg);
@@ -1424,18 +1472,60 @@ bool updateFromSourcesList(const std::string &sourcesPath,
             (j < fallbackResults.size() && fallbackResults[j].success);
 
         if (plainSuccess) {
-          std::string plainPackages;
-          if (preparePackagesTextFile(plan.fileBase, plan.plainDest, "",
-                                      plainPackages, &src, &plan.component,
-                                      progressCb)) {
-            apm::logger::info("Downloaded: " + plan.plainUrl + " → " +
-                              plan.plainDest);
-            plan.downloadedPath = plainPackages;
-            plan.succeeded = true;
-            continue;
+          // Verify checksum from Release for plain Packages.
+          const std::string relName =
+              plan.component + "/binary-" + archToUse + "/Packages";
+          std::string expected;
+          bool verified = false;
+
+          if (findSha256ForPath(relInfo, relName, expected)) {
+            std::string actual;
+            std::string hashErr;
+            if (apm::crypto::sha256File(plan.plainDest, actual, &hashErr)) {
+              if (toLower(actual) == toLower(expected)) {
+                verified = true;
+              } else {
+                apm::logger::warn("SHA256 mismatch for " + relName);
+              }
+            } else {
+              apm::logger::warn("SHA256 compute failed for " + plan.plainDest +
+                                (hashErr.empty() ? "" : (": " + hashErr)));
+            }
           }
-          apm::logger::warn("Failed to unpack downloaded Packages file " +
-                            plan.plainDest);
+
+          if (!verified && findMd5ForPath(relInfo, relName, expected)) {
+            std::string actual;
+            std::string hashErr;
+            if (apm::crypto::md5File(plan.plainDest, actual, &hashErr)) {
+              if (toLower(actual) == toLower(expected)) {
+                verified = true;
+              } else {
+                apm::logger::warn("MD5Sum mismatch for " + relName);
+              }
+            } else {
+              apm::logger::warn("MD5 compute failed for " + plan.plainDest +
+                                (hashErr.empty() ? "" : (": " + hashErr)));
+            }
+          }
+
+          if (verified) {
+            std::string plainPackages;
+            if (preparePackagesTextFile(plan.fileBase, plan.plainDest, "",
+                                        plainPackages, &src, &plan.component,
+                                        progressCb)) {
+              apm::logger::info("Downloaded: " + plan.plainUrl + " → " +
+                                plan.plainDest);
+              plan.downloadedPath = plainPackages;
+              plan.succeeded = true;
+              continue;
+            }
+            apm::logger::warn("Failed to unpack downloaded Packages file " +
+                              plan.plainDest);
+          } else {
+            apm::logger::warn(
+                "Skipping Packages due to checksum verification failure: " +
+                plan.plainUrl);
+          }
         } else if (j < fallbackResults.size()) {
           apm::logger::warn("Failed to download " + plan.plainUrl + ": " +
                             fallbackResults[j].errorMsg);
@@ -1449,13 +1539,12 @@ bool updateFromSourcesList(const std::string &sourcesPath,
       if (!plan.succeeded) {
         apm::logger::warn(
             "updateFromSourcesList: could not obtain ANY Packages index for " +
-            src.uri + " " + src.dist + " " + plan.component + " [" +
-            archToUse + "]");
+            src.uri + " " + src.dist + " " + plan.component + " [" + archToUse +
+            "]");
         continue;
       }
 
-      apm::logger::warn("SHA256 verification DISABLED (REASON: Gotta rework "
-                        "it): accepting Packages index " +
+      apm::logger::info("Verified and prepared Packages index: " +
                         plan.downloadedPath);
       ok++;
     }

@@ -5,8 +5,8 @@
  * Copyright (C) 2025 RedHead Industries
  *
  * File: security.cpp
- * Purpose: Implement shared security helpers for session persistence and time handling.
- * Last Modified: November 25th, 2025. - 11:35 AM Eastern Time.
+ * Purpose: Implement shared security helpers for session persistence and time
+ * handling. Last Modified: November 25th, 2025. - 11:35 AM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -32,8 +32,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cerrno>
-#include <cstdlib>
 #include <chrono>
+#include <cstdlib>
 #include <sstream>
 #include <string>
 #include <sys/stat.h>
@@ -43,9 +43,9 @@ namespace apm::security {
 namespace {
 
 static inline void trim(std::string &s) {
-  s.erase(s.begin(),
-          std::find_if(s.begin(), s.end(),
-                       [](unsigned char ch) { return !std::isspace(ch); }));
+  s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) {
+            return !std::isspace(ch);
+          }));
   s.erase(std::find_if(s.rbegin(), s.rend(),
                        [](unsigned char ch) { return !std::isspace(ch); })
               .base(),
@@ -55,11 +55,11 @@ static inline void trim(std::string &s) {
 } // namespace
 
 bool ensureSecurityDir(std::string *errorMsg) {
-  if (apm::fs::createDirs(apm::config::SECURITY_DIR, 0700))
+  const std::string secDir = apm::config::getSecurityDir();
+  if (apm::fs::createDirs(secDir, 0700))
     return true;
   if (errorMsg)
-    *errorMsg = "Failed to create security directory at " +
-                std::string(apm::config::SECURITY_DIR);
+    *errorMsg = "Failed to create security directory at " + secDir;
   return false;
 }
 
@@ -107,8 +107,7 @@ bool parseSession(const std::string &raw, SessionState &out,
     else if (key == "expires") {
       errno = 0;
       char *end = nullptr;
-      unsigned long long parsed =
-          std::strtoull(value.c_str(), &end, 10);
+      unsigned long long parsed = std::strtoull(value.c_str(), &end, 10);
       if (errno != 0 || end == value.c_str()) {
         if (errorMsg)
           *errorMsg = "Invalid session expiry value";
@@ -130,7 +129,7 @@ bool parseSession(const std::string &raw, SessionState &out,
 
 bool loadSession(SessionState &out, std::string *errorMsg) {
   std::string raw;
-  if (!apm::fs::readFile(apm::config::SESSION_FILE, raw)) {
+  if (!apm::fs::readFile(apm::config::getSessionFile(), raw)) {
     if (errorMsg)
       *errorMsg = "Unable to read session file";
     return false;
@@ -142,14 +141,15 @@ bool writeSession(const SessionState &state, std::string *errorMsg) {
   if (!ensureSecurityDir(errorMsg))
     return false;
 
+  const std::string sessionFile = apm::config::getSessionFile();
   const std::string serialized = serializeSession(state);
-  if (!apm::fs::writeFile(apm::config::SESSION_FILE, serialized, true)) {
+  if (!apm::fs::writeFile(sessionFile, serialized, true)) {
     if (errorMsg)
       *errorMsg = "Failed to write session file";
     return false;
   }
 
-  ::chmod(apm::config::SESSION_FILE, 0600);
+  ::chmod(sessionFile.c_str(), 0600);
   return true;
 }
 

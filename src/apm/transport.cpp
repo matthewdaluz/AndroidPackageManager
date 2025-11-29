@@ -28,6 +28,12 @@ static std::string readExePath() {
 }
 
 TransportMode detectTransportMode() {
+  // Emulator mode always uses IPC
+  if (apm::config::isEmulatorMode()) {
+    apm::logger::debug("transport: emulator mode -> ipc");
+    return TransportMode::IPC;
+  }
+
   // Env override first
   const char *env = ::getenv("APM_TRANSPORT");
   if (env && *env) {
@@ -104,7 +110,7 @@ bool sendRequestAuto(const Request &req, Response &resp,
       apm::logger::info("transport: attempting IPC fallback");
       std::string ipcErr;
       bool ipcOk = apm::ipc::sendRequest(
-          req, resp, apm::config::IPC_SOCKET_PATH, &ipcErr, progressHandler);
+          req, resp, apm::config::getIpcSocketPath(), &ipcErr, progressHandler);
       if (ipcOk) {
         resp.rawFields["binder_failure"] = binderErr;
         resp.rawFields["transport"] = "ipc_fallback";
@@ -126,7 +132,7 @@ bool sendRequestAuto(const Request &req, Response &resp,
   }
 
   // IPC primary path
-  bool ok = apm::ipc::sendRequest(req, resp, apm::config::IPC_SOCKET_PATH,
+  bool ok = apm::ipc::sendRequest(req, resp, apm::config::getIpcSocketPath(),
                                   errorMsg, progressHandler);
   if (ok) {
     resp.rawFields["transport"] = "ipc";

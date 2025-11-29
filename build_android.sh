@@ -12,7 +12,7 @@ rm -rf "${BUILD_DIR}"
 mkdir -p "${BUILD_DIR}"
 
 echo "Select target architecture:"
-ARCH_CHOICES=("arm64-v8a" "armeabi-v7a" "x86_64" "x86")
+ARCH_CHOICES=("arm64-v8a" "armeabi-v7a" "x86_64" "x86" "x86_64 (Emulator Mode)")
 select CHOICE in "${ARCH_CHOICES[@]}" "Custom input"; do
   if [[ -z "${CHOICE:-}" ]]; then
     echo "Invalid selection. Please choose again."
@@ -22,8 +22,13 @@ select CHOICE in "${ARCH_CHOICES[@]}" "Custom input"; do
   if [[ "${CHOICE}" == "Custom input" ]]; then
     read -r -p "Enter custom ABI (e.g., arm64-v8a): " CUSTOM_ABI
     ANDROID_ABI="${CUSTOM_ABI}"
+    EMULATOR_MODE=0
+  elif [[ "${CHOICE}" == "x86_64 (Emulator Mode)" ]]; then
+    ANDROID_ABI="x86_64"
+    EMULATOR_MODE=1
   else
     ANDROID_ABI="${CHOICE}"
+    EMULATOR_MODE=0
   fi
 
   case "${ANDROID_ABI}" in
@@ -51,32 +56,48 @@ if (( API_LEVEL < 29 )); then
   exit 1
 fi
 
-NDK_ROOT="${ANDROID_NDK:-${ANDROID_NDK_HOME:-$HOME/Android/NDK}}"
-TOOLCHAIN_FILE="${NDK_ROOT}/build/cmake/android.toolchain.cmake"
+if [[ "${EMULATOR_MODE}" == "1" ]]; then
+  # Emulator mode: native x86_64 Linux build without NDK
+  echo ""
+  echo "Configuring for Emulator Mode:"
+  echo "  Target    = Native x86_64 Linux"
+  echo "  Mode      = Emulator (no Android NDK)"
+  echo ""
 
-if [[ ! -d "${NDK_ROOT}" ]]; then
-  echo "Android NDK not found at ${NDK_ROOT}. Set ANDROID_NDK or ANDROID_NDK_HOME." >&2
-  exit 1
+  cmake -S "${SCRIPT_DIR}" -B "${BUILD_DIR}" \
+    -G "Unix Makefiles" \
+    -DAPM_EMULATOR_MODE=ON \
+    -DCMAKE_BUILD_TYPE=Release
+
+else
+  # Normal Android build with NDK
+  NDK_ROOT="${ANDROID_NDK:-${ANDROID_NDK_HOME:-$HOME/Android/NDK}}"
+  TOOLCHAIN_FILE="${NDK_ROOT}/build/cmake/android.toolchain.cmake"
+
+  if [[ ! -d "${NDK_ROOT}" ]]; then
+    echo "Android NDK not found at ${NDK_ROOT}. Set ANDROID_NDK or ANDROID_NDK_HOME." >&2
+    exit 1
+  fi
+
+  if [[ ! -f "${TOOLCHAIN_FILE}" ]]; then
+    echo "Android toolchain file not found at ${TOOLCHAIN_FILE}." >&2
+    exit 1
+  fi
+
+  echo ""
+  echo "Configuring:"
+  echo "  ABI       = ${ANDROID_ABI}"
+  echo "  Platform  = ${DEFAULT_PLATFORM}"
+  echo "  NDK       = ${NDK_ROOT}"
+  echo ""
+
+  cmake -S "${SCRIPT_DIR}" -B "${BUILD_DIR}" \
+    -G "Unix Makefiles" \
+    -DANDROID_ABI="${ANDROID_ABI}" \
+    -DANDROID_PLATFORM="${DEFAULT_PLATFORM}" \
+    -DCMAKE_TOOLCHAIN_FILE="${TOOLCHAIN_FILE}" \
+    -DANDROID_STL="c++_static"
 fi
-
-if [[ ! -f "${TOOLCHAIN_FILE}" ]]; then
-  echo "Android toolchain file not found at ${TOOLCHAIN_FILE}." >&2
-  exit 1
-fi
-
-echo ""
-echo "Configuring:"
-echo "  ABI       = ${ANDROID_ABI}"
-echo "  Platform  = ${DEFAULT_PLATFORM}"
-echo "  NDK       = ${NDK_ROOT}"
-echo ""
-
-cmake -S "${SCRIPT_DIR}" -B "${BUILD_DIR}" \
-  -G "Unix Makefiles" \
-  -DANDROID_ABI="${ANDROID_ABI}" \
-  -DANDROID_PLATFORM="${DEFAULT_PLATFORM}" \
-  -DCMAKE_TOOLCHAIN_FILE="${TOOLCHAIN_FILE}" \
-  -DANDROID_STL="c++_static"
 
 echo "Building with make -j$(nproc)..."
 cmake --build "${BUILD_DIR}" -- -j"$(nproc)"

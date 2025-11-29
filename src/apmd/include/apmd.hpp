@@ -37,7 +37,10 @@ inline constexpr const char *DEFAULT_SERVICE_NAME = apm::binder::SERVICE_NAME;
 
 // Main daemon runner.
 // - serviceName: Binder service instance name (Android).
-// Returns exit code (0 = OK).
-int runDaemon(const std::string &serviceName);
+// - debugMode: Enable verbose debug logging.
+// - emulatorMode: Run in x86_64 emulator mode (requires APM_EMULATOR_MODE
+// compile flag). Returns exit code (0 = OK).
+int runDaemon(const std::string &serviceName, bool debugMode = false,
+              bool emulatorMode = false);
 
 } // namespace apm::daemon

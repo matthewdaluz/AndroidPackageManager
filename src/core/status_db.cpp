@@ -269,7 +269,7 @@ bool loadStatusFile(const std::string &path, InstalledDb &out,
 // Serialize the InstalledDb map back to disk so CLI/daemon stay in sync.
 bool writeStatusFile(const std::string &path, const InstalledDb &db,
                      std::string *errorMsg) {
-  apm::fs::createDirs(apm::config::APM_ROOT);
+  apm::fs::createDirs(apm::config::getApmRoot());
 
   std::string tmpPath = path + ".tmp";
   std::ostringstream out;
@@ -346,12 +346,12 @@ bool writeStatusFile(const std::string &path, const InstalledDb &db,
 
 // Convenience wrapper targeting the default status file path.
 bool loadStatus(InstalledDb &out, std::string *errorMsg) {
-  return loadStatusFile(apm::config::STATUS_FILE, out, errorMsg);
+  return loadStatusFile(apm::config::getStatusFile(), out, errorMsg);
 }
 
 // Mirror the given DB to disk under the default status file path.
 bool writeStatus(const InstalledDb &db, std::string *errorMsg) {
-  return writeStatusFile(apm::config::STATUS_FILE, db, errorMsg);
+  return writeStatusFile(apm::config::getStatusFile(), db, errorMsg);
 }
 
 // -------------------- convenience APIs --------------------

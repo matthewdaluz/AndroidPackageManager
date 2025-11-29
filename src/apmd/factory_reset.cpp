@@ -153,17 +153,17 @@ bool performFactoryReset(apm::ams::ModuleManager &moduleManager,
   out = FactoryResetResult{};
   std::vector<std::string> errors;
 
-  removePathRecursive(apm::config::INSTALLED_DIR, "installed content", errors);
+  removePathRecursive(apm::config::getInstalledDir(), "installed content", errors);
   removePathRecursive(apm::config::APM_BIN_DIR, "APM shim bin", errors);
   removePathRecursive(apm::config::MANUAL_PACKAGES_DIR,
                       "manual package metadata", errors);
 
-  removePathRecursive(apm::config::SECURITY_DIR, "security data", errors);
-  removeFilePath(apm::config::STATUS_FILE, "status database", errors);
+  removePathRecursive(apm::config::getSecurityDir(), "security data", errors);
+  removeFilePath(apm::config::getStatusFile(), "status database", errors);
 
   removeAllModules(moduleManager, errors);
-  removePathRecursive(apm::config::MODULES_DIR, "AMS modules", errors);
-  removePathRecursive(apm::config::LISTS_DIR, "repository lists", errors);
+  removePathRecursive(apm::config::getModulesDir(), "AMS modules", errors);
+  removePathRecursive(apm::config::getListsDir(), "repository lists", errors);
 
   cleanupSystemApps(errors);
 

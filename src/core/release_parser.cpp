@@ -55,38 +55,29 @@ static inline void trim(std::string &s) {
   rtrim(s);
 }
 
-// Parse a Release file and capture the SHA256 stanza lines so we can validate
-// the Packages metadata.
-bool parseReleaseFile(const std::string &path, ReleaseInfo &out,
-                      std::string *errorMsg) {
+// Internal: core text parser used by both file and in-memory paths.
+static bool parseReleaseCore(std::istream &in, const std::string &sourceLabel,
+                             ReleaseInfo &out, std::string *errorMsg) {
   out.sha256.clear();
+  out.md5.clear();
 
-  std::string content;
-  if (!apm::fs::readFile(path, content)) {
-    if (errorMsg)
-      *errorMsg = "Failed to read Release file: " + path;
-    apm::logger::error("parseReleaseFile: cannot read " + path);
-    return false;
-  }
+  enum class Section { None, SHA256, MD5 };
+  Section section = Section::None;
 
-  std::istringstream in(content);
   std::string line;
-  bool inSha256Section = false;
-
   while (std::getline(in, line)) {
     if (!line.empty() && line.back() == '\r') {
       line.pop_back();
     }
 
     if (line.empty()) {
-      // Blank line ends any current section
-      inSha256Section = false;
+      section = Section::None;
       continue;
     }
 
     if (!line.empty() && (line[0] == ' ' || line[0] == '\t')) {
-      // Continuation of previous section
-      if (!inSha256Section) {
+      // Continuation line for current section, if any
+      if (section == Section::None) {
         continue;
       }
 
@@ -112,15 +103,18 @@ bool parseReleaseFile(const std::string &path, ReleaseInfo &out,
 
       errno = 0;
       char *end = nullptr;
-      unsigned long long parsed =
-          std::strtoull(sizeStr.c_str(), &end, 10);
+      unsigned long long parsed = std::strtoull(sizeStr.c_str(), &end, 10);
       if (errno != 0 || end == sizeStr.c_str()) {
         entry.size = 0;
       } else {
         entry.size = static_cast<std::size_t>(parsed);
       }
 
-      out.sha256.push_back(std::move(entry));
+      if (section == Section::SHA256) {
+        out.sha256.push_back(std::move(entry));
+      } else if (section == Section::MD5) {
+        out.md5.push_back(std::move(entry));
+      }
       continue;
     }
 
@@ -138,27 +132,68 @@ bool parseReleaseFile(const std::string &path, ReleaseInfo &out,
       trim(key);
     }
 
-    inSha256Section = (key == "SHA256");
+    if (key == "SHA256") {
+      section = Section::SHA256;
+    } else if (key == "MD5Sum") {
+      section = Section::MD5;
+    } else {
+      section = Section::None;
+    }
   }
 
-  if (out.sha256.empty()) {
+  if (out.sha256.empty() && out.md5.empty()) {
     if (errorMsg) {
-      *errorMsg = "Release file has no SHA256 section";
+      *errorMsg = "Release content has no SHA256 or MD5Sum sections";
     }
-    apm::logger::warn("parseReleaseFile: no SHA256 section in " + path);
+    apm::logger::warn("parseRelease: no checksum sections in " + sourceLabel);
     return false;
   }
 
-  apm::logger::info("parseReleaseFile: parsed " +
-                    std::to_string(out.sha256.size()) +
-                    " SHA256 entries from " + path);
+  apm::logger::info("parseRelease: parsed " +
+                    std::to_string(out.sha256.size()) + " SHA256 entries and " +
+                    std::to_string(out.md5.size()) + " MD5 entries from " +
+                    sourceLabel);
   return true;
+}
+
+// Parse a Release file and capture checksum stanzas (SHA256/MD5).
+bool parseReleaseFile(const std::string &path, ReleaseInfo &out,
+                      std::string *errorMsg) {
+  std::string content;
+  if (!apm::fs::readFile(path, content)) {
+    if (errorMsg)
+      *errorMsg = "Failed to read Release file: " + path;
+    apm::logger::error("parseReleaseFile: cannot read " + path);
+    return false;
+  }
+
+  std::istringstream in(content);
+  return parseReleaseCore(in, path, out, errorMsg);
+}
+
+// Parse already-loaded Release content (e.g., from a clearsigned InRelease).
+bool parseReleaseText(const std::string &text, ReleaseInfo &out,
+                      std::string *errorMsg) {
+  std::istringstream in(text);
+  return parseReleaseCore(in, "<memory>", out, errorMsg);
 }
 
 // Find the SHA256 hash for a specific Packages path.
 bool findSha256ForPath(const ReleaseInfo &info, const std::string &name,
                        std::string &outHash) {
   for (const auto &e : info.sha256) {
+    if (e.name == name) {
+      outHash = e.hash;
+      return true;
+    }
+  }
+  return false;
+}
+
+// Find the MD5 hash for a specific Packages path.
+bool findMd5ForPath(const ReleaseInfo &info, const std::string &name,
+                    std::string &outHash) {
+  for (const auto &e : info.md5) {
     if (e.name == name) {
       outHash = e.hash;
       return true;

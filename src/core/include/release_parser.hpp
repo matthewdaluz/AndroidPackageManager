@@ -5,9 +5,9 @@
  * Copyright (C) 2025 RedHead Industries
  *
  * File: release_parser.hpp
- * Purpose: Declare helpers for parsing Release files and looking up SHA256 entries.
- * Last Modified: November 18th, 2025. - 3:00 PM Eastern Time.
- * Author: Matthew DaLuz - RedHead Founder
+ * Purpose: Declare helpers for parsing Release files and looking up checksum
+ * entries. Last Modified: November 18th, 2025. - 3:00 PM Eastern Time. Author:
+ * Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -33,23 +33,34 @@
 namespace apm::repo {
 
 struct ReleaseChecksumEntry {
-  std::string hash; // hex SHA256
+  std::string hash; // hex digest (e.g., SHA256 or MD5)
   std::string name; // path like "dists/bookworm/main/binary-arm64/Packages"
   std::size_t size = 0;
 };
 
 struct ReleaseInfo {
   std::vector<ReleaseChecksumEntry> sha256;
+  std::vector<ReleaseChecksumEntry> md5;
 };
 
-// Parse a Debian-style Release file and extract the SHA256 section.
-// Returns true on success; false on failure (e.g. no SHA256 section).
+// Parse a Debian-style Release file and extract SHA256/MD5 sections.
+// Returns true on success; false on failure (e.g. no checksum sections).
 bool parseReleaseFile(const std::string &path, ReleaseInfo &out,
+                      std::string *errorMsg = nullptr);
+
+// Parse a Debian-style Release content (already loaded into memory) and
+// extract SHA256/MD5 sections. Returns true if at least one section found.
+bool parseReleaseText(const std::string &text, ReleaseInfo &out,
                       std::string *errorMsg = nullptr);
 
 // Look up SHA256 hash for a given path (as listed in Release's SHA256 section).
 // Returns true and fills outHash on success; false if not found.
 bool findSha256ForPath(const ReleaseInfo &info, const std::string &name,
                        std::string &outHash);
+
+// Look up MD5 hash for a given path (as listed in Release's MD5Sum section).
+// Returns true and fills outHash on success; false if not found.
+bool findMd5ForPath(const ReleaseInfo &info, const std::string &name,
+                    std::string &outHash);
 
 } // namespace apm::repo

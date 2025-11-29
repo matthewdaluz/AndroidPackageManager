@@ -641,14 +641,22 @@ bool buildKeyFromBlob(const std::vector<uint8_t> &blob, LoadedKey &keyOut,
       }
 
       if (pkey) {
-        if (EVP_PKEY_base_id(pkey.get()) != EVP_PKEY_RSA) {
+        const RSA *rsaTmp = EVP_PKEY_get0_RSA(pkey.get());
+        if (!rsaTmp) {
           if (errorMsg)
             *errorMsg = "Public key is not RSA";
           return false;
         }
 
-        const std::size_t bits =
-            static_cast<std::size_t>(EVP_PKEY_bits(pkey.get()));
+        const BIGNUM *n_bn = nullptr;
+        const BIGNUM *e_bn = nullptr;
+        RSA_get0_key(rsaTmp, &n_bn, &e_bn, nullptr);
+        if (!n_bn || BN_is_zero(n_bn) || BN_is_negative(n_bn)) {
+          if (errorMsg)
+            *errorMsg = "RSA key missing or invalid modulus";
+          return false;
+        }
+        const std::size_t bits = static_cast<std::size_t>(BN_num_bits(n_bn));
         if (!modulusLengthValid(bits)) {
           if (errorMsg)
             *errorMsg = "RSA key size outside 2048-4096 bit range";
@@ -712,11 +720,21 @@ bool buildKeyFromBlob(const std::vector<uint8_t> &blob, LoadedKey &keyOut,
   }
 
   bssl::UniquePtr<EVP_PKEY> pkey(EVP_PKEY_new());
-  if (!pkey || EVP_PKEY_assign_RSA(pkey.get(), rsa.release()) != 1) {
+  if (!pkey) {
+    if (errorMsg)
+      *errorMsg = "Failed to allocate EVP_PKEY: " + formatOpenSslError();
+    return false;
+  }
+
+  // Use set1 to be compatible with BoringSSL and OpenSSL. This increments
+  // the RSA reference count; we then release our UniquePtr to avoid
+  // double-free.
+  if (EVP_PKEY_set1_RSA(pkey.get(), rsa.get()) != 1) {
     if (errorMsg)
       *errorMsg = "Failed to set up RSA key: " + formatOpenSslError();
     return false;
   }
+  rsa.reset();
 
   keyOut.pkey = std::move(pkey);
   keyOut.keyBytes = (nBits + 7) / 8;
@@ -927,6 +945,151 @@ bool verifyWithKey(LoadedKey &key, const std::vector<uint8_t> &digest,
 
 } // namespace
 
+// Hash the provided in-memory cleartext (already canonicalized to CRLF) with
+// the V4 signature header/trailer and output the digest.
+static bool hashSignedBuffer(const ParsedSignature &sig,
+                             const std::string &canonicalText,
+                             std::vector<uint8_t> &digest,
+                             std::string *errorMsg) {
+  bssl::UniquePtr<EVP_MD_CTX> ctx(EVP_MD_CTX_new());
+  if (!ctx) {
+    if (errorMsg)
+      *errorMsg = "SHA256 init failed: unable to allocate context";
+    return false;
+  }
+
+  digest.assign(SHA256_DIGEST_LENGTH, 0);
+
+  if (EVP_DigestInit_ex(ctx.get(), EVP_sha256(), nullptr) != 1) {
+    if (errorMsg)
+      *errorMsg = "SHA256 init failed: " + formatOpenSslError();
+    return false;
+  }
+
+  if (!canonicalText.empty()) {
+    if (EVP_DigestUpdate(ctx.get(), canonicalText.data(),
+                         canonicalText.size()) != 1) {
+      if (errorMsg)
+        *errorMsg = "SHA256 update failed: " + formatOpenSslError();
+      return false;
+    }
+  }
+
+  std::vector<uint8_t> header;
+  header.reserve(6 + sig.hashedSubpackets.size());
+  header.push_back(0x04);
+  header.push_back(sig.sigType);
+  header.push_back(sig.pubKeyAlgo);
+  header.push_back(sig.hashAlgo);
+  uint16_t hashedLen = static_cast<uint16_t>(sig.hashedSubpackets.size());
+  header.push_back(static_cast<uint8_t>(hashedLen >> 8));
+  header.push_back(static_cast<uint8_t>(hashedLen & 0xff));
+  header.insert(header.end(), sig.hashedSubpackets.begin(),
+                sig.hashedSubpackets.end());
+
+  if (EVP_DigestUpdate(ctx.get(), header.data(), header.size()) != 1) {
+    if (errorMsg)
+      *errorMsg = "SHA256 header update failed: " + formatOpenSslError();
+    return false;
+  }
+
+  uint32_t trailerLen = static_cast<uint32_t>(header.size());
+  uint8_t trailer[6] = {0x04,
+                        0xff,
+                        static_cast<uint8_t>((trailerLen >> 24) & 0xff),
+                        static_cast<uint8_t>((trailerLen >> 16) & 0xff),
+                        static_cast<uint8_t>((trailerLen >> 8) & 0xff),
+                        static_cast<uint8_t>(trailerLen & 0xff)};
+
+  if (EVP_DigestUpdate(ctx.get(), trailer, sizeof(trailer)) != 1) {
+    if (errorMsg)
+      *errorMsg = "SHA256 trailer update failed: " + formatOpenSslError();
+    return false;
+  }
+
+  unsigned int outLen = 0;
+  if (EVP_DigestFinal_ex(ctx.get(), digest.data(), &outLen) != 1) {
+    if (errorMsg)
+      *errorMsg = "SHA256 finalize failed: " + formatOpenSslError();
+    return false;
+  }
+
+  digest.resize(outLen);
+  return true;
+}
+
+// Decode clearsigned text body and build a canonical CRLF version for hashing.
+static bool extractClearsignedBodies(const std::string &in,
+                                     std::string &decodedLf,
+                                     std::string &canonicalCrlf,
+                                     std::string *errorMsg) {
+  static const std::string beginSigned = "-----BEGIN PGP SIGNED MESSAGE-----";
+  static const std::string beginSig = "-----BEGIN PGP SIGNATURE-----";
+
+  auto beginPos = in.find(beginSigned);
+  if (beginPos == std::string::npos) {
+    if (errorMsg)
+      *errorMsg = "Not a clearsigned message (BEGIN header missing)";
+    return false;
+  }
+
+  auto sigPos = in.find(beginSig, beginPos);
+  if (sigPos == std::string::npos) {
+    if (errorMsg)
+      *errorMsg = "Clearsigned message missing signature block";
+    return false;
+  }
+
+  // Text between the BEGIN header and signature block contains armored headers
+  // (e.g., Hash: ...) followed by a blank line, then the signed body.
+  std::string headerAndBody = in.substr(
+      beginPos + beginSigned.size(), sigPos - (beginPos + beginSigned.size()));
+
+  std::istringstream ss(headerAndBody);
+  std::string line;
+  bool inHeaders = true;
+
+  decodedLf.clear();
+  canonicalCrlf.clear();
+
+  while (std::getline(ss, line)) {
+    if (!line.empty() && line.back() == '\r')
+      line.pop_back();
+
+    if (inHeaders) {
+      if (line.empty()) {
+        inHeaders = false;
+      }
+      continue;
+    }
+
+    std::string dataLine = line;
+    if (dataLine.rfind("- ", 0) == 0) {
+      dataLine.erase(0, 2);
+    }
+
+    while (!dataLine.empty() &&
+           (dataLine.back() == ' ' || dataLine.back() == '\t')) {
+      dataLine.pop_back();
+    }
+
+    decodedLf.append(dataLine);
+    decodedLf.push_back('\n');
+
+    canonicalCrlf.append(dataLine);
+    canonicalCrlf.push_back('\r');
+    canonicalCrlf.push_back('\n');
+  }
+
+  if (decodedLf.empty()) {
+    if (errorMsg)
+      *errorMsg = "Clearsigned body is empty";
+    return false;
+  }
+
+  return true;
+}
+
 bool verifyDetachedSignature(const std::string &dataPath,
                              const std::string &sigPath,
                              const std::string &trustedKeysDir,
@@ -1116,6 +1279,143 @@ bool importTrustedPublicKey(const std::string &ascPath,
     *storedPathOut = dest;
 
   return true;
+}
+
+bool verifyClearsignedRelease(const std::string &inReleasePath,
+                              const std::string &trustedKeysDir,
+                              std::string &outCleartext,
+                              std::string *errorMsg) {
+  std::ifstream in(inReleasePath, std::ios::binary);
+  if (!in.is_open()) {
+    if (errorMsg)
+      *errorMsg = "Failed to open InRelease: " + inReleasePath;
+    return false;
+  }
+
+  std::ostringstream ss;
+  ss << in.rdbuf();
+  if (!in.good() && !in.eof()) {
+    if (errorMsg)
+      *errorMsg = "Failed reading InRelease: " + inReleasePath;
+    return false;
+  }
+
+  const std::string all = ss.str();
+
+  // Extract signature armor for parsing the signature packet.
+  std::string sigArmor;
+  if (!extractSignatureArmor(all, sigArmor)) {
+    if (errorMsg)
+      *errorMsg = "Clearsigned file missing PGP SIGNATURE block";
+    return false;
+  }
+
+  std::vector<uint8_t> sigBlob;
+  bool sigArmored = false;
+  if (!decodeArmoredBlock(sigArmor, sigBlob, sigArmored, errorMsg))
+    return false;
+  (void)sigArmored;
+
+  ParsedSignature sig;
+  if (!parseSignaturePacket(sigBlob, sig, errorMsg))
+    return false;
+
+  if (sig.hashAlgo != 8) {
+    if (errorMsg)
+      *errorMsg = "Unsupported hash algorithm (SHA256 required)";
+    return false;
+  }
+
+  if (sig.sigType != 0x01) { // Canonical text document
+    apm::logger::warn("Unexpected signature type: " +
+                      std::to_string(static_cast<unsigned>(sig.sigType)) +
+                      ", proceeding");
+  }
+
+  if (sig.pubKeyAlgo != 1 && sig.pubKeyAlgo != 3) {
+    if (errorMsg)
+      *errorMsg = "Unsupported signature algorithm (RSA only)";
+    return false;
+  }
+
+  std::string decodedBody;
+  std::string canonicalBody;
+  if (!extractClearsignedBodies(all, decodedBody, canonicalBody, errorMsg))
+    return false;
+
+  std::vector<uint8_t> digest;
+  if (!hashSignedBuffer(sig, canonicalBody, digest, errorMsg))
+    return false;
+
+  uint16_t digestLeft = (static_cast<uint16_t>(digest[0]) << 8) |
+                        static_cast<uint16_t>(digest[1]);
+  if (digestLeft != sig.hashLeft16) {
+    if (errorMsg)
+      *errorMsg = "Signature hash prefix mismatch";
+    return false;
+  }
+
+  if (!apm::fs::isDirectory(trustedKeysDir)) {
+    if (errorMsg)
+      *errorMsg = "Trusted keys directory missing: " + trustedKeysDir;
+    return false;
+  }
+
+  bool anyKey = false;
+  std::string lastErr;
+  auto entries = apm::fs::listDir(trustedKeysDir, false);
+  for (const auto &entryName : entries) {
+    if (entryName.empty() || entryName == "." || entryName == "..")
+      continue;
+    std::string path = apm::fs::joinPath(trustedKeysDir, entryName);
+    if (!apm::fs::isRegularFile(path))
+      continue;
+    if (!isTrustedKeyFile(path))
+      continue;
+
+    anyKey = true;
+    LoadedKey key;
+    std::string fingerprint;
+    std::string keyErr;
+    if (!loadKeyFile(path, key, fingerprint, &keyErr)) {
+      apm::logger::warn("Skipping key " + path + ": " + keyErr);
+      lastErr = keyErr;
+      continue;
+    }
+
+    std::vector<uint8_t> sigPadded;
+    if (!normalizeSignature(sig.signatureMpi, key.keyBytes, sigPadded,
+                            &keyErr)) {
+      apm::logger::warn("Skipping key " + path + ": " + keyErr);
+      lastErr = keyErr;
+      continue;
+    }
+
+    if (verifyWithKey(key, digest, sigPadded, &keyErr)) {
+      apm::logger::info("Clearsigned InRelease verified with key " +
+                        fingerprint);
+      outCleartext = std::move(decodedBody);
+      return true;
+    }
+
+    apm::logger::warn("InRelease verification failed with key " + fingerprint +
+                      ": " + keyErr);
+    lastErr = keyErr;
+  }
+
+  if (!anyKey) {
+    if (errorMsg)
+      *errorMsg = "No trusted keys found in " + trustedKeysDir;
+    return false;
+  }
+
+  if (errorMsg) {
+    if (!lastErr.empty())
+      *errorMsg = "InRelease did not match any trusted key: " + lastErr;
+    else
+      *errorMsg = "InRelease did not match any trusted key";
+  }
+  return false;
 }
 
 } // namespace apm::crypto

@@ -68,9 +68,9 @@ int searchPackages(const std::vector<std::string> &patternsIn) {
 
   apm::repo::RepoIndexList indices;
   std::string err;
-  if (!apm::repo::buildRepoIndices(apm::config::SOURCES_LIST,
-                                   apm::config::LISTS_DIR,
-                                   apm::config::DEFAULT_ARCH, indices, &err)) {
+  if (!apm::repo::buildRepoIndices(apm::config::getSourcesList(),
+                                   apm::config::getListsDir(),
+                                   apm::config::getDefaultArch(), indices, &err)) {
     std::cerr << "apm search: failed to load repo indices";
     if (!err.empty())
       std::cerr << ": " << err;

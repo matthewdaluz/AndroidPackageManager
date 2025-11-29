@@ -5,9 +5,9 @@
  * Copyright (C) 2025 RedHead Industries
  *
  * File: gpg_verify.hpp
- * Purpose: Declare helpers for verifying detached OpenPGP signatures and importing trusted keys.
- * Last Modified: November 23rd, 2025. - 2:52 PM Eastern Time.
- * Author: Matthew DaLuz - RedHead Founder
+ * Purpose: Declare helpers for verifying detached OpenPGP signatures and
+ * importing trusted keys. Last Modified: November 23rd, 2025. - 2:52 PM Eastern
+ * Time. Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -42,6 +42,15 @@ bool verifyDetachedSignature(const std::string &dataPath,
                              const std::string &sigPath,
                              const std::string &trustedKeysDir,
                              std::string *errorMsg = nullptr);
+
+// Verify a clearsigned OpenPGP Release (InRelease) file. On success, returns
+// true and fills outCleartext with the decoded, dash-unescaped cleartext
+// body that was signed. The returned text uses '\n' newlines and is suitable
+// for feeding into parseReleaseText().
+bool verifyClearsignedRelease(const std::string &inReleasePath,
+                              const std::string &trustedKeysDir,
+                              std::string &outCleartext,
+                              std::string *errorMsg = nullptr);
 
 // Import a trusted ASCII-armored or binary public key into trustedKeysDir. The
 // key is validated to be an RSA V4 OpenPGP public key (2048–4096 bits). The

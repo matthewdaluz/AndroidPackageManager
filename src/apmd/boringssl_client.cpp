@@ -80,7 +80,7 @@ bool CryptoEngine::randomBytes(std::size_t count, std::vector<uint8_t> &out,
 
 bool CryptoEngine::loadMasterKey(std::string *errorMsg) {
   std::string raw;
-  if (!apm::fs::readFile(apm::config::MASTER_KEY_FILE, raw)) {
+  if (!apm::fs::readFile(apm::config::getMasterKeyFile(), raw)) {
     if (errorMsg)
       *errorMsg = "Unable to read master key file";
     return false;
@@ -101,13 +101,14 @@ bool CryptoEngine::writeMasterKey(const std::vector<uint8_t> &key,
                                   std::string *errorMsg) {
   const std::string data(reinterpret_cast<const char *>(key.data()),
                          key.size());
-  if (!apm::fs::writeFile(apm::config::MASTER_KEY_FILE, data, true)) {
+  const std::string keyFile = apm::config::getMasterKeyFile();
+  if (!apm::fs::writeFile(keyFile, data, true)) {
     if (errorMsg)
-      *errorMsg = "Failed to write master key to disk";
+      *errorMsg = "Failed to write master key file";
     return false;
   }
 
-  ::chmod(apm::config::MASTER_KEY_FILE, 0600);
+  ::chmod(keyFile.c_str(), 0600);
   return true;
 }
 
@@ -118,7 +119,7 @@ bool CryptoEngine::ensureMasterKey(std::string *errorMsg) {
   if (!apm::security::ensureSecurityDir(errorMsg))
     return false;
 
-  if (apm::fs::isFile(apm::config::MASTER_KEY_FILE)) {
+  if (apm::fs::isFile(apm::config::getMasterKeyFile())) {
     return loadMasterKey(errorMsg);
   }
 

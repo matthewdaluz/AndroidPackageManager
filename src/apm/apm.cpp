@@ -264,7 +264,7 @@ static std::string createTempDir(const std::string &tag,
   auto now = std::chrono::steady_clock::now().time_since_epoch().count();
   std::ostringstream name;
   name << "manual-" << tag << "-" << now << "-" << (++counter);
-  std::string tempPath = apm::fs::joinPath(apm::config::CACHE_DIR, name.str());
+  std::string tempPath = apm::fs::joinPath(apm::config::getCacheDir(), name.str());
   if (!apm::fs::createDirs(tempPath)) {
     if (errorMsg)
       *errorMsg = "Failed to create temp directory: " + tempPath;
@@ -425,7 +425,7 @@ static bool ensureAuthenticatedSession(const std::string &serviceName,
   if (hadSession)
     std::cout << "APM security session expired. Please re-authenticate.\n";
 
-  const bool hasPasspin = apm::fs::isFile(apm::config::PASS_PIN_FILE);
+  const bool hasPasspin = apm::fs::isFile(apm::config::getPassPinFile());
 
   std::string secret;
   if (hasPasspin) {
@@ -592,9 +592,9 @@ static bool findPackageInfoRoot(const std::string &baseDir, std::string &out,
 }
 
 // Ensure the manual install prefix sits somewhere under
-// apm::config::INSTALLED_DIR before touching the filesystem.
+// apm::config::getInstalledDir() before touching the filesystem.
 static bool prefixWithinInstalledRoot(const std::string &prefix) {
-  const std::string root = apm::config::INSTALLED_DIR;
+  const std::string root = apm::config::getInstalledDir();
   if (prefix.size() < root.size())
     return false;
   if (prefix.compare(0, root.size(), root) != 0)
@@ -695,7 +695,7 @@ static bool installManualPackageFromDeb(const std::string &debPath,
     return false;
 
   std::string installRoot =
-      apm::fs::joinPath(apm::config::COMMANDS_DIR, pkgName);
+      apm::fs::joinPath(apm::config::getCommandsDir(), pkgName);
   if (apm::fs::pathExists(installRoot)) {
     if (errorMsg)
       *errorMsg = "Install directory already exists: " + installRoot;
@@ -777,11 +777,11 @@ static bool installManualPackageFromArchive(const std::string &archivePath,
   if (!prefixWithinInstalledRoot(info.prefix)) {
     if (errorMsg)
       *errorMsg =
-          "prefix must be under " + std::string(apm::config::INSTALLED_DIR);
+          "prefix must be under " + std::string(apm::config::getInstalledDir());
     return false;
   }
 
-  if (info.prefix == apm::config::INSTALLED_DIR) {
+  if (info.prefix == apm::config::getInstalledDir()) {
     if (errorMsg)
       *errorMsg = "prefix must include a package-specific subdirectory";
     return false;
@@ -1431,18 +1431,18 @@ int cmdFactoryReset(const std::string &serviceName,
                     const std::string &sessionToken) {
   std::cout << "APM factory reset will:\n";
   std::cout << "  - Remove installed commands and dependencies under "
-            << apm::config::INSTALLED_DIR << "\n";
-  std::cout << "  - Clear APM shim binaries under " << apm::config::APM_BIN_DIR
+            << apm::config::getInstalledDir() << "\n";
+  std::cout << "  - Clear APM shim binaries under " << apm::config::getApmBinDir()
             << "\n";
   std::cout << "  - Remove manual package metadata under "
-            << apm::config::MANUAL_PACKAGES_DIR << "\n";
+            << apm::config::getManualPackagesDir() << "\n";
   std::cout << "  - Clear password/PIN and session data under "
-            << apm::config::SECURITY_DIR << "\n";
+            << apm::config::getSecurityDir() << "\n";
   std::cout << "  - Reset package status database at "
-            << apm::config::STATUS_FILE << "\n";
-  std::cout << "  - Remove AMS modules under " << apm::config::MODULES_DIR
+            << apm::config::getStatusFile() << "\n";
+  std::cout << "  - Remove AMS modules under " << apm::config::getModulesDir()
             << "\n";
-  std::cout << "  - Delete repository lists under " << apm::config::LISTS_DIR
+  std::cout << "  - Delete repository lists under " << apm::config::getListsDir()
             << "\n";
   std::cout << "  - Uninstall system apps staged with --install-as-system\n";
   std::cout << "Proceed with factory reset? [y/N]: " << std::flush;
@@ -1651,8 +1651,8 @@ int cmdInfoLocal(const std::string &name) {
   repo::RepoIndexList indices;
   std::string err;
 
-  if (!repo::buildRepoIndices(config::SOURCES_LIST, config::LISTS_DIR,
-                              config::DEFAULT_ARCH, indices, &err)) {
+  if (!repo::buildRepoIndices(config::getSourcesList(), config::getListsDir(),
+                              config::getDefaultArch(), indices, &err)) {
     std::cout << "Repository info unavailable";
     if (!err.empty())
       std::cout << ": " << err;
@@ -1723,6 +1723,10 @@ int cmdVersion() {
   std::cout << "APM version " << kApmVersion;
   if (kApmBuildDate && std::strlen(kApmBuildDate) > 0)
     std::cout << " (built " << kApmBuildDate << ")";
+#ifdef APM_EMULATOR_MODE
+  if (apm::config::isEmulatorMode())
+    std::cout << " (Emulator Mode)";
+#endif
   std::cout << "\n";
   return 0;
 }
@@ -1733,7 +1737,7 @@ int cmdKeyAdd(const std::string &path) {
   std::string storedPath;
   std::string error;
 
-  if (!apm::crypto::importTrustedPublicKey(path, apm::config::TRUSTED_KEYS_DIR,
+  if (!apm::crypto::importTrustedPublicKey(path, apm::config::getTrustedKeysDir(),
                                            &fingerprint, &storedPath, &error)) {
     std::cerr << "Failed to import key: " << error << "\n";
     return 1;
@@ -1761,11 +1765,6 @@ int main(int argc, char **argv) {
   apm::logger::setMinLogLevel(apm::logger::Level::Debug);
 
   std::string serviceName = apm::config::BINDER_SERVICE;
-  // Log chosen transport mode (binder vs ipc) for diagnostics.
-  auto chosenMode = apm::ipc::detectTransportMode();
-  apm::logger::info(
-      std::string("apm: transport mode = ") +
-      (chosenMode == apm::ipc::TransportMode::Binder ? "binder" : "ipc"));
 
   int i = 1;
   while (i < argc) {
@@ -1779,6 +1778,26 @@ int main(int argc, char **argv) {
     } else
       break;
   }
+
+  // Auto-detect emulator mode by checking if emulator socket exists
+  bool emulatorMode = false;
+#ifdef APM_EMULATOR_MODE
+  const char *home = ::getenv("HOME");
+  if (home && *home) {
+    std::string emulatorSocket =
+        std::string(home) + "/APMEmulator/data/apm/apmd.socket";
+    emulatorMode = apm::fs::pathExists(emulatorSocket);
+  }
+#endif
+
+  // Set emulator mode so path getters work correctly
+  apm::config::setEmulatorMode(emulatorMode);
+
+  // Log chosen transport mode (binder vs ipc) for diagnostics.
+  auto chosenMode = apm::ipc::detectTransportMode();
+  apm::logger::info(
+      std::string("apm: transport mode = ") +
+      (chosenMode == apm::ipc::TransportMode::Binder ? "binder" : "ipc"));
 
   if (i >= argc) {
     printUsage();

@@ -287,7 +287,7 @@ bool mountBaseOnly(const OverlayTarget &target, std::string *errorMsg) {
 namespace apm::ams {
 
 ModuleManager::ModuleManager()
-    : modulesRoot_(apm::config::MODULES_DIR),
+    : modulesRoot_(apm::config::getModulesDir()),
       logsRoot_(apm::config::MODULE_LOGS_DIR) {
   apm::fs::createDirs(modulesRoot_);
   apm::fs::createDirs(logsRoot_);
@@ -328,7 +328,7 @@ std::string ModuleManager::makeTempDir(const std::string &tag) const {
                  .count();
   std::ostringstream name;
   name << "ams-" << tag << "-" << now << "-" << ++counter;
-  auto path = apm::fs::joinPath(apm::config::CACHE_DIR, name.str());
+  auto path = apm::fs::joinPath(apm::config::getCacheDir(), name.str());
   if (!ensureDir(path))
     return {};
   return path;

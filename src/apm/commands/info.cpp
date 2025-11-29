@@ -81,9 +81,9 @@ int run_info(int argc, char **argv) {
   apm::repo::RepoIndexList indices;
   std::string err;
 
-  if (!apm::repo::buildRepoIndices(apm::config::SOURCES_LIST,
-                                   apm::config::LISTS_DIR,
-                                   apm::config::DEFAULT_ARCH, indices, &err)) {
+  if (!apm::repo::buildRepoIndices(apm::config::getSourcesList(),
+                                   apm::config::getListsDir(),
+                                   apm::config::getDefaultArch(), indices, &err)) {
     std::cout << "Repository info: unavailable";
     if (!err.empty()) {
       std::cout << " (run 'apm update'? " << err << ")";

@@ -5,9 +5,9 @@
  * Copyright (C) 2025 RedHead Industries
  *
  * File: export_path.hpp
- * Purpose: Declare helper APIs for generating PATH export scripts and sourcing them for newly installed commands.
- * Last Modified: November 18th, 2025. - 3:00 PM Eastern Time.
- * Author: Matthew DaLuz - RedHead Founder
+ * Purpose: Declare helper APIs for generating PATH export scripts and sourcing
+ * them for newly installed commands. Last Modified: November 18th, 2025. - 3:00
+ * PM Eastern Time. Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -35,5 +35,9 @@ void refreshPathEnvironment();
 // Ensure the global /data/local/tmp/.apm_profile script has been sourced at
 // least once since boot so that shells inheriting ENV see the updated PATH.
 void ensureProfileLoaded();
+
+// Generate apm-env.sh for emulator mode with atomic write.
+// Only active when isEmulatorMode() is true.
+void generateEmulatorEnv();
 
 } // namespace apm::daemon::path

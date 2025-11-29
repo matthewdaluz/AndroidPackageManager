@@ -7,6 +7,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_SYSTEM_VERSION 29)
 set(CMAKE_ANDROID_API 29)
 
+# Emulator mode for x86_64 Linux PC builds
+option(APM_EMULATOR_MODE "Build APM in emulator mode for x86_64 Linux" OFF)
+if(APM_EMULATOR_MODE)
+  add_compile_definitions(APM_EMULATOR_MODE=1)
+  message(STATUS "APM Emulator Mode: ENABLED")
+else()
+  message(STATUS "APM Emulator Mode: DISABLED")
+endif()
+
 
 include(FetchContent)
 
@@ -416,6 +425,7 @@ add_executable(apm
   src/apm/ipc_client.cpp
   src/apm/transport.cpp
     src/core/binder_support.cpp
+    src/core/config.cpp
     src/apmd/apk_installer.cpp
     src/apmd/export_path.cpp
     src/apm/commands/apk_install.cpp
@@ -440,9 +450,11 @@ add_executable(apm
     src/ams/module_info.cpp
     src/ams/module_manager.cpp
     src/util/crypto/sha256.cpp
+    src/util/crypto/md5.cpp
     src/util/crypto/gpg_verify.cpp
 
     src/util/fs.cpp
+    src/util/process_lock.cpp
     src/util/crypto/sha256.cpp
 )
 
@@ -473,8 +485,12 @@ target_link_libraries(apm PRIVATE
 add_executable(apmd
     src/apmd/apmd.cpp
     src/apmd/binder_service.cpp
+    src/apmd/ipc_server.cpp
     src/core/binder_support.cpp
+    src/core/config.cpp
   src/apm/transport.cpp
+    src/apm/ipc_client.cpp
+    src/apm/binder_client.cpp
     src/apmd/request_dispatcher.cpp
     src/apmd/protocol.cpp
     src/apmd/install_manager.cpp
@@ -497,9 +513,11 @@ add_executable(apmd
     src/ams/module_info.cpp
     src/ams/module_manager.cpp
     src/util/crypto/sha256.cpp
+    src/util/crypto/md5.cpp
     src/util/crypto/gpg_verify.cpp
 
     src/util/fs.cpp
+    src/util/process_lock.cpp
     src/util/crypto/sha256.cpp
 
     src/apmd/security_manager.cpp

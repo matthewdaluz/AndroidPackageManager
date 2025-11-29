@@ -37,6 +37,7 @@
 #include <sstream>
 #include <string>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
 #include <utility>
@@ -155,6 +156,14 @@ bool IpcServer::start() {
     ::close(m_listenFd);
     m_listenFd = -1;
     return false;
+  }
+
+  // Set socket permissions (0600 for emulator mode, 0666 for Android)
+  mode_t socketMode = apm::config::isEmulatorMode() ? 0600 : 0666;
+  if (::chmod(m_socketPath.c_str(), socketMode) < 0) {
+    apm::logger::warn("IpcServer::start: chmod() failed: " +
+                      std::string(std::strerror(errno)));
+    // Continue anyway - not a fatal error
   }
 
   m_running = true;
@@ -303,8 +312,8 @@ void IpcServer::handleClient(int clientFd) {
     apm::repo::RepoIndexList indices;
     std::string err;
     if (!apm::repo::buildRepoIndices(
-            apm::config::SOURCES_LIST, apm::config::LISTS_DIR,
-            apm::config::DEFAULT_ARCH, indices, &err)) {
+            apm::config::getSourcesList(), apm::config::getListsDir(),
+            apm::config::getDefaultArch(), indices, &err)) {
       resp.success = false;
       resp.message =
           err.empty() ? "Failed to load repository metadata (run 'apm update')"
@@ -352,8 +361,8 @@ void IpcServer::handleClient(int clientFd) {
     apm::repo::RepoIndexList indices;
     std::string err;
     if (!apm::repo::buildRepoIndices(
-            apm::config::SOURCES_LIST, apm::config::LISTS_DIR,
-            apm::config::DEFAULT_ARCH, indices, &err)) {
+            apm::config::getSourcesList(), apm::config::getListsDir(),
+            apm::config::getDefaultArch(), indices, &err)) {
       resp.success = false;
       resp.message =
           err.empty() ? "Failed to load repository metadata (run 'apm update')"
@@ -524,8 +533,8 @@ void IpcServer::handleClient(int clientFd) {
     };
 
     bool ok = apm::repo::updateFromSourcesList(
-        apm::config::SOURCES_LIST, apm::config::LISTS_DIR,
-        apm::config::DEFAULT_ARCH, &summary, &err, progressCb);
+        apm::config::getSourcesList(), apm::config::getListsDir(),
+        apm::config::getDefaultArch(), &summary, &err, progressCb);
 
     if (ok) {
       resp.success = true;

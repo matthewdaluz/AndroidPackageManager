@@ -34,6 +34,7 @@
 #include "export_path.hpp"
 #include "fs.hpp"
 #include "logger.hpp"
+#include "md5.hpp"
 #include "repo_index.hpp"
 #include "sha256.hpp"
 #include "status_db.hpp"
@@ -91,35 +92,60 @@ static std::string normalizeHex(const std::string &hex) {
   return out;
 }
 
-// Validate a downloaded .deb against the SHA256 provided in Packages.
+// Validate a downloaded .deb against checksums provided in Packages.
+// Prefers SHA256; if that mismatches and an MD5sum is present, fallback to MD5.
 static bool verifyDebSha256(const PackageEntry &pkg, const std::string &debPath,
                             std::string *errorMsg) {
-  if (pkg.sha256.empty()) {
-    std::string msg = "Packages metadata missing SHA256 for " + pkg.packageName;
-    if (errorMsg)
-      *errorMsg = msg;
-    apm::logger::warn("verifyDebSha256: " + msg);
-    return false;
+  // Compute SHA256 if available in metadata
+  if (!pkg.sha256.empty()) {
+    std::string computed;
+    std::string hashErr;
+    if (!apm::crypto::sha256File(debPath, computed, &hashErr)) {
+      std::string msg =
+          "Failed to compute SHA256 for " + debPath + ": " + hashErr;
+      if (errorMsg)
+        *errorMsg = msg;
+      apm::logger::error("verifyDebSha256: " + msg);
+      return false;
+    }
+
+    const std::string expected = normalizeHex(pkg.sha256);
+    const std::string actual = normalizeHex(computed);
+
+    if (expected == actual) {
+      apm::logger::info("verifyDebSha256: ok for " + pkg.packageName + " (" +
+                        debPath + ")");
+      return true;
+    }
+
+    // SHA256 mismatch – attempt MD5 fallback if available
+    apm::logger::warn("verifyDebSha256: SHA256 mismatch for " +
+                      pkg.packageName + ", trying MD5 fallback");
   }
 
-  std::string computed;
-  std::string hashErr;
-  if (!apm::crypto::sha256File(debPath, computed, &hashErr)) {
-    std::string msg =
-        "Failed to compute SHA256 for " + debPath + ": " + hashErr;
-    if (errorMsg)
-      *errorMsg = msg;
-    apm::logger::error("verifyDebSha256: " + msg);
-    return false;
-  }
+  // MD5 fallback if Packages provided MD5sum
+  auto it = pkg.rawFields.find("MD5sum");
+  if (it != pkg.rawFields.end() && !it->second.empty()) {
+    std::string md5Hex;
+    std::string md5Err;
+    if (!apm::crypto::md5File(debPath, md5Hex, &md5Err)) {
+      std::string msg = "Failed to compute MD5 for " + debPath + ": " + md5Err;
+      if (errorMsg)
+        *errorMsg = msg;
+      apm::logger::error("verifyDebSha256: " + msg);
+      return false;
+    }
 
-  const std::string expected = normalizeHex(pkg.sha256);
-  const std::string actual = normalizeHex(computed);
+    const std::string expectedMd5 = normalizeHex(it->second);
+    const std::string actualMd5 = normalizeHex(md5Hex);
+    if (expectedMd5 == actualMd5) {
+      apm::logger::warn("verifyDebSha256: accepting MD5 fallback for " +
+                        pkg.packageName + " (checksum matched)");
+      return true;
+    }
 
-  if (expected != actual) {
-    std::string msg = "SHA256 mismatch for " + pkg.packageName + " (" +
-                      debPath + "): expected " + expected + " but got " +
-                      actual;
+    std::string msg = "Checksum mismatch for " + pkg.packageName + " (" +
+                      debPath + "): SHA256 and MD5 both failed";
     if (errorMsg) {
       *errorMsg = msg + " (cached file removed; re-run to fetch a fresh copy)";
     }
@@ -128,9 +154,19 @@ static bool verifyDebSha256(const PackageEntry &pkg, const std::string &debPath,
     return false;
   }
 
-  apm::logger::info("verifyDebSha256: ok for " + pkg.packageName + " (" +
-                    debPath + ")");
-  return true;
+  // No MD5 available and either no SHA256 present or it mismatched
+  std::string msg;
+  if (pkg.sha256.empty()) {
+    msg = "Packages metadata missing SHA256/MD5 for " + pkg.packageName;
+  } else {
+    msg = "SHA256 mismatch for " + pkg.packageName +
+          " and no MD5 fallback available";
+  }
+  if (errorMsg)
+    *errorMsg = msg + " (cached file removed; re-run to fetch a fresh copy)";
+  apm::logger::error("verifyDebSha256: " + msg);
+  apm::fs::removeFile(debPath);
+  return false;
 }
 
 // Determine which architecture should be used for resolver/installer logic.
@@ -151,15 +187,15 @@ static std::string determineRepoArch(const RepoIndexList &repoIndices) {
       apm::logger::warn(
           "determineRepoArch: multiple repo architectures detected (" +
           detected + " vs " + idx.arch +
-          "); falling back to default: " + apm::config::DEFAULT_ARCH);
-      return apm::config::DEFAULT_ARCH;
+          "); falling back to default: " + apm::config::getDefaultArch());
+      return apm::config::getDefaultArch();
     }
   }
 
   if (!detected.empty())
     return detected;
 
-  return apm::config::DEFAULT_ARCH;
+  return apm::config::getDefaultArch();
 }
 
 // Ensure we have a .deb for this package in PKGS_DIR.
@@ -173,13 +209,13 @@ static bool ensureDebForPackage(
     const InstallProgressCallback &progressCb,
     std::vector<apm::net::DownloadRequest> *pendingDownloads = nullptr) {
   std::string debName = makeDebFileName(pkg);
-  debPath = apm::fs::joinPath(apm::config::PKGS_DIR, debName);
+  debPath = apm::fs::joinPath(apm::config::getPkgsDir(), debName);
 
   // Ensure PKGS_DIR exists
-  if (!apm::fs::createDirs(apm::config::PKGS_DIR)) {
+  if (!apm::fs::createDirs(apm::config::getPkgsDir())) {
     if (errorMsg)
-      *errorMsg =
-          "Failed to create PKGS_DIR: " + std::string(apm::config::PKGS_DIR);
+      *errorMsg = "Failed to create PKGS_DIR: " +
+                  std::string(apm::config::getPkgsDir());
     apm::logger::error("ensureDebForPackage: cannot create PKGS_DIR");
     return false;
   }
@@ -207,7 +243,8 @@ static bool ensureDebForPackage(
     fname = fname.substr(slashPos + 1);
   }
 
-  std::string altLocalPath = apm::fs::joinPath(apm::config::PKGS_DIR, fname);
+  std::string altLocalPath =
+      apm::fs::joinPath(apm::config::getPkgsDir(), fname);
   if (apm::fs::pathExists(altLocalPath)) {
     debPath = altLocalPath;
     apm::logger::info("ensureDebForPackage: using local .deb: " + debPath);
@@ -320,21 +357,21 @@ static bool ensureTermuxRuntimeDirs() {
     ok = apm::fs::createDirs(path) && ok;
   };
 
-  mk(apm::config::TERMUX_ROOT);
-  mk(apm::config::TERMUX_PREFIX);
-  mk(apm::config::TERMUX_INSTALLED_DIR);
+  mk(apm::config::getTermuxRoot());
+  mk(apm::config::getTermuxPrefix());
+  mk(apm::config::getTermuxInstalledDir());
 
   static const char *kRootSubdirs[] = {"bin", "lib", "lib64", "lib32", "opt",
                                        "mnt", "var", "etc",   "tmp",   "home"};
   for (const auto *dir : kRootSubdirs) {
-    mk(apm::fs::joinPath(apm::config::TERMUX_ROOT, dir));
+    mk(apm::fs::joinPath(apm::config::getTermuxRoot(), dir));
   }
 
   static const char *kPrefixSubdirs[] = {"bin",     "lib",     "lib64", "lib32",
                                          "libexec", "include", "share", "etc",
                                          "opt",     "var",     "tmp"};
   for (const auto *dir : kPrefixSubdirs) {
-    mk(apm::fs::joinPath(apm::config::TERMUX_PREFIX, dir));
+    mk(apm::fs::joinPath(apm::config::getTermuxPrefix(), dir));
   }
 
   mk(apm::config::APM_BIN_DIR);
@@ -346,7 +383,7 @@ static bool createTermuxEnvFileIfMissing() {
     std::string existing;
     if (apm::fs::readFile(apm::config::TERMUX_ENV_FILE, existing)) {
       bool prefixOk =
-          existing.find(apm::config::TERMUX_PREFIX) != std::string::npos;
+          existing.find(apm::config::getTermuxPrefix()) != std::string::npos;
       bool libPathOk =
           existing.find(
               "LD_LIBRARY_PATH=$PREFIX/lib:$PREFIX/lib64:$PREFIX/lib32") !=
@@ -359,7 +396,7 @@ static bool createTermuxEnvFileIfMissing() {
   }
 
   std::ostringstream env;
-  env << "export PREFIX=" << apm::config::TERMUX_PREFIX << "\n";
+  env << "export PREFIX=" << apm::config::getTermuxPrefix() << "\n";
   env << "export HOME=" << apm::config::TERMUX_HOME_DIR << "\n";
   env << "export PATH=$PREFIX/bin:$PATH\n";
   env << "export LD_LIBRARY_PATH=$PREFIX/lib:$PREFIX/lib64:$PREFIX/lib32\n";
@@ -541,7 +578,7 @@ static bool createTermuxWrapper(const std::string &commandName) {
   std::ostringstream script;
   script << "#!/system/bin/sh\n";
   script << ". " << apm::config::TERMUX_ENV_FILE << "\n";
-  script << "exec " << apm::config::TERMUX_PREFIX << "/bin/" << commandName
+  script << "exec " << apm::config::getTermuxPrefix() << "/bin/" << commandName
          << " \"$@\"\n";
 
   if (!apm::fs::writeFile(target, script.str())) {
@@ -596,7 +633,7 @@ static bool rewriteTermuxPathsDuringExtraction(
     return false;
   }
 
-  if (!copyTermuxTree(termuxUsr, apm::config::TERMUX_PREFIX, "usr",
+  if (!copyTermuxTree(termuxUsr, apm::config::getTermuxPrefix(), "usr",
                       installedPaths)) {
     if (errorMsg)
       *errorMsg = "Failed to rewrite Termux paths during extraction";
@@ -659,7 +696,7 @@ static bool removeTermuxPackageFiles(const apm::status::InstalledPackage &ip,
   }
 
   for (const auto &rel : manifest) {
-    std::string full = apm::fs::joinPath(apm::config::TERMUX_ROOT, rel);
+    std::string full = apm::fs::joinPath(apm::config::getTermuxRoot(), rel);
     apm::fs::removeFile(full);
 
     static const std::string kBinPrefix = "usr/bin/";
@@ -672,7 +709,7 @@ static bool removeTermuxPackageFiles(const apm::status::InstalledPackage &ip,
     }
   }
 
-  pruneEmptyDirs(apm::fs::joinPath(apm::config::TERMUX_ROOT, "usr"), true);
+  pruneEmptyDirs(apm::fs::joinPath(apm::config::getTermuxRoot(), "usr"), true);
   apm::fs::removeDirRecursive(ip.installRoot);
 
   if (errorMsg) {
@@ -691,7 +728,7 @@ static bool installSinglePackage(const PackageEntry &pkg,
                     " from " + debPath);
 
   std::string tmpRoot =
-      apm::fs::joinPath(apm::config::CACHE_DIR,
+      apm::fs::joinPath(apm::config::getCacheDir(),
                         "apm-install-" + pkg.packageName + "-" + pkg.version);
 
   if (!apm::fs::createDirs(tmpRoot)) {
@@ -765,10 +802,10 @@ static bool installSinglePackage(const PackageEntry &pkg,
                       pkg.packageName + ")");
   }
 
-  if (!apm::fs::createDirs(apm::config::INSTALLED_DIR)) {
+  if (!apm::fs::createDirs(apm::config::getInstalledDir())) {
     if (errorMsg)
       *errorMsg = "Failed to create INSTALLED_DIR: " +
-                  std::string(apm::config::INSTALLED_DIR);
+                  std::string(apm::config::getInstalledDir());
     apm::logger::error("installSinglePackage: cannot create INSTALLED_DIR");
     removeDirRecursive(tmpRoot);
     return false;
@@ -837,7 +874,7 @@ static bool installSinglePackage(const PackageEntry &pkg,
     removeDirRecursive(tmpRoot);
     apm::logger::info("installSinglePackage: installed Termux payload for " +
                       pkg.packageName + " into " +
-                      std::string(apm::config::TERMUX_PREFIX));
+                      std::string(apm::config::getTermuxPrefix()));
     return true;
   }
 
@@ -1163,12 +1200,17 @@ bool installWithDeps(const RepoIndexList &repoIndices,
     // ---------------------------------------------------------
     // SHA256 verification (strict mode)
     // ---------------------------------------------------------
+    // Require at least one checksum to be available (SHA256 preferred, else
+    // MD5)
     if (pkg->sha256.empty()) {
-      result.ok = false;
-      result.message =
-          "Packages metadata missing SHA256 for " + pkg->packageName;
-      apm::logger::error("installWithDeps: " + result.message);
-      return false;
+      auto hasMd5 = pkg->rawFields.find("MD5sum");
+      if (hasMd5 == pkg->rawFields.end() || hasMd5->second.empty()) {
+        result.ok = false;
+        result.message = "Packages metadata missing checksums for " +
+                         pkg->packageName + " (no SHA256/MD5)";
+        apm::logger::error("installWithDeps: " + result.message);
+        return false;
+      }
     }
 
     std::string shaErr;
@@ -1202,11 +1244,12 @@ bool installWithDeps(const RepoIndexList &repoIndices,
     bool installAsDependency = (pkg->packageName != rootPackage);
     std::string installRoot;
     if (termuxMode) {
-      installRoot = apm::fs::joinPath(apm::config::TERMUX_INSTALLED_DIR,
+      installRoot = apm::fs::joinPath(apm::config::getTermuxInstalledDir(),
                                       pkg->packageName);
     } else {
-      const char *baseDir = installAsDependency ? apm::config::DEPENDENCIES_DIR
-                                                : apm::config::COMMANDS_DIR;
+      const std::string baseDir = installAsDependency
+                                      ? apm::config::getDependenciesDir()
+                                      : apm::config::getCommandsDir();
       installRoot = apm::fs::joinPath(baseDir, pkg->packageName);
     }
 
@@ -1232,7 +1275,7 @@ bool installWithDeps(const RepoIndexList &repoIndices,
         pkg->depends; // store dependencies for reverse-dep + autoremove
     ip.termuxPackage = termuxMode;
     if (termuxMode) {
-      ip.installPrefix = apm::config::TERMUX_PREFIX;
+      ip.installPrefix = apm::config::getTermuxPrefix();
     }
 
     // Auto-Installed flag:
@@ -1273,6 +1316,7 @@ bool installWithDeps(const RepoIndexList &repoIndices,
   }
 
   apm::daemon::path::refreshPathEnvironment();
+  apm::daemon::path::generateEmulatorEnv();
 
   std::ostringstream ss;
   ss << "Installed " << result.installedPackages.size() << " package(s)";
@@ -1375,9 +1419,10 @@ bool removePackage(const std::string &packageName, const RemoveOptions &opts,
   if (installRoot.empty()) {
     if (ip.termuxPackage) {
       installRoot =
-          apm::fs::joinPath(apm::config::TERMUX_INSTALLED_DIR, packageName);
+          apm::fs::joinPath(apm::config::getTermuxInstalledDir(), packageName);
     } else {
-      installRoot = apm::fs::joinPath(apm::config::INSTALLED_DIR, packageName);
+      installRoot =
+          apm::fs::joinPath(apm::config::getInstalledDir(), packageName);
     }
   }
 
@@ -1413,6 +1458,7 @@ bool removePackage(const std::string &packageName, const RemoveOptions &opts,
   }
 
   apm::daemon::path::refreshPathEnvironment();
+  apm::daemon::path::generateEmulatorEnv();
 
   result.ok = true;
   result.removedPackages.push_back(packageName);
@@ -1420,11 +1466,6 @@ bool removePackage(const std::string &packageName, const RemoveOptions &opts,
 
   apm::logger::info("removePackage: " + result.message);
   return true;
-  apm::daemon::path::refreshPathEnvironment();
-
-  result.ok = true;
-  result.removedPackages.push_back(packageName);
-  result.message = "Removed package: " + packageName;
 
   apm::logger::info("removePackage: " + result.message);
   return true;
