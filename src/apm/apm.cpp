@@ -25,7 +25,6 @@
  *
  */
 
-#include "binder_client.hpp"
 #include "config.hpp"
 #include "control_parser.hpp"
 #include "deb_extractor.hpp"
@@ -39,6 +38,7 @@
 #include "security.hpp"
 #include "status_db.hpp"
 #include "tar_extractor.hpp"
+#include "transport.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -53,8 +53,8 @@
 #include <sstream>
 #include <string>
 #include <sys/stat.h>
-#include <unordered_map>
 #include <unistd.h>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -387,7 +387,7 @@ static bool requestSessionUnlock(const std::string &serviceName,
   apm::ipc::Response resp;
   std::string err;
 
-  if (!apm::ipc::sendRequest(req, resp, serviceName, &err)) {
+  if (!apm::ipc::sendRequestAuto(req, resp, serviceName, &err)) {
     std::cerr << "Error: " << err << "\n";
     return false;
   }
@@ -902,7 +902,7 @@ int cmdPing(const std::string &serviceName) {
   apm::ipc::Response resp;
   std::string err;
 
-  if (!apm::ipc::sendRequest(req, resp, serviceName, &err)) {
+  if (!apm::ipc::sendRequestAuto(req, resp, serviceName, &err)) {
     std::cerr << "Error: " << err << "\n";
     return 1;
   }
@@ -921,7 +921,7 @@ int cmdForgotPassword(const std::string &serviceName) {
   apm::ipc::Response qResp;
   std::string err;
 
-  if (!apm::ipc::sendRequest(qReq, qResp, serviceName, &err)) {
+  if (!apm::ipc::sendRequestAuto(qReq, qResp, serviceName, &err)) {
     std::cerr << "Error: " << err << "\n";
     return 1;
   }
@@ -967,7 +967,7 @@ int cmdForgotPassword(const std::string &serviceName) {
   }
 
   apm::ipc::Response verifyResp;
-  if (!apm::ipc::sendRequest(verifyReq, verifyResp, serviceName, &err)) {
+  if (!apm::ipc::sendRequestAuto(verifyReq, verifyResp, serviceName, &err)) {
     std::cerr << "Error: " << err << "\n";
     return 1;
   }
@@ -997,7 +997,7 @@ int cmdForgotPassword(const std::string &serviceName) {
   }
 
   apm::ipc::Response resetResp;
-  if (!apm::ipc::sendRequest(resetReq, resetResp, serviceName, &err)) {
+  if (!apm::ipc::sendRequestAuto(resetReq, resetResp, serviceName, &err)) {
     std::cerr << "Error: " << err << "\n";
     return 1;
   }
@@ -1087,7 +1087,7 @@ int cmdUpdate(const std::string &serviceName, const std::string &sessionToken) {
     renderProgressLines(ui);
   };
 
-  if (!apm::ipc::sendRequest(req, resp, serviceName, &err, onProgress)) {
+  if (!apm::ipc::sendRequestAuto(req, resp, serviceName, &err, onProgress)) {
     finalizeProgressLines(ui);
     std::cerr << "Error: " << err << "\n";
     return 1;
@@ -1128,7 +1128,7 @@ int cmdInstall(const std::string &serviceName, const std::string &sessionToken,
   apm::ipc::Response planResp;
   std::string err;
 
-  if (!apm::ipc::sendRequest(planReq, planResp, serviceName, &err)) {
+  if (!apm::ipc::sendRequestAuto(planReq, planResp, serviceName, &err)) {
     std::cerr << "Error: " << err << "\n";
     return 1;
   }
@@ -1251,7 +1251,7 @@ int cmdInstall(const std::string &serviceName, const std::string &sessionToken,
     renderProgressLines(ui);
   };
 
-  if (!apm::ipc::sendRequest(req, resp, serviceName, &err, onProgress)) {
+  if (!apm::ipc::sendRequestAuto(req, resp, serviceName, &err, onProgress)) {
     finalizeProgressLines(ui);
     std::cerr << "Error: " << err << "\n";
     return 1;
@@ -1314,7 +1314,7 @@ int cmdRemove(const std::string &serviceName, const std::string &sessionToken,
   apm::ipc::Response resp;
   std::string err;
 
-  if (!apm::ipc::sendRequest(req, resp, serviceName, &err)) {
+  if (!apm::ipc::sendRequestAuto(req, resp, serviceName, &err)) {
     std::cerr << "Error: " << err << "\n";
     return 1;
   }
@@ -1340,7 +1340,7 @@ int cmdApkInstall(const std::string &serviceName,
   apm::ipc::Response resp;
   std::string err;
 
-  if (!apm::ipc::sendRequest(req, resp, serviceName, &err)) {
+  if (!apm::ipc::sendRequestAuto(req, resp, serviceName, &err)) {
     std::cerr << "Error: " << err << "\n";
     return 1;
   }
@@ -1364,7 +1364,7 @@ int cmdApkUninstall(const std::string &serviceName,
   apm::ipc::Response resp;
   std::string err;
 
-  if (!apm::ipc::sendRequest(req, resp, serviceName, &err)) {
+  if (!apm::ipc::sendRequestAuto(req, resp, serviceName, &err)) {
     std::cerr << "Error: " << err << "\n";
     return 1;
   }
@@ -1396,7 +1396,7 @@ int cmdUpgrade(const std::string &serviceName, const std::string &sessionToken,
   apm::ipc::Response resp;
   std::string err;
 
-  if (!apm::ipc::sendRequest(req, resp, serviceName, &err)) {
+  if (!apm::ipc::sendRequestAuto(req, resp, serviceName, &err)) {
     std::cerr << "Error: " << err << "\n";
     return 1;
   }
@@ -1417,7 +1417,7 @@ int cmdAutoremove(const std::string &serviceName,
   apm::ipc::Response resp;
   std::string err;
 
-  if (!apm::ipc::sendRequest(req, resp, serviceName, &err)) {
+  if (!apm::ipc::sendRequestAuto(req, resp, serviceName, &err)) {
     std::cerr << "Error: " << err << "\n";
     return 1;
   }
@@ -1474,7 +1474,7 @@ int cmdFactoryReset(const std::string &serviceName,
   apm::ipc::Response resp;
   std::string err;
 
-  if (!apm::ipc::sendRequest(req, resp, serviceName, &err)) {
+  if (!apm::ipc::sendRequestAuto(req, resp, serviceName, &err)) {
     std::cerr << "Error: " << err << "\n";
     return 1;
   }
@@ -1506,7 +1506,7 @@ int cmdModuleInstall(const std::string &serviceName,
   apm::ipc::Response resp;
   std::string err;
 
-  if (!apm::ipc::sendRequest(req, resp, serviceName, &err)) {
+  if (!apm::ipc::sendRequestAuto(req, resp, serviceName, &err)) {
     std::cerr << "Error: " << err << "\n";
     return 1;
   }
@@ -1532,7 +1532,7 @@ static int runModuleToggle(const std::string &serviceName,
   apm::ipc::Response resp;
   std::string err;
 
-  if (!apm::ipc::sendRequest(req, resp, serviceName, &err)) {
+  if (!apm::ipc::sendRequestAuto(req, resp, serviceName, &err)) {
     std::cerr << "Error: " << err << "\n";
     return 1;
   }
@@ -1573,7 +1573,7 @@ int cmdModuleList(const std::string &serviceName,
   apm::ipc::Response resp;
   std::string err;
 
-  if (!apm::ipc::sendRequest(req, resp, serviceName, &err)) {
+  if (!apm::ipc::sendRequestAuto(req, resp, serviceName, &err)) {
     std::cerr << "Error: " << err << "\n";
     return 1;
   }
@@ -1761,6 +1761,11 @@ int main(int argc, char **argv) {
   apm::logger::setMinLogLevel(apm::logger::Level::Debug);
 
   std::string serviceName = apm::config::BINDER_SERVICE;
+  // Log chosen transport mode (binder vs ipc) for diagnostics.
+  auto chosenMode = apm::ipc::detectTransportMode();
+  apm::logger::info(
+      std::string("apm: transport mode = ") +
+      (chosenMode == apm::ipc::TransportMode::Binder ? "binder" : "ipc"));
 
   int i = 1;
   while (i < argc) {

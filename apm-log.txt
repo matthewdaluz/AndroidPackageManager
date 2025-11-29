@@ -1,0 +1,47 @@
+matthew@MatthewPC:~$ adb -d shell
+lynx:/ $ 
+lynx:/ $ su
+lynx:/ # 
+lynx:/ # apm  
+APM - Android Package Manager
+Usage:
+  apm [--service <name>] <command> [args...]
+
+Commands:
+  ping                        Check connection to apmd
+  update                      Update repository metadata
+  install <pkg>               Install a package from repo
+  package-install <file>      Install a local .deb/.gz/.xz
+  remove <pkg>                Remove an installed package
+  upgrade [pkgs...]           Upgrade all or selected packages
+  autoremove                  Remove unused auto-installed deps
+  factory-reset               Reset APM data and installed content
+  forgot-password             Recover access with security questions
+  module-list                 List installed AMS modules
+  module-install <zip>        Install an AMS module from a ZIP
+  module-enable <name>        Enable an installed AMS module
+  module-disable <name>       Disable an AMS module
+  module-remove <name>        Remove an AMS module
+
+  apk-install <apk> [--install-as-system]
+                              Install APK (normal or system app)
+  apk-uninstall <package>     Uninstall APK by package name
+
+  list                        Show installed packages
+  info <pkg>                  Show detailed package information
+  search <pattern>            Search available repo packages
+  version                     Show APM version and build date
+  key-add <file.asc|.gpg>     Import a trusted public key
+
+  help                        Show this help
+
+1|lynx:/ # 
+1|lynx:/ # apm ping
+Error: Failed to prepare Binder transaction: Error (-38)
+Suggestion: Restart apmd and retry the command.
+1|lynx:/ # 
+1|lynx:/ # apm ping                                                                                                              
+Error: Failed to prepare Binder transaction: Error (-38)
+Suggestion: Restart apmd and retry the command.
+1|lynx:/ # 
+

@@ -57,7 +57,8 @@ inline constexpr const char *TERMUX_ROOT = "/data/apm/installed/termux";
 inline constexpr const char *TERMUX_PREFIX = "/data/apm/installed/termux/usr";
 inline constexpr const char *TERMUX_ENV_FILE =
     "/data/apm/installed/termux/env.sh";
-inline constexpr const char *TERMUX_HOME_DIR = "/data/apm/installed/termux/home";
+inline constexpr const char *TERMUX_HOME_DIR =
+    "/data/apm/installed/termux/home";
 inline constexpr const char *TERMUX_TMP_DIR = "/data/apm/installed/termux/tmp";
 
 inline constexpr const char *MODULES_DIR = "/data/apm/modules";
@@ -89,6 +90,10 @@ inline constexpr const char *SOURCES_LIST = SOURCES_DIR;
 
 // Binder endpoint
 inline constexpr const char *BINDER_SERVICE = apm::binder::SERVICE_NAME;
+// IPC (UNIX domain) socket path used when running as Magisk-style system-wide
+// (/data/apm/bin). The daemon will bind here in IPC mode and the CLI will
+// connect here when Binder transport is unavailable or disabled.
+inline constexpr const char *IPC_SOCKET_PATH = "/data/apm/apmd.sock";
 
 // Default architecture for Debian-style repos
 inline constexpr const char *DEFAULT_ARCH = "arm64";

@@ -28,9 +28,12 @@
 #include "apmd.hpp"
 #include "ams/module_manager.hpp"
 #include "binder_service.hpp"
+#include "config.hpp"
 #include "export_path.hpp"
+#include "ipc_server.hpp"
 #include "logger.hpp"
 #include "security_manager.hpp"
+#include "transport.hpp"
 
 #include <atomic>
 #include <iostream>
@@ -80,13 +83,17 @@ static void startPathMaintenance(std::atomic<bool> &runFlag,
 
 // Configure logging, ensure the PATH/profile helper is loaded, and launch the
 // Binder service loop.
-int runDaemon(const std::string &serviceName) {
+int runDaemon(const std::string &serviceName, bool debugMode = false) {
   waitForDataReady();
 
   apm::logger::setLogFile("/data/apm/logs/apmd.log");
-  apm::logger::setMinLogLevel(apm::logger::Level::Info);
+  apm::logger::setMinLogLevel(debugMode ? apm::logger::Level::Debug
+                                        : apm::logger::Level::Info);
 
   apm::logger::info("apmd starting, service: " + serviceName);
+  if (debugMode) {
+    apm::logger::info("apmd: DEBUG mode enabled");
+  }
 
   apm::daemon::path::ensureProfileLoaded();
 
@@ -102,27 +109,56 @@ int runDaemon(const std::string &serviceName) {
     moduleManager.startEnabledModules();
   }
 
-  apm::daemon::SecurityManager securityManager;
-  apm::ipc::BinderService binderService(serviceName, moduleManager,
-                                        securityManager);
-  std::string binderErr;
-  if (binderService.start(&binderErr)) {
-    binderService.joinThreadPool();
+  // Decide transport mode and start appropriate server.
+  auto mode = apm::ipc::detectTransportMode();
+  apm::logger::info(
+      std::string("apmd: transport mode = ") +
+      (mode == apm::ipc::TransportMode::Binder ? "binder" : "ipc"));
+
+  if (mode == apm::ipc::TransportMode::Binder) {
+    apm::daemon::SecurityManager securityManager;
+    apm::ipc::BinderService binderService(serviceName, moduleManager,
+                                          securityManager);
+    std::string binderErr;
+    apm::logger::info("apmd: attempting to start Binder service");
+    if (binderService.start(&binderErr)) {
+      apm::logger::info("apmd: Binder service started; entering thread pool");
+      binderService.joinThreadPool();
+      pathLoopRun.store(false);
+      if (pathLoopThread.joinable()) {
+        pathLoopThread.join();
+      }
+      apm::logger::info("apmd exiting Binder thread pool");
+      return 0;
+    }
+    apm::logger::error("runDaemon: failed to start Binder service: " +
+                       (binderErr.empty() ? "unknown error" : binderErr));
     pathLoopRun.store(false);
     if (pathLoopThread.joinable()) {
       pathLoopThread.join();
     }
-    apm::logger::info("apmd exiting Binder thread pool");
+    return 1;
+  } else {
+    // IPC mode
+    apm::logger::info("apmd: starting IPC server on " +
+                      std::string(apm::config::IPC_SOCKET_PATH));
+    apm::ipc::IpcServer server(apm::config::IPC_SOCKET_PATH, moduleManager);
+    if (!server.start()) {
+      apm::logger::error("apmd: failed to start IPC server");
+      pathLoopRun.store(false);
+      if (pathLoopThread.joinable()) {
+        pathLoopThread.join();
+      }
+      return 1;
+    }
+    server.run();
+    pathLoopRun.store(false);
+    if (pathLoopThread.joinable()) {
+      pathLoopThread.join();
+    }
+    apm::logger::info("apmd: IPC server loop exited");
     return 0;
   }
-
-  apm::logger::error("runDaemon: failed to start Binder service: " +
-                     (binderErr.empty() ? "unknown error" : binderErr));
-  pathLoopRun.store(false);
-  if (pathLoopThread.joinable()) {
-    pathLoopThread.join();
-  }
-  return 1;
 }
 
 } // namespace apm::daemon
@@ -130,18 +166,22 @@ int runDaemon(const std::string &serviceName) {
 // Thin wrapper around runDaemon that parses --socket/--help flags.
 int main(int argc, char **argv) {
   std::string serviceName = apm::daemon::DEFAULT_SERVICE_NAME;
+  bool debugMode = false;
 
-  // Simple arg parser: apmd [--service name]
+  // Simple arg parser: apmd [--service name] [--debug]
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
     if ((arg == "--service" || arg == "--svc") && i + 1 < argc) {
       serviceName = argv[++i];
+    } else if (arg == "--debug" || arg == "-d") {
+      debugMode = true;
     } else if (arg == "--help" || arg == "-h") {
       std::cout << "apmd - APM daemon\n"
-                << "Usage: apmd [--service <name>]\n";
+                << "Usage: apmd [--service <name>] [--debug]\n"
+                << "  --debug, -d    Enable verbose debug logging\n";
       return 0;
     }
   }
 
-  return apm::daemon::runDaemon(serviceName);
+  return apm::daemon::runDaemon(serviceName, debugMode);
 }

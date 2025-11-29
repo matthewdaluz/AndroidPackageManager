@@ -413,6 +413,8 @@ endif()
 add_executable(apm
     src/apm/apm.cpp
     src/apm/binder_client.cpp
+  src/apm/ipc_client.cpp
+  src/apm/transport.cpp
     src/core/binder_support.cpp
     src/apmd/apk_installer.cpp
     src/apmd/export_path.cpp
@@ -472,6 +474,7 @@ add_executable(apmd
     src/apmd/apmd.cpp
     src/apmd/binder_service.cpp
     src/core/binder_support.cpp
+  src/apm/transport.cpp
     src/apmd/request_dispatcher.cpp
     src/apmd/protocol.cpp
     src/apmd/install_manager.cpp
@@ -504,6 +507,7 @@ add_executable(apmd
 
 target_include_directories(apmd PRIVATE
     src/apmd/include
+  src/apm/include
     src/ams/include
     src/core/include
     src/util/include

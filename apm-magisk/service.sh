@@ -63,3 +63,22 @@ while :; do
     start_apmd
     sleep 5
 done
+
+# Wait for Binder readiness by pinging the daemon via CLI.
+# This avoids races where clients call apm before the Binder service registers.
+readiness_timeout_sec=30
+elapsed=0
+while [ $elapsed -lt $readiness_timeout_sec ]; do
+    # The CLI returns 0 on success for ping; suppress output.
+    if /system/bin/apm ping >/dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+done
+
+if [ $elapsed -ge $readiness_timeout_sec ]; then
+    echo "[apm-magisk] Warning: apmd readiness check timed out after ${readiness_timeout_sec}s" >> "$LOG_FILE"
+else
+    echo "[apm-magisk] apmd Binder service is ready (in ${elapsed}s)" >> "$LOG_FILE"
+fi

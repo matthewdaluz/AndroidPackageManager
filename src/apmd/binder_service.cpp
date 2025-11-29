@@ -39,7 +39,6 @@
 #include <android/binder_parcel.h>
 
 #include <limits>
-#include <utility>
 
 namespace apm::ipc {
 
@@ -146,15 +145,13 @@ void sendProgressToClient(AIBinder *callback,
 
     AParcel *reply = nullptr;
     binder_status_t txStatus = AIBinder_transact(
-        callback, apm::binder::TX_PROGRESS_EVENT, &parcel, &reply,
-        FLAG_ONEWAY);
+        callback, apm::binder::TX_PROGRESS_EVENT, &parcel, &reply, FLAG_ONEWAY);
     if (reply) {
       AParcel_delete(reply);
     }
     if (txStatus != STATUS_OK) {
-      apm::logger::warn(
-          "BinderService: progress transact failed with status " +
-          std::to_string(txStatus));
+      apm::logger::warn("BinderService: progress transact failed with status " +
+                        std::to_string(txStatus));
     }
   }
 }
@@ -165,28 +162,62 @@ public:
 
   binder_status_t handleTransact(transaction_code_t code, const AParcel *in,
                                  AParcel *out) {
+    apm::logger::debug("=== BinderService::handleTransact: ENTER ===");
+    apm::logger::debug("handleTransact: code=" + std::to_string(code));
+    apm::logger::debug("handleTransact: in=" +
+                       std::to_string(reinterpret_cast<uintptr_t>(in)));
+    apm::logger::debug("handleTransact: out=" +
+                       std::to_string(reinterpret_cast<uintptr_t>(out)));
+
     if (__builtin_available(android 34, *)) {
       if (code != apm::binder::TX_SEND_REQUEST) {
+        apm::logger::debug(
+            "handleTransact: UNKNOWN transaction code, expected " +
+            std::to_string(apm::binder::TX_SEND_REQUEST));
         return STATUS_UNKNOWN_TRANSACTION;
       }
 
+      apm::logger::debug("handleTransact: reading request string from parcel");
+
       std::string rawRequest;
       binder_status_t status = readParcelString(in, rawRequest);
+      apm::logger::debug("handleTransact: readParcelString returned status=" +
+                         std::to_string(status) +
+                         " length=" + std::to_string(rawRequest.size()));
+
       if (status != STATUS_OK) {
+        apm::logger::error("handleTransact: read request FAILED");
         return status;
       }
 
+      apm::logger::debug("handleTransact: reading progress binder from parcel");
+
       AIBinder *cbRaw = nullptr;
       status = AParcel_readStrongBinder(in, &cbRaw);
+      apm::logger::debug("handleTransact: readStrongBinder returned status=" +
+                         std::to_string(status) + " binder=" +
+                         std::to_string(reinterpret_cast<uintptr_t>(cbRaw)));
+
       if (status != STATUS_OK) {
+        apm::logger::error("handleTransact: read progress binder FAILED");
         return status;
       }
+
+      if (!cbRaw) {
+        apm::logger::info(
+            "BinderService: no progress callback provided by client");
+      }
+
       ScopedStrongBinder callback(cbRaw);
+
+      apm::logger::debug("handleTransact: parsing request");
 
       apm::ipc::Request req;
       apm::ipc::Response resp;
       std::string parseErr;
+
       if (!parseRequest(rawRequest, req, &parseErr)) {
+        apm::logger::error("handleTransact: parseRequest FAILED: " + parseErr);
         resp.success = false;
         resp.message =
             parseErr.empty() ? "Bad request" : ("Bad request: " + parseErr);
@@ -195,15 +226,33 @@ public:
         return writeParcelString(out, payload);
       }
 
-      apm::logger::info("BinderService: received request");
+      apm::logger::info("BinderService: received request type=" +
+                        std::to_string(static_cast<int>(req.type)) +
+                        " id=" + req.id);
+      apm::logger::debug("handleTransact: dispatching request to handler");
+
       auto progressCb = [&](const apm::ipc::Response &progress) {
+        apm::logger::debug("handleTransact: sending progress update");
         sendProgressToClient(callback.get(), progress);
       };
 
       m_owner.dispatchRequest(req, resp, progressCb);
+
+      apm::logger::debug(
+          "handleTransact: request dispatched, serializing response");
+
       std::string payload = serializeResponse(resp);
-      return writeParcelString(out, payload);
+      apm::logger::debug("handleTransact: response serialized, length=" +
+                         std::to_string(payload.size()));
+
+      binder_status_t writeStatus = writeParcelString(out, payload);
+      apm::logger::debug("handleTransact: writeParcelString returned " +
+                         std::to_string(writeStatus));
+
+      apm::logger::debug("=== BinderService::handleTransact: EXIT ===");
+      return writeStatus;
     }
+
     return STATUS_FAILED_TRANSACTION;
   }
 
@@ -257,12 +306,14 @@ void BinderService::dispatchRequest(
 
 bool BinderService::start(std::string *errorMsg) {
   if (__builtin_available(android 34, *)) {
+    apm::logger::info("BinderService: checking Binder runtime availability");
     if (!apm::binder::isBinderRuntimeAvailable(errorMsg)) {
       apm::logger::error("BinderService: Binder runtime unavailable");
       return false;
     }
 
     if (!gServiceClass) {
+      apm::logger::info("BinderService: defining Binder service class");
       gServiceClass = AIBinder_Class_define(apm::binder::INTERFACE, onCreate,
                                             onDestroy, onTransact);
     }
@@ -273,6 +324,7 @@ bool BinderService::start(std::string *errorMsg) {
       return false;
     }
 
+    apm::logger::info("BinderService: creating Binder instance object");
     m_binder = AIBinder_new(gServiceClass, this);
     if (!m_binder) {
       if (errorMsg)
@@ -281,6 +333,8 @@ bool BinderService::start(std::string *errorMsg) {
     }
 
     std::string regErr;
+    apm::logger::info("BinderService: registering service '" + m_instanceName +
+                      "'");
     if (!apm::binder::addService(m_binder, m_instanceName, &regErr)) {
       if (errorMsg)
         *errorMsg = regErr;
@@ -291,6 +345,8 @@ bool BinderService::start(std::string *errorMsg) {
       return false;
     }
 
+    apm::logger::info(
+        "BinderService: configuring thread pool (max=1, callerJoins=true)");
     if (!apm::binder::configureThreadPool(1, true, errorMsg)) {
       if (__builtin_available(android 34, *)) {
         AIBinder_decStrong(m_binder);
@@ -316,6 +372,7 @@ void BinderService::joinThreadPool() {
     return;
   }
   if (__builtin_available(android 34, *)) {
+    apm::logger::info("BinderService: joining Binder thread pool");
     apm::binder::joinThreadPool();
   } else {
     apm::logger::warn("BinderService: joinThreadPool unavailable below API 34");

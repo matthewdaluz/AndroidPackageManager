@@ -35,17 +35,14 @@ namespace apm::ipc {
 
 using ProgressHandler = std::function<void(const Response &)>;
 
-// Send a Request to apmd over Binder and receive a Response.
-//
-// - req:         Request to send
-// - resp:        Filled with parsed response
-// - serviceName: Binder service instance name (Android)
-// - errorMsg:    optional, filled on failure
+// Send a Request to apmd over Binder and receive a Response directly using
+// the Binder transport. Prefer using transport::sendRequestAuto() instead of
+// calling this directly unless you explicitly need Binder-only behavior.
 //
 // Returns true on success, false if connection failed / parse error / etc.
-bool sendRequest(const Request &req, Response &resp,
-                 const std::string &serviceName,
-                 std::string *errorMsg = nullptr,
-                 ProgressHandler progressHandler = {});
+bool sendRequestBinder(const Request &req, Response &resp,
+                       const std::string &serviceName,
+                       std::string *errorMsg = nullptr,
+                       ProgressHandler progressHandler = {});
 
 } // namespace apm::ipc
