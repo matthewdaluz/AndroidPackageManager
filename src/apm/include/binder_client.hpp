@@ -26,6 +26,13 @@
 
 #pragma once
 
+/*
+ * NOTICE: Binder transport deprecated
+ * ----------------------------------
+ * Binder is no longer used by default. IPC over UNIX socket is the
+ * only active transport. This header remains for reference so future
+ * contributors can re-enable Binder if desired.
+ */
 #include "protocol.hpp"
 
 #include <functional>

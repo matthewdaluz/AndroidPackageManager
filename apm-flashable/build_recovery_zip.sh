@@ -89,7 +89,28 @@ if [ -f "${ZIP_PATH}" ]; then
     log_info "Location: ${ZIP_PATH}"
     log_info "Size: $(du -h "${ZIP_PATH}" | cut -f1)"
     echo ""
+    
+    # Verify critical components
+    log_info "Verifying ZIP contents..."
+    if unzip -l "${ZIP_PATH}" | grep -q "system/bin/apmd"; then
+        log_info "  ✓ APM binaries included"
+    fi
+    if unzip -l "${ZIP_PATH}" | grep -q "system/etc/init/init.apmd.rc"; then
+        log_info "  ✓ Init service included"
+    fi
+    if unzip -l "${ZIP_PATH}" | grep -q "system/etc/selinux/apm.cil"; then
+        log_info "  ✓ SELinux policy (apm.cil) included"
+    fi
+    if unzip -l "${ZIP_PATH}" | grep -q "system/etc/selinux/apm_file_contexts"; then
+        log_info "  ✓ SELinux file contexts included"
+    fi
+    if unzip -l "${ZIP_PATH}" | grep -q "system/etc/selinux/apm_service_contexts"; then
+        log_info "  ✓ SELinux service contexts included"
+    fi
+    
+    echo ""
     log_info "Flash this ZIP in LineageOS Recovery to install APM system-wide."
+    log_info "APM includes custom SELinux policies for enforcing mode support."
     log_info "After flashing, reboot and run 'apm ping' to verify installation."
 else
     log_error "Failed to create recovery ZIP!"

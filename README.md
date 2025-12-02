@@ -7,7 +7,7 @@ APM is a GPLv3-licensed package manager for rooted Android. It mirrors the APT w
 
 | Piece | Role |
 | ----- | ---- |
-| `apm` | User-facing CLI. Talks to the daemon over `/data/apm/apmd.sock`, renders progress, and runs local-only queries (`list`, `info`, `search`, manual installs). |
+| `apm` | User-facing CLI. Talks to the daemon over `/data/apm/apmd.sock` (IPC-only), renders progress, and runs local-only queries (`list`, `info`, `search`, manual installs). |
 | `apmd` | Root daemon. Downloads repo metadata, installs/upgrades/removes packages, maintains PATH helper scripts, and handles APK/system-overlay work. |
 | AMS | Built-in module system similar to Magisk. Modules live under `/data/apm/modules`, carry metadata + overlay payloads, and are mounted via OverlayFS by `apmd` at startup or on demand. |
 | Core | Shared plumbing for repo parsing, status DB, dependency resolution, tar/deb extraction, and download helpers (curl + zlib). |
@@ -98,14 +98,14 @@ APM ships a Soong blueprint for Android 15 platform builds.
 1. Place this tree at `system/apm/` in your AOSP checkout.
 2. Add `apm` and `apmd` to your product's `PRODUCT_PACKAGES` (for example in `device.mk`), then build with `m apm apmd` or as part of a full platform build.
 3. Soong installs both binaries into `/system/bin/` and drops `init.apmd.rc` into `/system/etc/init/`.
-4. The bundled init script waits for `/data`, provisions `/data/apm` subdirectories, and keeps calling `apmd` as root every five seconds until it is running so `apm` remains usable without root.
+4. The bundled init script waits for `/data`, provisions `/data/apm` subdirectories, and starts `apmd` as root. Transport is IPC-only.
 
 
 ## Deploying on-device
 
 1. Push `apm` and `apmd` (e.g., to `/data/local/tmp`).
 2. Initialize the layout once: `su -c 'mkdir -p /data/apm/{installed,pkgs,lists,cache,logs,sources,sources.list.d,keys}'`.
-3. Start the daemon as root: `su -c "/data/local/tmp/apmd --socket /data/apm/apmd.sock"`.
+3. Start the daemon as root: `su -c "/data/local/tmp/apmd"` (the daemon binds `/data/apm/apmd.sock` by default).
 4. Run CLI commands; override the socket with `apm --socket <path> ...` if needed.
 
 
@@ -225,6 +225,7 @@ AMS is a Magisk-style overlay framework baked into `apmd`. It targets rooted dev
 - Daemon log: `/data/apm/logs/apmd.log`.
 - Module logs: `/data/apm/logs/modules/<module>.log`.
 - Socket override: `apm --socket /tmp/custom.sock ...` / `apmd --socket /tmp/custom.sock`.
+- Binder transport: deprecated and unused by default; code remains for reference only.
 
 
 ## Known limitations / roadmap
@@ -233,7 +234,7 @@ AMS is a Magisk-style overlay framework baked into `apmd`. It targets rooted dev
 - Dependency resolution only follows the first alternative and goes one level deep.
 - `Packages.xz` indices are ignored on Android builds.
 - System APK install assumes Magisk-owned `/data/adb/modules`.
-- No SELinux policy installer; devices must already permit `/data/apm` writes and OverlayFS mounts.
+- SELinux policies are provided by the flashable ZIP to permit `/data/apm` writes, socket access, and OverlayFS mounts.
 - AMS requires a clean base mount snapshot; if `/system` is already overlay-mounted, capture will fail until the device reboots cleanly.
 
 

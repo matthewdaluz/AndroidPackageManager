@@ -26,6 +26,13 @@
  *
  */
 
+/*
+ * NOTICE: Binder transport deprecated
+ * ----------------------------------
+ * The helper functions here remain for reference, but the runtime
+ * operates in IPC-only mode and does not depend on Binder.
+ */
+
 #include "binder_support.hpp"
 
 #if defined(__ANDROID__)

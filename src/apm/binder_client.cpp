@@ -25,6 +25,18 @@
  *
  */
 
+/*
+ * NOTICE: Binder transport deprecated
+ * ----------------------------------
+ * As of December 2025, the Binder transport is no longer used by default.
+ * The project runs in IPC-only mode over a UNIX domain socket under
+ * /data/apm/apmd.sock for reliability across ROMs and SELinux policies.
+ *
+ * This Binder client implementation is retained for reference only to aid
+ * contributors who may wish to re-enable Binder in the future. It is not
+ * invoked by the current code paths.
+ */
+
 #include "binder_client.hpp"
 
 #include "binder_defs.hpp"

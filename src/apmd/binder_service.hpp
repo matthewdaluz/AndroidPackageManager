@@ -27,6 +27,13 @@
 
 #pragma once
 
+/*
+ * NOTICE: Binder transport deprecated
+ * ----------------------------------
+ * Binder-based server is not used by default. IPC socket is the active
+ * transport. This header is retained for contributors who may wish to
+ * re-enable Binder in the future.
+ */
 #include "ams/module_manager.hpp"
 #include "binder_support.hpp"
 #include "request_dispatcher.hpp"

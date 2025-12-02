@@ -9,6 +9,7 @@ set(CMAKE_ANDROID_API 29)
 
 # Emulator mode for x86_64 Linux PC builds
 option(APM_EMULATOR_MODE "Build APM in emulator mode for x86_64 Linux" OFF)
+option(APM_ENABLE_BINDER "Build Binder transport support (deprecated by default)" OFF)
 if(APM_EMULATOR_MODE)
   add_compile_definitions(APM_EMULATOR_MODE=1)
   message(STATUS "APM Emulator Mode: ENABLED")
@@ -419,12 +420,10 @@ endif()
 # ======================================================
 # APM Client Binary
 # ======================================================
-add_executable(apm
+set(APM_CLIENT_SOURCES
     src/apm/apm.cpp
-    src/apm/binder_client.cpp
-  src/apm/ipc_client.cpp
-  src/apm/transport.cpp
-    src/core/binder_support.cpp
+    src/apm/ipc_client.cpp
+    src/apm/transport.cpp
     src/core/config.cpp
     src/apmd/apk_installer.cpp
     src/apmd/export_path.cpp
@@ -446,7 +445,6 @@ add_executable(apm
     src/core/manual_package.cpp
     src/core/release_parser.cpp
     src/core/security.cpp
-    src/core/binder_support.cpp
     src/ams/module_info.cpp
     src/ams/module_manager.cpp
     src/util/crypto/sha256.cpp
@@ -457,6 +455,16 @@ add_executable(apm
     src/util/process_lock.cpp
     src/util/crypto/sha256.cpp
 )
+
+if(APM_ENABLE_BINDER)
+  list(APPEND APM_CLIENT_SOURCES
+    src/apm/binder_client.cpp
+    src/core/binder_support.cpp
+  )
+  add_compile_definitions(APM_ENABLE_BINDER=1)
+endif()
+
+add_executable(apm ${APM_CLIENT_SOURCES})
 
 target_include_directories(apm PRIVATE
     src/apm/include
@@ -482,15 +490,12 @@ target_link_libraries(apm PRIVATE
 # ======================================================
 # APM Daemon Binary
 # ======================================================
-add_executable(apmd
+set(APM_DAEMON_SOURCES
     src/apmd/apmd.cpp
-    src/apmd/binder_service.cpp
     src/apmd/ipc_server.cpp
-    src/core/binder_support.cpp
     src/core/config.cpp
-  src/apm/transport.cpp
+    src/apm/transport.cpp
     src/apm/ipc_client.cpp
-    src/apm/binder_client.cpp
     src/apmd/request_dispatcher.cpp
     src/apmd/protocol.cpp
     src/apmd/install_manager.cpp
@@ -523,6 +528,17 @@ add_executable(apmd
     src/apmd/security_manager.cpp
 )
 
+if(APM_ENABLE_BINDER)
+  list(APPEND APM_DAEMON_SOURCES
+    src/apmd/binder_service.cpp
+    src/apm/binder_client.cpp
+    src/core/binder_support.cpp
+  )
+  add_compile_definitions(APM_ENABLE_BINDER=1)
+endif()
+
+add_executable(apmd ${APM_DAEMON_SOURCES})
+
 target_include_directories(apmd PRIVATE
     src/apmd/include
   src/apm/include
@@ -545,7 +561,7 @@ target_link_libraries(apmd PRIVATE
     ${APM_BUNDLED_TLS_LIBS}
 )
 
-if(ANDROID)
+if(ANDROID AND APM_ENABLE_BINDER)
   find_library(ANDROID_BINDER_NDK_LIB binder_ndk)
   find_library(ANDROID_DL_LIB dl)
 

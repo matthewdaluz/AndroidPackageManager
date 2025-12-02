@@ -93,6 +93,33 @@ LineageOS OTA updates preserve APM through `/system/addon.d/30-apm.sh`:
 - **Recovery**: LineageOS Recovery or AOSP-based recovery
 - **Storage**: ~10 MB free on system partition
 
+## ⚠️ SELinux Compatibility Notice
+
+**Current approach:** APM runs as an init service with `u:r:init:s0` context and should work with SELinux in **enforcing mode**.
+
+The daemon is started by init with proper capabilities and socket permissions, which should allow Binder service registration without requiring permissive mode.
+
+**If you experience SELinux denials:**
+- Check `dmesg | grep avc | grep apmd` for denials
+- Verify SELinux mode: `getenforce` (should work in enforcing)
+- If issues persist, you may need to set permissive mode manually or wait for proper SELinux policy implementation
+
+**Known limitations:**
+- Some SELinux policies may still block custom Binder services
+- IPC socket fallback provides alternative if Binder fails
+- Custom ROM modifications may be needed for full enforcing mode support
+
+**For maximum security:**
+- APM attempts to work with enforcing SELinux first
+- Falls back to IPC socket transport if Binder is blocked
+- Only use permissive mode if both transports fail
+
+**If you need permissive mode:**
+Add this line to `init.apmd.rc` in `on post-fs-data` section:
+```
+exec - root -- /system/bin/setenforce 0
+```
+
 ## Limitations
 
 - **ARM64 only**: No support for 32-bit devices (yet)

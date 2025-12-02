@@ -27,6 +27,12 @@
 
 #pragma once
 
+/*
+ * NOTICE: Binder transport deprecated
+ * ----------------------------------
+ * Binder is not used at runtime; IPC socket is the only transport.
+ * This header remains to preserve optional Binder support for future work.
+ */
 #include <string>
 
 struct AIBinder;

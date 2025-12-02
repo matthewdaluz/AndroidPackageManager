@@ -1,0 +1,137 @@
+;; APM - Android Package Manager SELinux Policy
+;; Defines types and rules for apmd daemon and apm.apmd Binder service
+;; Compatible with Android 14+ (API 34+) SELinux policy
+
+;; Define apmd daemon type
+(type apmd)
+(type apmd_exec)
+
+;; Define apmd service type for Binder service manager
+(type apmd_service)
+
+;; Make apmd a domain
+(typeattribute apmd domain)
+
+;; Make apmd_exec a file type
+(typeattribute apmd_exec exec_type)
+(typeattribute apmd_exec file_type)
+
+;; Make apmd_service a service manager type
+(typeattribute apmd_service service_manager_type)
+
+;; Allow init to execute apmd
+(allow init apmd_exec (file (read open execute getattr)))
+(allow init apmd (process (transition)))
+(typetransition init apmd_exec process apmd)
+
+;; Allow apmd to use init capabilities
+(allow apmd self (capability (net_admin net_raw sys_admin sys_module dac_override dac_read_search)))
+(allow apmd self (capability2 (wake_alarm)))
+
+;; Allow apmd basic operations
+(allow apmd apmd (process (fork signal sigchld sigkill sigstop)))
+(allow apmd apmd (unix_stream_socket (create bind connect listen accept read write getopt setopt shutdown)))
+(allow apmd apmd (unix_dgram_socket (create bind connect read write)))
+(allow apmd apmd (netlink_kobject_uevent_socket (create bind read)))
+
+;; Allow apmd to register and manage Binder service
+(allow apmd apmd_service (service_manager (add find)))
+(allow apmd servicemanager (binder (call transfer)))
+(allow servicemanager apmd (binder (call transfer)))
+(allow servicemanager apmd (dir (search)))
+(allow servicemanager apmd (file (open read)))
+(allow servicemanager apmd_exec (file (open read)))
+
+;; Allow shell to access apmd service
+(allow shell apmd_service (service_manager (find)))
+(allow shell apmd (binder (call transfer)))
+(allow apmd shell (binder (call transfer)))
+
+;; Allow system_app and platform_app to access apmd service
+(allow system_app apmd_service (service_manager (find)))
+(allow system_app apmd (binder (call transfer)))
+(allow apmd system_app (binder (call transfer)))
+
+(allow platform_app apmd_service (service_manager (find)))
+(allow platform_app apmd (binder (call transfer)))
+(allow apmd platform_app (binder (call transfer)))
+
+;; Allow untrusted_app to access apmd service (for user-installed apps)
+(allow untrusted_app apmd_service (service_manager (find)))
+(allow untrusted_app apmd (binder (call transfer)))
+(allow apmd untrusted_app (binder (call transfer)))
+
+;; Allow apmd to access /data/apm
+(allow apmd apmd_data_file (dir (create read write add_name remove_name open getattr setattr search rmdir)))
+(allow apmd apmd_data_file (file (create read write open getattr setattr append unlink rename)))
+(allow apmd apmd_data_file (lnk_file (create read write open getattr setattr)))
+
+;; Define apmd data file type
+(type apmd_data_file)
+(typeattribute apmd_data_file data_file_type)
+(typeattribute apmd_data_file file_type)
+
+;; Allow apmd to create files in /data/apm with correct context
+(allow apmd system_data_file (dir (search)))
+(allow apmd apmd_data_file (filesystem (associate)))
+(typetransition apmd system_data_file dir "apm" apmd_data_file)
+
+;; Allow apmd to access system files for package installation
+(allow apmd system_file (dir (search read open getattr)))
+(allow apmd system_file (file (read open getattr execute)))
+(allow apmd system_lib_file (dir (search read open getattr)))
+(allow apmd system_lib_file (file (read open getattr execute map)))
+
+;; Allow apmd to access network for downloads
+(allow apmd node (tcp_socket (node_bind)))
+(allow apmd node (udp_socket (node_bind)))
+(allow apmd port (tcp_socket (name_bind name_connect)))
+(allow apmd self (tcp_socket (create connect read write getopt setopt bind listen accept)))
+(allow apmd self (udp_socket (create connect read write getopt setopt bind)))
+
+;; Allow apmd to create and use sockets
+(allow apmd apmd_socket (sock_file (create write unlink setattr getattr)))
+(allow apmd tmpfs (dir (search)))
+
+;; Define apmd socket type
+(type apmd_socket)
+(typeattribute apmd_socket file_type)
+
+;; Allow shell to connect to apmd socket
+(allow shell apmd_socket (sock_file (read write open getattr)))
+(allow shell apmd (unix_stream_socket (connectto read write getopt)))
+
+;; Allow apmd to execute shell commands
+(allow apmd shell_exec (file (read execute open getattr)))
+(allow apmd toolbox_exec (file (read execute open getattr)))
+(allow apmd system_file (lnk_file (read getattr)))
+
+;; Allow apmd to read device info
+(allow apmd sysfs (dir (search read open getattr)))
+(allow apmd sysfs (file (read open getattr)))
+(allow apmd proc (dir (search read open getattr)))
+(allow apmd proc (file (read open getattr)))
+(allow apmd proc_net (dir (search read)))
+(allow apmd proc_net (file (read open getattr)))
+
+;; Allow apmd to write logs
+(allow apmd apmd_data_file (dir (search)))
+(allow apmd apmd_data_file (file (create write append open)))
+
+;; Allow init to set apmd properties
+(allow init apmd (process (setcurrent)))
+(allow init apmd (binder (call transfer)))
+
+;; Allow apmd to use tmpfs for runtime data
+(allow apmd tmpfs (file (read write create open getattr unlink)))
+
+;; Allow apmd to interact with kernel modules (for AMS)
+(allow apmd self (system (module_request)))
+(allow apmd kernel (system (module_request)))
+
+;; Allow filesystem operations for package installation
+(allow apmd labeledfs (filesystem (mount unmount remount)))
+(allow apmd tmpfs (filesystem (mount unmount)))
+
+;; neverallow exceptions - apmd needs broad system access
+;; Note: These may need adjustment based on specific ROM policies

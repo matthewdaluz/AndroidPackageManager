@@ -25,6 +25,14 @@
  *
  */
 
+/*
+ * NOTICE: Binder transport deprecated
+ * ----------------------------------
+ * The daemon no longer registers a Binder service by default. IPC over
+ * UNIX domain socket is the sole runtime transport. This file is kept
+ * for reference and potential future Binder enablement.
+ */
+
 #include "binder_service.hpp"
 
 #include "binder_defs.hpp"

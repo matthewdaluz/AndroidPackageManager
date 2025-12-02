@@ -79,67 +79,15 @@ on post-fs-data
     restorecon_recursive /data/apm
     restorecon_recursive /data/ams
 
-    # Start apmd keeper service
-    start apmd-keeper
-    # Start daemon directly so keeper only handles restarts
+    # Start apmd service directly (IPC-only)
     start apmd
 
-service apmd-keeper /system/bin/sh -c '\
-    LOG_FILE=/data/apm/logs/apmd-keeper.log; \
-    SOCKET=/dev/socket/apmd; \
-    APMD_BIN=/system/bin/apmd; \
-    mkdir -p /data/apm/logs; \
-    touch "$LOG_FILE"; chmod 0644 "$LOG_FILE"; \
-    log() { echo "$(date +%F\ %T) - $*" >>"$LOG_FILE"; }; \
-    check_running() { /system/bin/pidof apmd >/dev/null 2>&1; }; \
-    try_start() { \
-        /system/bin/setprop ctl.start apmd; \
-        /system/bin/sleep 2; \
-        check_running && return 0; \
-        if [ -x "$APMD_BIN" ]; then \
-            log "Attempting $APMD_BIN --service apm.apmd"; \
-            "$APMD_BIN" --service apm.apmd >>"$LOG_FILE" 2>&1 & \
-            /system/bin/sleep 2; \
-            check_running && return 0; \
-            if command -v setsid >/dev/null 2>&1; then \
-                log "Attempting setsid $APMD_BIN"; \
-                /system/bin/setsid "$APMD_BIN" --service apm.apmd >>"$LOG_FILE" 2>&1 & \
-                /system/bin/sleep 2; \
-                check_running && return 0; \
-            fi; \
-            if command -v nohup >/dev/null 2>&1; then \
-                log "Attempting nohup $APMD_BIN"; \
-                nohup "$APMD_BIN" --service apm.apmd >>"$LOG_FILE" 2>&1 & \
-                /system/bin/sleep 2; \
-                check_running && return 0; \
-            fi; \
-        else \
-            log "ERROR: $APMD_BIN not found or not executable"; \
-        fi; \
-        return 1; \
-    }; \
-    while ! /system/bin/grep -q "[[:space:]]/data[[:space:]]" /proc/mounts; do \
-        /system/bin/sleep 1; \
-    done; \
-    while :; do \
-        if check_running; then \
-            /system/bin/sleep 5; \
-            continue; \
-        fi; \
-        log "apmd not running; trying restart methods"; \
-        try_start || log "apmd start failed"; \
-        /system/bin/sleep 5; \
-    done'
+service apmd /system/bin/apmd
     class late_start
     user root
     group root system inet shell
-    # Auto-start with late_start class
-    seclabel u:r:init:s0
-
-service apmd /system/bin/apmd --service apm.apmd --socket /dev/socket/apmd
-    class late_start
-    user root
-    group root system inet shell
-    socket apmd stream 660 root system
-    # Remove disabled so class late_start starts it automatically
-    seclabel u:r:init:s0
+    # IPC-only: daemon binds /data/apm/apmd.sock itself
+    seclabel u:r:apmd:s0
+    capabilities NET_ADMIN NET_RAW SYS_MODULE SYS_ADMIN DAC_OVERRIDE DAC_READ_SEARCH
+    # Auto-restart if crashes
+    restart

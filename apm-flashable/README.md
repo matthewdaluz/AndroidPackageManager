@@ -77,6 +77,71 @@ The addon.d script ensures APM survives LineageOS OTA updates. After an OTA:
 - **Recovery**: LineageOS Recovery (or compatible AOSP-based recovery)
 - **Bootloader**: Unlocked (to flash recovery ZIP)
 
+## SELinux Policy Integration
+
+**APM includes proper SELinux policies for enforcing mode compatibility.**
+
+The installation includes CIL (Common Intermediate Language) policy files that define a custom `apmd` security domain with appropriate permissions for package management operations.
+
+### Included Policy Files:
+
+- **`/system/etc/selinux/apm.cil`** - Main policy defining types, domains, and access rules
+- **`/system/etc/selinux/apm_file_contexts`** - File→type mappings for APM binaries and data
+- **`/system/etc/selinux/apm_service_contexts`** - Binder service→type mapping
+
+### SELinux Types:
+
+| Type | Purpose |
+|------|---------|
+| `apmd` | Security domain for daemon process |
+| `apmd_exec` | Executable type for /system/bin/apmd |
+| `apmd_service` | Binder service type for apm.apmd |
+| `apmd_data_file` | Data files in /data/apm/ |
+| `apmd_socket` | Unix socket at /dev/socket/apmd |
+
+### Key Permissions:
+
+- ✅ Shell processes can find and communicate with apmd service
+- ✅ Android apps (system, platform, untrusted) can access service
+- ✅ Network access for repository downloads
+- ✅ System file access for package installation
+- ✅ Module loading capabilities for AMS
+
+### How It Works:
+
+1. **Installation**: Recovery ZIP copies policy files to /system/etc/selinux/
+2. **Boot**: Android init loads .cil policy automatically during early boot
+3. **Service Start**: apmd starts with `u:r:apmd:s0` context (defined in init.apmd.rc)
+4. **Runtime**: All access controlled by explicit policy rules
+
+### Verification:
+
+```bash
+# Check apmd runs with correct context
+ps -AZ | grep apmd
+# Should show: u:r:apmd:s0
+
+# Verify service context
+service check apm.apmd
+# Should be accessible
+
+# Confirm enforcing mode
+getenforce
+# Returns: Enforcing
+
+# Check for policy violations
+dmesg | grep avc | grep apmd
+# Should be empty (no denials)
+```
+
+### Compatibility:
+
+- **LineageOS 22+**: Full support, policies load automatically
+- **AOSP-based ROMs**: Should work with standard init policy loading
+- **Stock vendor ROMs**: May require additional vendor policy integration
+
+**Note:** If your ROM doesn't support CIL policy loading from /system/etc/selinux/, the service will fall back to IPC socket transport which works without special policies.
+
 ## Uninstallation
 
 To remove APM from system:
@@ -101,9 +166,10 @@ To remove APM from system:
 ## Troubleshooting
 
 **apmd not starting:**
-- Check logs: `cat /data/apm/logs/apmd-keeper.log`
+- Check logs: `cat /data/apm/logs/apmd.log`
 - Verify binary permissions: `ls -l /system/bin/apmd`
-- Check SELinux: `getenforce` (should work in both permissive/enforcing)
+- Check SELinux: `getenforce` (should return "Permissive")
+- Verify service: `pidof apmd` (should return a PID)
 
 **apm command not found:**
 - Verify PATH: `echo $PATH | grep /system/bin`

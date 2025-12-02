@@ -1,0 +1,14 @@
+# APM File Contexts
+# Maps APM files to SELinux types defined in apm.cil
+
+# APM binaries
+/system/bin/apmd                u:object_r:apmd_exec:s0
+/system/bin/apm                 u:object_r:system_file:s0
+
+# APM data directory
+/data/apm(/.*)?                 u:object_r:apmd_data_file:s0
+
+# APM socket (IPC-only default)
+/data/apm/apmd.sock             u:object_r:apmd_socket:s0
+# Legacy socket mapping (kept for backward compatibility if used)
+/dev/socket/apmd                u:object_r:apmd_socket:s0
