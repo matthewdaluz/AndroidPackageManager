@@ -1,0 +1,175 @@
+matthew@MatthewPC:~/Documents/Projects/AndroidPackageManager$ adb shell service list | grep apm.apmd
+matthew@MatthewPC:~/Documents/Projects/AndroidPackageManager$ adb root
+restarting adbd as root
+matthew@MatthewPC:~/Documents/Projects/AndroidPackageManager$ 
+matthew@MatthewPC:~/Documents/Projects/AndroidPackageManager$ adb shell service list | grep apm.apmd
+matthew@MatthewPC:~/Documents/Projects/AndroidPackageManager$ 
+matthew@MatthewPC:~/Documents/Projects/AndroidPackageManager$ adb shell service list | grep apm.apmd
+87	apm.apmd: [com.redhead.apm.IApmService]
+matthew@MatthewPC:~/Documents/Projects/AndroidPackageManager$ 
+matthew@MatthewPC:~/Documents/Projects/AndroidPackageManager$ adb -d shell
+lynx:/ # 
+lynx:/ # apm     
+[2025-12-01 16:50:38] [DEBUG] transport: exe path indicates system install -> binder
+[2025-12-01 16:50:38] [INFO] apm: transport mode = binder
+APM - Android Package Manager
+Usage:
+  apm [--service <name>] <command> [args...]
+
+Commands:
+  ping                        Check connection to apmd
+  update                      Update repository metadata
+  install <pkg>               Install a package from repo
+  package-install <file>      Install a local .deb/.gz/.xz
+  remove <pkg>                Remove an installed package
+  upgrade [pkgs...]           Upgrade all or selected packages
+  autoremove                  Remove unused auto-installed deps
+  factory-reset               Reset APM data and installed content
+  forgot-password             Recover access with security questions
+  module-list                 List installed AMS modules
+  module-install <zip>        Install an AMS module from a ZIP
+  module-enable <name>        Enable an installed AMS module
+  module-disable <name>       Disable an AMS module
+  module-remove <name>        Remove an AMS module
+
+  apk-install <apk> [--install-as-system]
+                              Install APK (normal or system app)
+  apk-uninstall <package>     Uninstall APK by package name
+
+  list                        Show installed packages
+  info <pkg>                  Show detailed package information
+  search <pattern>            Search available repo packages
+  version                     Show APM version and build date
+  key-add <file.asc|.gpg>     Import a trusted public key
+
+  help                        Show this help
+
+1|lynx:/ # 
+1|lynx:/ # apm ping
+[2025-12-01 16:50:41] [DEBUG] transport: exe path indicates system install -> binder
+[2025-12-01 16:50:41] [INFO] apm: transport mode = binder
+[2025-12-01 16:50:41] [DEBUG] transport: exe path indicates system install -> binder
+[2025-12-01 16:50:41] [DEBUG] === sendRequestBinder: ENTER ===
+[2025-12-01 16:50:41] [DEBUG] sendRequestBinder: service='apm.apmd' req.id='ping-1' req.type=1
+[2025-12-01 16:50:41] [DEBUG] sendRequestBinder: API level check passed
+[2025-12-01 16:50:41] [DEBUG] sendRequestBinder: checking Binder runtime availability
+[2025-12-01 16:50:41] [DEBUG] ensureLoaded: checking API level availability
+[2025-12-01 16:50:41] [DEBUG] ensureLoaded: API 34+ available, proceeding with symbol loading
+[2025-12-01 16:50:41] [DEBUG] ensureLoaded: first call, attempting dynamic library load
+[2025-12-01 16:50:41] [DEBUG] ensureLoaded: trying to load libbinder_ndk.so
+[2025-12-01 16:50:41] [DEBUG] tryLoadFrom: attempting dlopen for libbinder_ndk.so
+[2025-12-01 16:50:41] [DEBUG] tryLoadFrom: dlopen succeeded, handle=18244845527337934373
+[2025-12-01 16:50:41] [DEBUG] tryLoadFrom: loading AServiceManager_addService
+[2025-12-01 16:50:41] [DEBUG] tryLoadFrom: AServiceManager_addService found
+[2025-12-01 16:50:41] [DEBUG] tryLoadFrom: loading AServiceManager_getService
+[2025-12-01 16:50:41] [DEBUG] tryLoadFrom: AServiceManager_getService found
+[2025-12-01 16:50:41] [DEBUG] tryLoadFrom: loading AServiceManager_waitForService
+[2025-12-01 16:50:41] [DEBUG] tryLoadFrom: AServiceManager_waitForService found
+[2025-12-01 16:50:41] [DEBUG] tryLoadFrom: loading ABinderProcess_setThreadPoolMaxThreadCount
+[2025-12-01 16:50:41] [DEBUG] tryLoadFrom: ABinderProcess_setThreadPoolMaxThreadCount found
+[2025-12-01 16:50:41] [DEBUG] tryLoadFrom: loading ABinderProcess_startThreadPool
+[2025-12-01 16:50:41] [DEBUG] tryLoadFrom: ABinderProcess_startThreadPool found
+[2025-12-01 16:50:41] [DEBUG] tryLoadFrom: loading ABinderProcess_joinThreadPool
+[2025-12-01 16:50:41] [DEBUG] tryLoadFrom: ABinderProcess_joinThreadPool found
+[2025-12-01 16:50:41] [DEBUG] tryLoadFrom: all symbols loaded successfully
+[2025-12-01 16:50:41] [DEBUG] ensureLoaded: successfully loaded libbinder_ndk.so
+[2025-12-01 16:50:41] [DEBUG] ensureLoaded: returning true
+[2025-12-01 16:50:41] [DEBUG] sendRequestBinder: runtime available
+[2025-12-01 16:50:41] [DEBUG] sendRequestBinder: attempting service lookup (fast path)
+[2025-12-01 16:50:41] [DEBUG] getService: ENTER for instance 'apm.apmd' wait=false
+[2025-12-01 16:50:41] [DEBUG] ensureLoaded: checking API level availability
+[2025-12-01 16:50:41] [DEBUG] ensureLoaded: API 34+ available, proceeding with symbol loading
+[2025-12-01 16:50:41] [DEBUG] ensureLoaded: returning true
+[2025-12-01 16:50:41] [DEBUG] getService: calling AServiceManager_getService
+[2025-12-01 16:50:41] [DEBUG] getService: obtained raw handle=12970367469778364320
+[2025-12-01 16:50:41] [DEBUG] getService: calling AIBinder_incStrong
+[2025-12-01 16:50:41] [DEBUG] getService: AIBinder_incStrong SUCCESS
+[2025-12-01 16:50:41] [DEBUG] getService: returning handle=12970367469778364320
+[2025-12-01 16:50:41] [DEBUG] sendRequestBinder: fast path SUCCESS
+[2025-12-01 16:50:41] [DEBUG] sendRequestBinder: service moved into ScopedStrongBinder, handle=12970367469778364320
+[2025-12-01 16:50:41] [DEBUG] sendRequestBinder: service.get()=12970367469778364320
+[2025-12-01 16:50:41] [DEBUG] sendRequestBinder: creating ProgressCallbackReceiver
+[2025-12-01 16:50:41] [DEBUG] sendRequestBinder: progressReceiver.binder()=0
+[2025-12-01 16:50:41] [DEBUG] sendRequestBinder: preparing to call AIBinder_prepareTransaction
+[2025-12-01 16:50:41] [DEBUG] sendRequestBinder:   service handle=12970367469778364320
+[2025-12-01 16:50:41] [DEBUG] sendRequestBinder: parcel=0
+[2025-12-01 16:50:41] [ERROR] binder_client: prepareTransaction FAILED
+[2025-12-01 16:50:41] [ERROR]   handle=12970367469778364320
+[2025-12-01 16:50:41] [ERROR]   status=-38
+[2025-12-01 16:50:41] [ERROR]   parcel=0
+[2025-12-01 16:50:41] [WARN] transport: binder request failed: Failed to prepare Binder transaction: Error (-38)
+Suggestion: Restart apmd and retry the command.
+[2025-12-01 16:50:41] [INFO] transport: attempting IPC fallback
+[2025-12-01 16:50:41] [ERROR] ipc_client: connect() failed: No such file or directory
+Error: Binder failed ('Failed to prepare Binder transaction: Error (-38)
+Suggestion: Restart apmd and retry the command.'); IPC fallback failed ('connect() failed: No such file or directory')
+1|lynx:/ # 
+1|lynx:/ # apm update
+[2025-12-01 16:50:48] [DEBUG] transport: exe path indicates system install -> binder
+[2025-12-01 16:50:48] [INFO] apm: transport mode = binder
+Set a new APM password/PIN: NEWFUTs1
+Confirm password/PIN: NEWFUTs1
+Set security questions (used for password/PIN recovery):
+  Question 1: test
+  Answer 1: test
+  Question 2: test
+  Answer 2: test
+  Question 3: test
+  Answer 3: test
+[2025-12-01 16:50:58] [DEBUG] transport: exe path indicates system install -> binder
+[2025-12-01 16:50:58] [DEBUG] === sendRequestBinder: ENTER ===
+[2025-12-01 16:50:58] [DEBUG] sendRequestBinder: service='apm.apmd' req.id='authenticate-1' req.type=2
+[2025-12-01 16:50:58] [DEBUG] sendRequestBinder: API level check passed
+[2025-12-01 16:50:58] [DEBUG] sendRequestBinder: checking Binder runtime availability
+[2025-12-01 16:50:58] [DEBUG] ensureLoaded: checking API level availability
+[2025-12-01 16:50:58] [DEBUG] ensureLoaded: API 34+ available, proceeding with symbol loading
+[2025-12-01 16:50:58] [DEBUG] ensureLoaded: first call, attempting dynamic library load
+[2025-12-01 16:50:58] [DEBUG] ensureLoaded: trying to load libbinder_ndk.so
+[2025-12-01 16:50:58] [DEBUG] tryLoadFrom: attempting dlopen for libbinder_ndk.so
+[2025-12-01 16:50:58] [DEBUG] tryLoadFrom: dlopen succeeded, handle=12860921845797648097
+[2025-12-01 16:50:58] [DEBUG] tryLoadFrom: loading AServiceManager_addService
+[2025-12-01 16:50:58] [DEBUG] tryLoadFrom: AServiceManager_addService found
+[2025-12-01 16:50:58] [DEBUG] tryLoadFrom: loading AServiceManager_getService
+[2025-12-01 16:50:58] [DEBUG] tryLoadFrom: AServiceManager_getService found
+[2025-12-01 16:50:58] [DEBUG] tryLoadFrom: loading AServiceManager_waitForService
+[2025-12-01 16:50:58] [DEBUG] tryLoadFrom: AServiceManager_waitForService found
+[2025-12-01 16:50:58] [DEBUG] tryLoadFrom: loading ABinderProcess_setThreadPoolMaxThreadCount
+[2025-12-01 16:50:58] [DEBUG] tryLoadFrom: ABinderProcess_setThreadPoolMaxThreadCount found
+[2025-12-01 16:50:58] [DEBUG] tryLoadFrom: loading ABinderProcess_startThreadPool
+[2025-12-01 16:50:58] [DEBUG] tryLoadFrom: ABinderProcess_startThreadPool found
+[2025-12-01 16:50:58] [DEBUG] tryLoadFrom: loading ABinderProcess_joinThreadPool
+[2025-12-01 16:50:58] [DEBUG] tryLoadFrom: ABinderProcess_joinThreadPool found
+[2025-12-01 16:50:58] [DEBUG] tryLoadFrom: all symbols loaded successfully
+[2025-12-01 16:50:58] [DEBUG] ensureLoaded: successfully loaded libbinder_ndk.so
+[2025-12-01 16:50:58] [DEBUG] ensureLoaded: returning true
+[2025-12-01 16:50:58] [DEBUG] sendRequestBinder: runtime available
+[2025-12-01 16:50:58] [DEBUG] sendRequestBinder: attempting service lookup (fast path)
+[2025-12-01 16:50:58] [DEBUG] getService: ENTER for instance 'apm.apmd' wait=false
+[2025-12-01 16:50:58] [DEBUG] ensureLoaded: checking API level availability
+[2025-12-01 16:50:58] [DEBUG] ensureLoaded: API 34+ available, proceeding with symbol loading
+[2025-12-01 16:50:58] [DEBUG] ensureLoaded: returning true
+[2025-12-01 16:50:58] [DEBUG] getService: calling AServiceManager_getService
+[2025-12-01 16:50:58] [DEBUG] getService: obtained raw handle=12970367464036505104
+[2025-12-01 16:50:58] [DEBUG] getService: calling AIBinder_incStrong
+[2025-12-01 16:50:58] [DEBUG] getService: AIBinder_incStrong SUCCESS
+[2025-12-01 16:50:58] [DEBUG] getService: returning handle=12970367464036505104
+[2025-12-01 16:50:58] [DEBUG] sendRequestBinder: fast path SUCCESS
+[2025-12-01 16:50:58] [DEBUG] sendRequestBinder: service moved into ScopedStrongBinder, handle=12970367464036505104
+[2025-12-01 16:50:58] [DEBUG] sendRequestBinder: service.get()=12970367464036505104
+[2025-12-01 16:50:58] [DEBUG] sendRequestBinder: creating ProgressCallbackReceiver
+[2025-12-01 16:50:58] [DEBUG] sendRequestBinder: progressReceiver.binder()=0
+[2025-12-01 16:50:58] [DEBUG] sendRequestBinder: preparing to call AIBinder_prepareTransaction
+[2025-12-01 16:50:58] [DEBUG] sendRequestBinder:   service handle=12970367464036505104
+[2025-12-01 16:50:58] [DEBUG] sendRequestBinder: parcel=0
+[2025-12-01 16:50:58] [ERROR] binder_client: prepareTransaction FAILED
+[2025-12-01 16:50:58] [ERROR]   handle=12970367464036505104
+[2025-12-01 16:50:58] [ERROR]   status=-38
+[2025-12-01 16:50:58] [ERROR]   parcel=0
+[2025-12-01 16:50:58] [WARN] transport: binder request failed: Failed to prepare Binder transaction: Error (-38)
+Suggestion: Restart apmd and retry the command.
+[2025-12-01 16:50:58] [INFO] transport: attempting IPC fallback
+[2025-12-01 16:50:58] [ERROR] ipc_client: connect() failed: No such file or directory
+Error: Binder failed ('Failed to prepare Binder transaction: Error (-38)
+Suggestion: Restart apmd and retry the command.'); IPC fallback failed ('connect() failed: No such file or directory')
+1|lynx:/ # 
+

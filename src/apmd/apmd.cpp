@@ -88,7 +88,7 @@ static void startPathMaintenance(std::atomic<bool> &runFlag,
 // Configure logging, ensure the PATH/profile helper is loaded, and launch the
 // Binder service loop.
 int runDaemon(const std::string &serviceName, bool debugMode,
-              bool emulatorMode) {
+              bool emulatorMode, const std::string &socketPath) {
   // Set emulator mode early so path getters work correctly
   apm::config::setEmulatorMode(emulatorMode);
 
@@ -175,6 +175,18 @@ int runDaemon(const std::string &serviceName, bool debugMode,
     apm::logger::info("apmd: attempting to start Binder service");
     if (binderService.start(&binderErr)) {
       apm::logger::info("apmd: Binder service started; entering thread pool");
+      
+      // Also start IPC server for fallback if socket path provided
+      if (!socketPath.empty()) {
+        apm::logger::info("apmd: starting IPC fallback server on " + socketPath);
+        apm::ipc::IpcServer ipcServer(socketPath, moduleManager);
+        if (ipcServer.start()) {
+          apm::logger::info("apmd: IPC fallback server started successfully");
+        } else {
+          apm::logger::warn("apmd: failed to start IPC fallback server");
+        }
+      }
+      
       binderService.joinThreadPool();
       pathLoopRun.store(false);
       if (pathLoopThread.joinable()) {
@@ -218,14 +230,17 @@ int runDaemon(const std::string &serviceName, bool debugMode,
 // Thin wrapper around runDaemon that parses --socket/--help flags.
 int main(int argc, char **argv) {
   std::string serviceName = apm::daemon::DEFAULT_SERVICE_NAME;
+  std::string socketPath = "";
   bool debugMode = false;
   bool emulatorMode = false;
 
-  // Simple arg parser: apmd [--service name] [--debug] [--emulator]
+  // Simple arg parser: apmd [--service name] [--socket path] [--debug] [--emulator]
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
     if ((arg == "--service" || arg == "--svc") && i + 1 < argc) {
       serviceName = argv[++i];
+    } else if (arg == "--socket" && i + 1 < argc) {
+      socketPath = argv[++i];
     } else if (arg == "--debug" || arg == "-d") {
       debugMode = true;
     } else if (arg == "--emulator") {
@@ -266,5 +281,5 @@ int main(int argc, char **argv) {
   }
 #endif
 
-  return apm::daemon::runDaemon(serviceName, debugMode, emulatorMode);
+  return apm::daemon::runDaemon(serviceName, debugMode, emulatorMode, socketPath);
 }

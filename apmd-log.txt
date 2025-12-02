@@ -1,0 +1,55 @@
+matthew@MatthewPC:~/Downloads$ adb -d shell
+lynx:/ # 
+lynx:/ # whoami
+root
+lynx:/ # 
+lynx:/ # apmd
+[2025-12-01 16:50:18] [INFO] apmd starting, service: apm.apmd
+/data/apm/installed/commands/export-path.sh[126]: can't create /system/etc/profile: Read-only file system
+/data/apm/installed/commands/export-path.sh[126]: can't create /system/etc/mkshrc: Read-only file system
+/data/apm/installed/commands/export-path.sh[126]: can't create /etc/profile: Read-only file system
+[2025-12-01 16:50:19] [INFO] AMS captured base mount for /system
+[2025-12-01 16:50:19] [INFO] AMS captured base mount for /vendor
+[2025-12-01 16:50:19] [INFO] AMS captured base mount for /product
+[2025-12-01 16:50:19] [INFO] apmd: transport mode = binder
+[2025-12-01 16:50:19] [INFO] apmd: attempting to start Binder service
+[2025-12-01 16:50:19] [INFO] BinderService: checking Binder runtime availability
+[2025-12-01 16:50:19] [INFO] BinderService: defining Binder service class
+[2025-12-01 16:50:19] [INFO] BinderService: creating Binder instance object
+[2025-12-01 16:50:19] [INFO] BinderService: registering service 'apm.apmd'
+[2025-12-01 16:50:19] [INFO] BinderService: configuring thread pool (max=1, callerJoins=true)
+[2025-12-01 16:50:19] [INFO] BinderService: registered as apm.apmd
+[2025-12-01 16:50:19] [INFO] apmd: Binder service started; entering thread pool
+[2025-12-01 16:50:19] [INFO] BinderService: joining Binder thread pool
+/data/apm/installed/commands/export-path.sh[126]: can't create /system/etc/profile: Read-only file system
+/data/apm/installed/commands/export-path.sh[126]: can't create /system/etc/mkshrc: Read-only file system
+/data/apm/installed/commands/export-path.sh[126]: can't create /etc/profile: Read-only file system
+/data/apm/installed/commands/export-path.sh[126]: can't create /system/etc/profile: Read-only file system
+/data/apm/installed/commands/export-path.sh[126]: can't create /system/etc/mkshrc: Read-only file system
+/data/apm/installed/commands/export-path.sh[126]: can't create /etc/profile: Read-only file system
+/data/apm/installed/commands/export-path.sh[126]: can't create /system/etc/profile: Read-only file system
+/data/apm/installed/commands/export-path.sh[126]: can't create /system/etc/mkshrc: Read-only file system
+/data/apm/installed/commands/export-path.sh[126]: can't create /etc/profile: Read-only file system
+/data/apm/installed/commands/export-path.sh[126]: can't create /system/etc/profile: Read-only file system
+/data/apm/installed/commands/export-path.sh[126]: can't create /system/etc/mkshrc: Read-only file system
+/data/apm/installed/commands/export-path.sh[126]: can't create /etc/profile: Read-only file system
+/data/apm/installed/commands/export-path.sh[126]: can't create /system/etc/profile: Read-only file system
+/data/apm/installed/commands/export-path.sh[126]: can't create /system/etc/mkshrc: Read-only file system
+/data/apm/installed/commands/export-path.sh[126]: can't create /etc/profile: Read-only file system
+/data/apm/installed/commands/export-path.sh[126]: can't create /system/etc/profile: Read-only file system
+/data/apm/installed/commands/export-path.sh[126]: can't create /system/etc/mkshrc: Read-only file system
+/data/apm/installed/commands/export-path.sh[126]: can't create /etc/profile: Read-only file system
+/data/apm/installed/commands/export-path.sh[126]: can't create /system/etc/profile: Read-only file system
+/data/apm/installed/commands/export-path.sh[126]: can't create /system/etc/mkshrc: Read-only file system
+/data/apm/installed/commands/export-path.sh[126]: can't create /etc/profile: Read-only file system
+/data/apm/installed/commands/export-path.sh[126]: can't create /system/etc/profile: Read-only file system
+/data/apm/installed/commands/export-path.sh[126]: can't create /system/etc/mkshrc: Read-only file system
+/data/apm/installed/commands/export-path.sh[126]: can't create /etc/profile: Read-only file system
+/data/apm/installed/commands/export-path.sh[126]: can't create /system/etc/profile: Read-only file system
+/data/apm/installed/commands/export-path.sh[126]: can't create /system/etc/mkshrc: Read-only file system
+/data/apm/installed/commands/export-path.sh[126]: can't create /etc/profile: Read-only file system
+/data/apm/installed/commands/export-path.sh[126]: can't create /system/etc/profile: Read-only file system
+/data/apm/installed/commands/export-path.sh[126]: can't create /system/etc/mkshrc: Read-only file system
+/data/apm/installed/commands/export-path.sh[126]: can't create /etc/profile: Read-only file system
+^C
+130|lynx:/ # 

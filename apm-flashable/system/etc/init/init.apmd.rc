@@ -1,0 +1,145 @@
+#/*
+# * APM - Android Package Manager
+# *
+# * RedHead Industries - Technologies Branch
+# * Copyright (C) 2025 RedHead Industries
+# *
+# * File: init.apmd.rc (System-wide Installation)
+# * Purpose: Bootstrap apmd on Android from /system/bin: provision /data/apm
+# *          directories and keep the daemon running as root.
+# * Last Modified: December 1st, 2025
+# * Author: Matthew DaLuz - RedHead Founder
+# *
+# * APM is free software: you can redistribute it and/or modify
+# * it under the terms of the GNU General Public License as published by
+# * the Free Software Foundation, either version 3 of the License, or
+# * (at your option) any later version.
+# *
+# * APM is distributed in the hope that it will be useful,
+# * but WITHOUT ANY WARRANTY; without even the implied warranty of
+# * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# * GNU General Public License for more details.
+# *
+# * You should have received a copy of the GNU General Public License
+# * along with APM. If not, see <https://www.gnu.org/licenses/>.
+# *
+# */
+
+on post-fs-data
+    # Create APM data directories
+    mkdir /data/apm 0775 root shell
+    mkdir /data/apm/bin 0775 root shell
+    mkdir /data/apm/cache 0775 root shell
+    mkdir /data/apm/lists 0775 root shell
+    mkdir /data/apm/keys 0775 root shell
+    mkdir /data/apm/pkgs 0775 root shell
+    mkdir /data/apm/installed 0775 root shell
+    mkdir /data/apm/installed/commands 0775 root shell
+    mkdir /data/apm/installed/dependencies 0775 root shell
+    mkdir /data/apm/installed/termux 0775 root shell
+    mkdir /data/apm/installed/termux/bin 0775 root shell
+    mkdir /data/apm/installed/termux/lib 0775 root shell
+    mkdir /data/apm/installed/termux/lib64 0775 root shell
+    mkdir /data/apm/installed/termux/lib32 0775 root shell
+    mkdir /data/apm/installed/termux/opt 0775 root shell
+    mkdir /data/apm/installed/termux/mnt 0775 root shell
+    mkdir /data/apm/installed/termux/var 0775 root shell
+    mkdir /data/apm/installed/termux/etc 0775 root shell
+    mkdir /data/apm/installed/termux/tmp 0775 root shell
+    mkdir /data/apm/installed/termux/usr 0775 root shell
+    mkdir /data/apm/installed/termux/home 0775 root shell
+    mkdir /data/apm/installed/termux/usr/bin 0775 root shell
+    mkdir /data/apm/installed/termux/usr/lib 0775 root shell
+    mkdir /data/apm/installed/termux/usr/lib64 0775 root shell
+    mkdir /data/apm/installed/termux/usr/lib32 0775 root shell
+    mkdir /data/apm/installed/termux/usr/libexec 0775 root shell
+    mkdir /data/apm/installed/termux/usr/include 0775 root shell
+    mkdir /data/apm/installed/termux/usr/share 0775 root shell
+    mkdir /data/apm/installed/termux/usr/etc 0775 root shell
+    mkdir /data/apm/installed/termux/usr/opt 0775 root shell
+    mkdir /data/apm/installed/termux/usr/var 0775 root shell
+    mkdir /data/apm/installed/termux/usr/tmp 0775 root shell
+    mkdir /data/apm/logs 0775 root shell
+    mkdir /data/apm/logs/modules 0775 root shell
+    mkdir /data/apm/sources 0775 root shell
+    mkdir /data/apm/sources/sources.list.d 0775 root shell
+    mkdir /data/apm/manual-packages 0775 root shell
+    mkdir /data/apm/modules 0775 root shell
+    mkdir /data/apm/modules/.runtime 0700 root shell
+    mkdir /data/apm/modules/.runtime/upper 0700 root shell
+    mkdir /data/apm/modules/.runtime/work 0700 root shell
+    mkdir /data/apm/modules/.runtime/base 0700 root shell
+    mkdir /data/apm/.security 0700 root root
+    mkdir /data/ams 0775 root shell
+    mkdir /data/ams/modules 0775 root shell
+    mkdir /data/ams/overlays 0775 root shell
+    mkdir /data/ams/merged 0775 root shell
+
+    # Restore SELinux contexts
+    restorecon_recursive /data/apm
+    restorecon_recursive /data/ams
+
+    # Start apmd keeper service
+    start apmd-keeper
+    # Start daemon directly so keeper only handles restarts
+    start apmd
+
+service apmd-keeper /system/bin/sh -c '\
+    LOG_FILE=/data/apm/logs/apmd-keeper.log; \
+    SOCKET=/dev/socket/apmd; \
+    APMD_BIN=/system/bin/apmd; \
+    mkdir -p /data/apm/logs; \
+    touch "$LOG_FILE"; chmod 0644 "$LOG_FILE"; \
+    log() { echo "$(date +%F\ %T) - $*" >>"$LOG_FILE"; }; \
+    check_running() { /system/bin/pidof apmd >/dev/null 2>&1; }; \
+    try_start() { \
+        /system/bin/setprop ctl.start apmd; \
+        /system/bin/sleep 2; \
+        check_running && return 0; \
+        if [ -x "$APMD_BIN" ]; then \
+            log "Attempting $APMD_BIN --service apm.apmd"; \
+            "$APMD_BIN" --service apm.apmd >>"$LOG_FILE" 2>&1 & \
+            /system/bin/sleep 2; \
+            check_running && return 0; \
+            if command -v setsid >/dev/null 2>&1; then \
+                log "Attempting setsid $APMD_BIN"; \
+                /system/bin/setsid "$APMD_BIN" --service apm.apmd >>"$LOG_FILE" 2>&1 & \
+                /system/bin/sleep 2; \
+                check_running && return 0; \
+            fi; \
+            if command -v nohup >/dev/null 2>&1; then \
+                log "Attempting nohup $APMD_BIN"; \
+                nohup "$APMD_BIN" --service apm.apmd >>"$LOG_FILE" 2>&1 & \
+                /system/bin/sleep 2; \
+                check_running && return 0; \
+            fi; \
+        else \
+            log "ERROR: $APMD_BIN not found or not executable"; \
+        fi; \
+        return 1; \
+    }; \
+    while ! /system/bin/grep -q "[[:space:]]/data[[:space:]]" /proc/mounts; do \
+        /system/bin/sleep 1; \
+    done; \
+    while :; do \
+        if check_running; then \
+            /system/bin/sleep 5; \
+            continue; \
+        fi; \
+        log "apmd not running; trying restart methods"; \
+        try_start || log "apmd start failed"; \
+        /system/bin/sleep 5; \
+    done'
+    class late_start
+    user root
+    group root system inet shell
+    # Auto-start with late_start class
+    seclabel u:r:init:s0
+
+service apmd /system/bin/apmd --service apm.apmd --socket /dev/socket/apmd
+    class late_start
+    user root
+    group root system inet shell
+    socket apmd stream 660 root system
+    # Remove disabled so class late_start starts it automatically
+    seclabel u:r:init:s0

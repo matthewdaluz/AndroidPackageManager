@@ -1,0 +1,150 @@
+#!/sbin/sh
+#
+# APM - Android Package Manager
+# System-wide Uninstaller
+#
+# Copyright (C) 2025 RedHead Industries
+# Licensed under GPLv3
+#
+
+OUTFD="/proc/self/fd/$2"
+
+ui_print() {
+  echo "ui_print $1" > "$OUTFD";
+  echo "ui_print" > "$OUTFD";
+}
+
+cleanup() {
+  ui_print "Unmounting partitions"
+  umount -l "$SYSTEM_MNT" 2>/dev/null || true
+}
+
+error() {
+  ui_print "$1"
+  cleanup
+  exit 1
+}
+
+get_block_for_mount_point() {
+  grep -v "^#" /etc/recovery.fstab | grep "[[:blank:]]$1[[:blank:]]" | tail -n1 | tr -s [:blank:] ' ' | cut -d' ' -f1
+}
+
+find_block() {
+  local name="$1"
+  local fstab_entry=$(get_block_for_mount_point "/$name")
+  [ -z "$fstab_entry" ] && [ "$name" = "system" ] && fstab_entry=$(get_block_for_mount_point "/")
+  [ -z "$fstab_entry" ] && [ "$name" = "system" ] && fstab_entry=$(get_block_for_mount_point "/system_root")
+
+  local dev
+  if [ "$DYNAMIC_PARTITIONS" = "true" ]; then
+    if [ -n "$fstab_entry" ]; then
+      dev="${BLK_PATH}/${fstab_entry}${SLOT_SUFFIX}"
+    else
+      dev="${BLK_PATH}/${name}${SLOT_SUFFIX}"
+    fi
+  else
+    if [ -n "$fstab_entry" ]; then
+      dev="${fstab_entry}${SLOT_SUFFIX}"
+    else
+      dev="${BLK_PATH}/${name}${SLOT_SUFFIX}"
+    fi
+  fi
+
+  if [ -b "$dev" ]; then
+    echo "$dev"
+  fi
+}
+
+ui_print "***************************"
+ui_print "APM System-wide Uninstaller"
+ui_print "***************************"
+ui_print ""
+
+ui_print "Mounting system partition"
+
+# Ensure system is unmounted
+umount /system 2>/dev/null || umount /mnt/system 2>/dev/null || true
+
+# Find partitions
+DYNAMIC_PARTITIONS=`getprop ro.boot.dynamic_partitions`
+if [ "$DYNAMIC_PARTITIONS" = "true" ]; then
+    BLK_PATH="/dev/block/mapper"
+else
+    BLK_PATH=/dev/block/bootdevice/by-name
+fi
+
+CURRENTSLOT=`getprop ro.boot.slot_suffix`
+if [ ! -z "$CURRENTSLOT" ]; then
+  if [ "$CURRENTSLOT" == "_a" ]; then
+    SLOT_SUFFIX="_a"
+  else
+    SLOT_SUFFIX="_b"
+  fi
+fi
+
+SYSTEM_BLOCK=$(find_block "system")
+
+# Disable rw protection on dynamic partitions
+if [ "$DYNAMIC_PARTITIONS" = "true" ]; then
+  blockdev --setrw "$SYSTEM_BLOCK" 2>/dev/null || true
+fi
+
+# Mount system
+SYSTEM_MNT=/mnt/system
+mkdir -p "$SYSTEM_MNT" 2>/dev/null || true
+if mount -o rw "$SYSTEM_BLOCK" "$SYSTEM_MNT"; then
+  ui_print "$SYSTEM_MNT mounted"
+else
+  error "Could not mount $SYSTEM_MNT! Aborting"
+fi
+
+ui_print ""
+ui_print "Removing APM files from system..."
+
+# Remove binaries
+if [ -f "${SYSTEM_MNT}/bin/apm" ]; then
+  rm -f "${SYSTEM_MNT}/bin/apm"
+  ui_print "Removed /system/bin/apm"
+fi
+
+if [ -f "${SYSTEM_MNT}/bin/apmd" ]; then
+  rm -f "${SYSTEM_MNT}/bin/apmd"
+  ui_print "Removed /system/bin/apmd"
+fi
+
+# Remove init script
+if [ -f "${SYSTEM_MNT}/etc/init/init.apmd.rc" ]; then
+  rm -f "${SYSTEM_MNT}/etc/init/init.apmd.rc"
+  ui_print "Removed /system/etc/init/init.apmd.rc"
+fi
+
+# Remove addon.d script
+if [ -f "${SYSTEM_MNT}/addon.d/30-apm.sh" ]; then
+  rm -f "${SYSTEM_MNT}/addon.d/30-apm.sh"
+  ui_print "Removed /system/addon.d/30-apm.sh"
+fi
+
+# Remove xz tools if present
+if [ -d "${SYSTEM_MNT}/xbin" ]; then
+  for tool in xz unxz xzcat xzcmp xzdiff xzegrep xzfgrep xzgrep xzless xzmore lzmainfo; do
+    if [ -f "${SYSTEM_MNT}/xbin/$tool" ]; then
+      rm -f "${SYSTEM_MNT}/xbin/$tool"
+      ui_print "Removed /system/xbin/$tool"
+    fi
+  done
+fi
+
+ui_print ""
+ui_print "APM system files removed successfully!"
+ui_print ""
+ui_print "NOTE: User data in /data/apm/ was preserved."
+ui_print "To completely remove APM, delete /data/apm/ manually:"
+ui_print "  adb shell"
+ui_print "  su"
+ui_print "  rm -rf /data/apm"
+ui_print ""
+
+cleanup
+
+ui_print "Done! Reboot your device."
+exit 0

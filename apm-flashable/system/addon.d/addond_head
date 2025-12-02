@@ -1,0 +1,11 @@
+#!/sbin/sh
+#
+# ADDOND_VERSION=3
+#
+# /system/addon.d/30-apm.sh
+# Backup and restore APM system-wide installation across OTA updates
+#
+. /tmp/backuptool.functions
+
+list_files() {
+cat <<EOF

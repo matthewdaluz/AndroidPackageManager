@@ -191,9 +191,10 @@ bool ensureExportScript() {
          << apm::fs::joinPath(apm::config::getApmRoot(),
                               ".apm_path_keepalive.pid")
          << "\"\n";
-  script << "APM_PATH_HOOK_TARGETS=\"/system/etc/profile /system/etc/mkshrc "
-            "/etc/profile /data/local/userinit.sh /data/local/tmp/.profile "
-            "/data/local/tmp/.mkshrc\"\n";
+  // Avoid attempting to write into read-only system paths. Limit hooks to
+  // writable user-local locations so we don't spam logs with RO file errors.
+  script << "APM_PATH_HOOK_TARGETS=\"/data/local/userinit.sh "
+            "/data/local/tmp/.profile /data/local/tmp/.mkshrc\"\n";
   script << "APM_SERVICE_HOOK=\"/data/adb/service.d/99apm-path.sh\"\n\n";
 
   script << "prepare_profile_dir() {\n";
