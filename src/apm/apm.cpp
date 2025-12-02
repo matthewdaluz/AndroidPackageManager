@@ -5,8 +5,8 @@
  * Copyright (C) 2025 RedHead Industries
  *
  * File: apm.cpp
- * Purpose: Implement the apm CLI, including local commands and Binder/IPC
- * backed operations.
+ * Purpose: Implement the apm CLI, including local commands and IPC-backed
+ * operations.
  * Last Modified: November 28th, 2025. - 8:59 AM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
@@ -366,8 +366,7 @@ static bool promptForSecurityQuestions(SecurityQaList &qaOut) {
   return true;
 }
 
-static bool requestSessionUnlock(const std::string &serviceName,
-                                 const std::string &action,
+static bool requestSessionUnlock(const std::string &action,
                                  const std::string &secret,
                                  const SecurityQaList &securityQa,
                                  std::string &sessionTokenOut) {
@@ -387,7 +386,7 @@ static bool requestSessionUnlock(const std::string &serviceName,
   apm::ipc::Response resp;
   std::string err;
 
-  if (!apm::ipc::sendRequestAuto(req, resp, serviceName, &err)) {
+  if (!apm::ipc::sendRequestAuto(req, resp, &err)) {
     std::cerr << "Error: " << err << "\n";
     return false;
   }
@@ -416,8 +415,7 @@ static bool requestSessionUnlock(const std::string &serviceName,
   return false;
 }
 
-static bool ensureAuthenticatedSession(const std::string &serviceName,
-                                       std::string &sessionTokenOut) {
+static bool ensureAuthenticatedSession(std::string &sessionTokenOut) {
   bool hadSession = false;
   if (loadActiveSessionToken(sessionTokenOut, hadSession))
     return true;
@@ -433,7 +431,7 @@ static bool ensureAuthenticatedSession(const std::string &serviceName,
       std::cerr << "Failed to read password/PIN input.\n";
       return false;
     }
-    return requestSessionUnlock(serviceName, "unlock", secret, SecurityQaList{},
+    return requestSessionUnlock("unlock", secret, SecurityQaList{},
                                 sessionTokenOut);
   }
 
@@ -448,8 +446,7 @@ static bool ensureAuthenticatedSession(const std::string &serviceName,
     return false;
   }
 
-  return requestSessionUnlock(serviceName, "set", secret, securityQa,
-                              sessionTokenOut);
+  return requestSessionUnlock("set", secret, securityQa, sessionTokenOut);
 }
 
 static void attachSession(apm::ipc::Request &req,
@@ -855,7 +852,7 @@ void printUsage() {
   std::cout
       << "APM - Android Package Manager\n"
       << "Usage:\n"
-      << "  apm [--service <name>] <command> [args...]\n"
+      << "  apm <command> [args...]\n"
       << "\nCommands:\n"
       << "  ping                        Check connection to apmd\n"
       << "  update                      Update repository metadata\n"
@@ -894,7 +891,7 @@ void printUsage() {
 //
 
 // Send a Ping request over IPC to confirm the daemon is reachable.
-int cmdPing(const std::string &serviceName) {
+int cmdPing() {
   apm::ipc::Request req;
   req.type = apm::ipc::RequestType::Ping;
   req.id = "ping-1";
@@ -902,7 +899,7 @@ int cmdPing(const std::string &serviceName) {
   apm::ipc::Response resp;
   std::string err;
 
-  if (!apm::ipc::sendRequestAuto(req, resp, serviceName, &err)) {
+  if (!apm::ipc::sendRequestAuto(req, resp, &err)) {
     std::cerr << "Error: " << err << "\n";
     return 1;
   }
@@ -912,7 +909,7 @@ int cmdPing(const std::string &serviceName) {
   return resp.success ? 0 : 1;
 }
 
-int cmdForgotPassword(const std::string &serviceName) {
+int cmdForgotPassword() {
   apm::ipc::Request qReq;
   qReq.type = apm::ipc::RequestType::ForgotPassword;
   qReq.id = "forgot-questions-1";
@@ -921,7 +918,7 @@ int cmdForgotPassword(const std::string &serviceName) {
   apm::ipc::Response qResp;
   std::string err;
 
-  if (!apm::ipc::sendRequestAuto(qReq, qResp, serviceName, &err)) {
+  if (!apm::ipc::sendRequestAuto(qReq, qResp, &err)) {
     std::cerr << "Error: " << err << "\n";
     return 1;
   }
@@ -967,7 +964,7 @@ int cmdForgotPassword(const std::string &serviceName) {
   }
 
   apm::ipc::Response verifyResp;
-  if (!apm::ipc::sendRequestAuto(verifyReq, verifyResp, serviceName, &err)) {
+  if (!apm::ipc::sendRequestAuto(verifyReq, verifyResp, &err)) {
     std::cerr << "Error: " << err << "\n";
     return 1;
   }
@@ -997,7 +994,7 @@ int cmdForgotPassword(const std::string &serviceName) {
   }
 
   apm::ipc::Response resetResp;
-  if (!apm::ipc::sendRequestAuto(resetReq, resetResp, serviceName, &err)) {
+  if (!apm::ipc::sendRequestAuto(resetReq, resetResp, &err)) {
     std::cerr << "Error: " << err << "\n";
     return 1;
   }
@@ -1017,7 +1014,7 @@ int cmdForgotPassword(const std::string &serviceName) {
 
 // Trigger repository metadata refresh via the daemon so Packages lists stay
 // current.
-int cmdUpdate(const std::string &serviceName, const std::string &sessionToken) {
+int cmdUpdate(const std::string &sessionToken) {
   apm::ipc::Request req;
   req.type = apm::ipc::RequestType::Update;
   req.id = "update-1";
@@ -1087,7 +1084,7 @@ int cmdUpdate(const std::string &serviceName, const std::string &sessionToken) {
     renderProgressLines(ui);
   };
 
-  if (!apm::ipc::sendRequestAuto(req, resp, serviceName, &err, onProgress)) {
+  if (!apm::ipc::sendRequestAuto(req, resp, &err, onProgress)) {
     finalizeProgressLines(ui);
     std::cerr << "Error: " << err << "\n";
     return 1;
@@ -1103,8 +1100,7 @@ int cmdUpdate(const std::string &serviceName, const std::string &sessionToken) {
 }
 
 // Ask the daemon to install a package along with its dependencies.
-int cmdInstall(const std::string &serviceName, const std::string &sessionToken,
-               const std::string &pkg) {
+int cmdInstall(const std::string &sessionToken, const std::string &pkg) {
   auto parsePackageList = [](const apm::ipc::Response &resp,
                              const std::string &field) {
     std::vector<std::string> pkgs;
@@ -1128,7 +1124,7 @@ int cmdInstall(const std::string &serviceName, const std::string &sessionToken,
   apm::ipc::Response planResp;
   std::string err;
 
-  if (!apm::ipc::sendRequestAuto(planReq, planResp, serviceName, &err)) {
+  if (!apm::ipc::sendRequestAuto(planReq, planResp, &err)) {
     std::cerr << "Error: " << err << "\n";
     return 1;
   }
@@ -1251,7 +1247,7 @@ int cmdInstall(const std::string &serviceName, const std::string &sessionToken,
     renderProgressLines(ui);
   };
 
-  if (!apm::ipc::sendRequestAuto(req, resp, serviceName, &err, onProgress)) {
+  if (!apm::ipc::sendRequestAuto(req, resp, &err, onProgress)) {
     finalizeProgressLines(ui);
     std::cerr << "Error: " << err << "\n";
     return 1;
@@ -1290,8 +1286,7 @@ int cmdPackageInstall(const std::string &packagePath) {
 }
 
 // Ask the daemon to remove a package and clean up metadata.
-int cmdRemove(const std::string &serviceName, const std::string &sessionToken,
-              const std::string &pkg) {
+int cmdRemove(const std::string &sessionToken, const std::string &pkg) {
   std::string manualMsg;
   std::string manualErr;
   ManualRemoveState manualState =
@@ -1314,7 +1309,7 @@ int cmdRemove(const std::string &serviceName, const std::string &sessionToken,
   apm::ipc::Response resp;
   std::string err;
 
-  if (!apm::ipc::sendRequestAuto(req, resp, serviceName, &err)) {
+  if (!apm::ipc::sendRequestAuto(req, resp, &err)) {
     std::cerr << "Error: " << err << "\n";
     return 1;
   }
@@ -1326,8 +1321,7 @@ int cmdRemove(const std::string &serviceName, const std::string &sessionToken,
 
 // Forward an APK install request to the daemon, optionally forcing a system
 // install overlay.
-int cmdApkInstall(const std::string &serviceName,
-                  const std::string &sessionToken, const std::string &apk,
+int cmdApkInstall(const std::string &sessionToken, const std::string &apk,
                   bool installAsSystem) {
   apm::ipc::Request req;
   req.type = apm::ipc::RequestType::ApkInstall;
@@ -1340,7 +1334,7 @@ int cmdApkInstall(const std::string &serviceName,
   apm::ipc::Response resp;
   std::string err;
 
-  if (!apm::ipc::sendRequestAuto(req, resp, serviceName, &err)) {
+  if (!apm::ipc::sendRequestAuto(req, resp, &err)) {
     std::cerr << "Error: " << err << "\n";
     return 1;
   }
@@ -1352,8 +1346,7 @@ int cmdApkInstall(const std::string &serviceName,
 }
 
 // Forward an APK uninstall request to the daemon for a given package name.
-int cmdApkUninstall(const std::string &serviceName,
-                    const std::string &sessionToken,
+int cmdApkUninstall(const std::string &sessionToken,
                     const std::string &pkgName) {
   apm::ipc::Request req;
   req.type = apm::ipc::RequestType::ApkUninstall;
@@ -1364,7 +1357,7 @@ int cmdApkUninstall(const std::string &serviceName,
   apm::ipc::Response resp;
   std::string err;
 
-  if (!apm::ipc::sendRequestAuto(req, resp, serviceName, &err)) {
+  if (!apm::ipc::sendRequestAuto(req, resp, &err)) {
     std::cerr << "Error: " << err << "\n";
     return 1;
   }
@@ -1376,8 +1369,7 @@ int cmdApkUninstall(const std::string &serviceName,
 }
 
 // Request upgrades for either all installed packages or a provided subset.
-int cmdUpgrade(const std::string &serviceName, const std::string &sessionToken,
-               int argc, char **argv) {
+int cmdUpgrade(const std::string &sessionToken, int argc, char **argv) {
   apm::ipc::Request req;
   req.type = apm::ipc::RequestType::Upgrade;
   req.id = "upgrade-1";
@@ -1396,7 +1388,7 @@ int cmdUpgrade(const std::string &serviceName, const std::string &sessionToken,
   apm::ipc::Response resp;
   std::string err;
 
-  if (!apm::ipc::sendRequestAuto(req, resp, serviceName, &err)) {
+  if (!apm::ipc::sendRequestAuto(req, resp, &err)) {
     std::cerr << "Error: " << err << "\n";
     return 1;
   }
@@ -1407,8 +1399,7 @@ int cmdUpgrade(const std::string &serviceName, const std::string &sessionToken,
 }
 
 // Ask the daemon to remove auto-installed dependencies no longer needed.
-int cmdAutoremove(const std::string &serviceName,
-                  const std::string &sessionToken) {
+int cmdAutoremove(const std::string &sessionToken) {
   apm::ipc::Request req;
   req.type = apm::ipc::RequestType::Autoremove;
   req.id = "autoremove-1";
@@ -1417,7 +1408,7 @@ int cmdAutoremove(const std::string &serviceName,
   apm::ipc::Response resp;
   std::string err;
 
-  if (!apm::ipc::sendRequestAuto(req, resp, serviceName, &err)) {
+  if (!apm::ipc::sendRequestAuto(req, resp, &err)) {
     std::cerr << "Error: " << err << "\n";
     return 1;
   }
@@ -1427,8 +1418,7 @@ int cmdAutoremove(const std::string &serviceName,
   return resp.success ? 0 : 1;
 }
 
-int cmdFactoryReset(const std::string &serviceName,
-                    const std::string &sessionToken) {
+int cmdFactoryReset(const std::string &sessionToken) {
   std::cout << "APM factory reset will:\n";
   std::cout << "  - Remove installed commands and dependencies under "
             << apm::config::getInstalledDir() << "\n";
@@ -1474,7 +1464,7 @@ int cmdFactoryReset(const std::string &serviceName,
   apm::ipc::Response resp;
   std::string err;
 
-  if (!apm::ipc::sendRequestAuto(req, resp, serviceName, &err)) {
+  if (!apm::ipc::sendRequestAuto(req, resp, &err)) {
     std::cerr << "Error: " << err << "\n";
     return 1;
   }
@@ -1493,8 +1483,7 @@ int cmdFactoryReset(const std::string &serviceName,
   return 0;
 }
 
-int cmdModuleInstall(const std::string &serviceName,
-                     const std::string &sessionToken,
+int cmdModuleInstall(const std::string &sessionToken,
                      const std::string &zipPath) {
   apm::ipc::Request req;
   req.type = apm::ipc::RequestType::ModuleInstall;
@@ -1506,7 +1495,7 @@ int cmdModuleInstall(const std::string &serviceName,
   apm::ipc::Response resp;
   std::string err;
 
-  if (!apm::ipc::sendRequestAuto(req, resp, serviceName, &err)) {
+  if (!apm::ipc::sendRequestAuto(req, resp, &err)) {
     std::cerr << "Error: " << err << "\n";
     return 1;
   }
@@ -1517,8 +1506,7 @@ int cmdModuleInstall(const std::string &serviceName,
   return resp.success ? 0 : 1;
 }
 
-static int runModuleToggle(const std::string &serviceName,
-                           const std::string &sessionToken,
+static int runModuleToggle(const std::string &sessionToken,
                            apm::ipc::RequestType type, const std::string &name,
                            const std::string &verb) {
   apm::ipc::Request req;
@@ -1532,7 +1520,7 @@ static int runModuleToggle(const std::string &serviceName,
   apm::ipc::Response resp;
   std::string err;
 
-  if (!apm::ipc::sendRequestAuto(req, resp, serviceName, &err)) {
+  if (!apm::ipc::sendRequestAuto(req, resp, &err)) {
     std::cerr << "Error: " << err << "\n";
     return 1;
   }
@@ -1542,29 +1530,25 @@ static int runModuleToggle(const std::string &serviceName,
   return resp.success ? 0 : 1;
 }
 
-int cmdModuleEnable(const std::string &serviceName,
-                    const std::string &sessionToken, const std::string &name) {
-  return runModuleToggle(serviceName, sessionToken,
+int cmdModuleEnable(const std::string &sessionToken, const std::string &name) {
+  return runModuleToggle(sessionToken,
                          apm::ipc::RequestType::ModuleEnable, name,
                          "Module enable");
 }
 
-int cmdModuleDisable(const std::string &serviceName,
-                     const std::string &sessionToken, const std::string &name) {
-  return runModuleToggle(serviceName, sessionToken,
+int cmdModuleDisable(const std::string &sessionToken, const std::string &name) {
+  return runModuleToggle(sessionToken,
                          apm::ipc::RequestType::ModuleDisable, name,
                          "Module disable");
 }
 
-int cmdModuleRemove(const std::string &serviceName,
-                    const std::string &sessionToken, const std::string &name) {
-  return runModuleToggle(serviceName, sessionToken,
+int cmdModuleRemove(const std::string &sessionToken, const std::string &name) {
+  return runModuleToggle(sessionToken,
                          apm::ipc::RequestType::ModuleRemove, name,
                          "Module remove");
 }
 
-int cmdModuleList(const std::string &serviceName,
-                  const std::string &sessionToken) {
+int cmdModuleList(const std::string &sessionToken) {
   apm::ipc::Request req;
   req.type = apm::ipc::RequestType::ModuleList;
   req.id = "module-list-1";
@@ -1573,7 +1557,7 @@ int cmdModuleList(const std::string &serviceName,
   apm::ipc::Response resp;
   std::string err;
 
-  if (!apm::ipc::sendRequestAuto(req, resp, serviceName, &err)) {
+  if (!apm::ipc::sendRequestAuto(req, resp, &err)) {
     std::cerr << "Error: " << err << "\n";
     return 1;
   }
@@ -1758,21 +1742,15 @@ int cmdKeyAdd(const std::string &path) {
 // ============================================================
 //
 
-// Entry point that parses global options, dispatches to subcommands, and wires
-// Binder endpoint overrides.
+// Entry point that parses global options and dispatches to subcommands.
 int main(int argc, char **argv) {
   apm::logger::setLogFile("apm-cli.log");
   apm::logger::setMinLogLevel(apm::logger::Level::Debug);
 
-  std::string serviceName = apm::config::BINDER_SERVICE;
-
   int i = 1;
   while (i < argc) {
     std::string a = argv[i];
-    if ((a == "--service" || a == "--svc") && i + 1 < argc) {
-      serviceName = argv[i + 1];
-      i += 2;
-    } else if (a == "--help" || a == "-h") {
+    if (a == "--help" || a == "-h") {
       printUsage();
       return 0;
     } else
@@ -1793,11 +1771,9 @@ int main(int argc, char **argv) {
   // Set emulator mode so path getters work correctly
   apm::config::setEmulatorMode(emulatorMode);
 
-  // Log chosen transport mode (binder vs ipc) for diagnostics.
-  auto chosenMode = apm::ipc::detectTransportMode();
-  apm::logger::info(
-      std::string("apm: transport mode = ") +
-      (chosenMode == apm::ipc::TransportMode::Binder ? "binder" : "ipc"));
+  // Log chosen transport mode (IPC-only).
+  apm::ipc::detectTransportMode();
+  apm::logger::info("apm: transport mode = ipc");
 
   if (i >= argc) {
     printUsage();
@@ -1808,7 +1784,7 @@ int main(int argc, char **argv) {
 
   std::string sessionToken;
   if (requiresAuthSession(cmd)) {
-    if (!ensureAuthenticatedSession(serviceName, sessionToken))
+    if (!ensureAuthenticatedSession(sessionToken))
       return 1;
   }
 
@@ -1819,18 +1795,18 @@ int main(int argc, char **argv) {
   //
 
   if (cmd == "ping")
-    return cmdPing(serviceName);
+    return cmdPing();
   if (cmd == "forgot-password")
-    return cmdForgotPassword(serviceName);
+    return cmdForgotPassword();
   if (cmd == "update")
-    return cmdUpdate(serviceName, sessionToken);
+    return cmdUpdate(sessionToken);
 
   if (cmd == "install") {
     if (i >= argc) {
       std::cerr << "apm: 'install' requires a package\n";
       return 1;
     }
-    return cmdInstall(serviceName, sessionToken, argv[i]);
+    return cmdInstall(sessionToken, argv[i]);
   }
 
   if (cmd == "package-install") {
@@ -1846,11 +1822,11 @@ int main(int argc, char **argv) {
       std::cerr << "apm: 'module-install' requires a ZIP path\n";
       return 1;
     }
-    return cmdModuleInstall(serviceName, sessionToken, argv[i]);
+    return cmdModuleInstall(sessionToken, argv[i]);
   }
 
   if (cmd == "module-list") {
-    return cmdModuleList(serviceName, sessionToken);
+    return cmdModuleList(sessionToken);
   }
 
   if (cmd == "module-enable") {
@@ -1858,7 +1834,7 @@ int main(int argc, char **argv) {
       std::cerr << "apm: 'module-enable' requires a module name\n";
       return 1;
     }
-    return cmdModuleEnable(serviceName, sessionToken, argv[i]);
+    return cmdModuleEnable(sessionToken, argv[i]);
   }
 
   if (cmd == "module-disable") {
@@ -1866,7 +1842,7 @@ int main(int argc, char **argv) {
       std::cerr << "apm: 'module-disable' requires a module name\n";
       return 1;
     }
-    return cmdModuleDisable(serviceName, sessionToken, argv[i]);
+    return cmdModuleDisable(sessionToken, argv[i]);
   }
 
   if (cmd == "module-remove") {
@@ -1874,7 +1850,7 @@ int main(int argc, char **argv) {
       std::cerr << "apm: 'module-remove' requires a module name\n";
       return 1;
     }
-    return cmdModuleRemove(serviceName, sessionToken, argv[i]);
+    return cmdModuleRemove(sessionToken, argv[i]);
   }
 
   if (cmd == "remove") {
@@ -1882,7 +1858,7 @@ int main(int argc, char **argv) {
       std::cerr << "apm: 'remove' requires a package\n";
       return 1;
     }
-    return cmdRemove(serviceName, sessionToken, argv[i]);
+    return cmdRemove(sessionToken, argv[i]);
   }
 
   if (cmd == "apk-install") {
@@ -1901,7 +1877,7 @@ int main(int argc, char **argv) {
         return 1;
       }
     }
-    return cmdApkInstall(serviceName, sessionToken, apk, sys);
+    return cmdApkInstall(sessionToken, apk, sys);
   }
 
   if (cmd == "apk-uninstall") {
@@ -1909,19 +1885,19 @@ int main(int argc, char **argv) {
       std::cerr << "apm: 'apk-uninstall' requires a package name\n";
       return 1;
     }
-    return cmdApkUninstall(serviceName, sessionToken, argv[i]);
+    return cmdApkUninstall(sessionToken, argv[i]);
   }
 
   if (cmd == "upgrade") {
     int remaining = argc - i;
-    return cmdUpgrade(serviceName, sessionToken, remaining, argv + i);
+    return cmdUpgrade(sessionToken, remaining, argv + i);
   }
 
   if (cmd == "autoremove")
-    return cmdAutoremove(serviceName, sessionToken);
+    return cmdAutoremove(sessionToken);
 
   if (cmd == "factory-reset")
-    return cmdFactoryReset(serviceName, sessionToken);
+    return cmdFactoryReset(sessionToken);
 
   //
   // ============================

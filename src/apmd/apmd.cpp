@@ -5,8 +5,8 @@
  * Copyright (C) 2025 RedHead Industries
  *
  * File: apmd.cpp
- * Purpose: Bootstrap apmd, configure logging, and run the Binder-backed
- * service loop.
+ * Purpose: Bootstrap apmd, configure logging, and run the IPC-backed service
+ * loop.
  * Last Modified: November 28th, 2025. - 8:59 AM Eastern Time. Author: Matthew
  * DaLuz - RedHead Founder
  *
@@ -27,17 +27,15 @@
 
 #include "apmd.hpp"
 #include "ams/module_manager.hpp"
-#include "binder_service.hpp"
 #include "config.hpp"
 #include "export_path.hpp"
 #include "fs.hpp"
 #include "ipc_server.hpp"
 #include "logger.hpp"
 #include "process_lock.hpp"
-#include "security_manager.hpp"
-#include "transport.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -86,9 +84,9 @@ static void startPathMaintenance(std::atomic<bool> &runFlag,
 }
 
 // Configure logging, ensure the PATH/profile helper is loaded, and launch the
-// Binder service loop.
-int runDaemon(const std::string &serviceName, bool debugMode,
-              bool emulatorMode, const std::string &socketPath) {
+// IPC service loop.
+int runDaemon(bool debugMode, bool emulatorMode,
+              const std::string &socketPath) {
   // Set emulator mode early so path getters work correctly
   apm::config::setEmulatorMode(emulatorMode);
 
@@ -137,7 +135,7 @@ int runDaemon(const std::string &serviceName, bool debugMode,
   apm::logger::setMinLogLevel(debugMode ? apm::logger::Level::Debug
                                         : apm::logger::Level::Info);
 
-  apm::logger::info("apmd starting, service: " + serviceName);
+  apm::logger::info("apmd starting (IPC transport)");
   if (debugMode) {
     apm::logger::info("apmd: DEBUG mode enabled");
   }
@@ -159,87 +157,40 @@ int runDaemon(const std::string &serviceName, bool debugMode,
     moduleManager.startEnabledModules();
   }
 
-  // Decide transport mode and start appropriate server.
-  // Emulator mode always uses IPC-only (no Binder)
-  auto mode = emulatorMode ? apm::ipc::TransportMode::IPC
-                           : apm::ipc::detectTransportMode();
-  apm::logger::info(
-      std::string("apmd: transport mode = ") +
-      (mode == apm::ipc::TransportMode::Binder ? "binder" : "ipc"));
-
-  if (mode == apm::ipc::TransportMode::Binder) {
-    apm::daemon::SecurityManager securityManager;
-    apm::ipc::BinderService binderService(serviceName, moduleManager,
-                                          securityManager);
-    std::string binderErr;
-    apm::logger::info("apmd: attempting to start Binder service");
-    if (binderService.start(&binderErr)) {
-      apm::logger::info("apmd: Binder service started; entering thread pool");
-      
-      // Also start IPC server for fallback if socket path provided
-      if (!socketPath.empty()) {
-        apm::logger::info("apmd: starting IPC fallback server on " + socketPath);
-        apm::ipc::IpcServer ipcServer(socketPath, moduleManager);
-        if (ipcServer.start()) {
-          apm::logger::info("apmd: IPC fallback server started successfully");
-        } else {
-          apm::logger::warn("apmd: failed to start IPC fallback server");
-        }
-      }
-      
-      binderService.joinThreadPool();
-      pathLoopRun.store(false);
-      if (pathLoopThread.joinable()) {
-        pathLoopThread.join();
-      }
-      apm::logger::info("apmd exiting Binder thread pool");
-      return 0;
-    }
-    apm::logger::error("runDaemon: failed to start Binder service: " +
-                       (binderErr.empty() ? "unknown error" : binderErr));
+  std::string resolvedSocket =
+      socketPath.empty() ? apm::config::getIpcSocketPath() : socketPath;
+  apm::logger::info("apmd: transport mode = ipc");
+  apm::logger::info("apmd: starting IPC server on " + resolvedSocket);
+  apm::ipc::IpcServer server(resolvedSocket, moduleManager);
+  if (!server.start()) {
+    apm::logger::error("apmd: failed to start IPC server");
     pathLoopRun.store(false);
     if (pathLoopThread.joinable()) {
       pathLoopThread.join();
     }
     return 1;
-  } else {
-    // IPC mode
-    std::string socketPath = apm::config::getIpcSocketPath();
-    apm::logger::info("apmd: starting IPC server on " + socketPath);
-    apm::ipc::IpcServer server(socketPath, moduleManager);
-    if (!server.start()) {
-      apm::logger::error("apmd: failed to start IPC server");
-      pathLoopRun.store(false);
-      if (pathLoopThread.joinable()) {
-        pathLoopThread.join();
-      }
-      return 1;
-    }
-    server.run();
-    pathLoopRun.store(false);
-    if (pathLoopThread.joinable()) {
-      pathLoopThread.join();
-    }
-    apm::logger::info("apmd: IPC server loop exited");
-    return 0;
   }
+  server.run();
+  pathLoopRun.store(false);
+  if (pathLoopThread.joinable()) {
+    pathLoopThread.join();
+  }
+  apm::logger::info("apmd: IPC server loop exited");
+  return 0;
 }
 
 } // namespace apm::daemon
 
 // Thin wrapper around runDaemon that parses --socket/--help flags.
 int main(int argc, char **argv) {
-  std::string serviceName = apm::daemon::DEFAULT_SERVICE_NAME;
   std::string socketPath = "";
   bool debugMode = false;
   bool emulatorMode = false;
 
-  // Simple arg parser: apmd [--service name] [--socket path] [--debug] [--emulator]
+  // Simple arg parser: apmd [--socket path] [--debug] [--emulator]
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
-    if ((arg == "--service" || arg == "--svc") && i + 1 < argc) {
-      serviceName = argv[++i];
-    } else if (arg == "--socket" && i + 1 < argc) {
+    if (arg == "--socket" && i + 1 < argc) {
       socketPath = argv[++i];
     } else if (arg == "--debug" || arg == "-d") {
       debugMode = true;
@@ -254,11 +205,12 @@ int main(int argc, char **argv) {
 #endif
     } else if (arg == "--help" || arg == "-h") {
       std::cout << "apmd - APM daemon\n"
-                << "Usage: apmd [--service <name>] [--debug]";
+                << "Usage: apmd [--socket <path>] [--debug]";
 #ifdef APM_EMULATOR_MODE
       std::cout << " [--emulator]";
 #endif
       std::cout << "\n"
+                << "  --socket       Override IPC socket path\n"
                 << "  --debug, -d    Enable verbose debug logging\n";
 #ifdef APM_EMULATOR_MODE
       std::cout << "  --emulator     Run in x86_64 emulator mode\n";
@@ -281,5 +233,5 @@ int main(int argc, char **argv) {
   }
 #endif
 
-  return apm::daemon::runDaemon(serviceName, debugMode, emulatorMode, socketPath);
+  return apm::daemon::runDaemon(debugMode, emulatorMode, socketPath);
 }

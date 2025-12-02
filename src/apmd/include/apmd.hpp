@@ -5,8 +5,7 @@
  * Copyright (C) 2025 RedHead Industries
  *
  * File: apmd.hpp
- * Purpose: Declare the apmd entry point along with the default Binder service
- * name constant.
+ * Purpose: Declare the apmd entry point for the IPC daemon.
  * Last Modified: November 28th, 2025. - 8:59 AM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
@@ -27,22 +26,17 @@
 
 #pragma once
 
-#include "binder_defs.hpp"
 #include <string>
 
 namespace apm::daemon {
 
-// Default Binder service name for apmd.
-inline constexpr const char *DEFAULT_SERVICE_NAME = apm::binder::SERVICE_NAME;
-
 // Main daemon runner.
-// - serviceName: Binder service instance name (Android).
 // - debugMode: Enable verbose debug logging.
 // - emulatorMode: Run in x86_64 emulator mode (requires APM_EMULATOR_MODE
 // compile flag).
-// - socketPath: IPC socket path for fallback transport.
+// - socketPath: Optional override for the IPC socket path.
 // Returns exit code (0 = OK).
-int runDaemon(const std::string &serviceName, bool debugMode = false,
-              bool emulatorMode = false, const std::string &socketPath = "");
+int runDaemon(bool debugMode = false, bool emulatorMode = false,
+              const std::string &socketPath = "");
 
 } // namespace apm::daemon

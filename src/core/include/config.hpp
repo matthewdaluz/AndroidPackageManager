@@ -26,7 +26,6 @@
 
 #pragma once
 
-#include "binder_defs.hpp"
 #include <string>
 
 namespace apm::config {
@@ -152,11 +151,8 @@ inline constexpr const char *SOURCES_LIST_D =
 // For repo_index, this is treated as the “sources root” (dir).
 inline constexpr const char *SOURCES_LIST = SOURCES_DIR;
 
-// Binder endpoint
-inline constexpr const char *BINDER_SERVICE = apm::binder::SERVICE_NAME;
 // IPC (UNIX domain) socket path used when running as Magisk-style system-wide
-// (/data/apm/bin). The daemon will bind here in IPC mode and the CLI will
-// connect here when Binder transport is unavailable or disabled.
+// (/data/apm/bin). The daemon binds here and the CLI connects here.
 inline constexpr const char *IPC_SOCKET_PATH = "/data/apm/apmd.sock";
 
 // Default architecture for Debian-style repos

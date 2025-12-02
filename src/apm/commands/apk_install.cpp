@@ -26,7 +26,6 @@
  */
 
 #include "apk_install.hpp"
-#include "config.hpp"
 #include "transport.hpp"
 
 #include <iostream>
@@ -65,8 +64,7 @@ int apkInstall(const std::vector<std::string> &args) {
   apm::ipc::Response resp;
   std::string err;
 
-  if (!apm::ipc::sendRequestAuto(req, resp, apm::config::BINDER_SERVICE,
-                                 &err)) {
+  if (!apm::ipc::sendRequestAuto(req, resp, &err)) {
     std::cerr << "APK install failed: " << err << "\n";
     return 1;
   }
