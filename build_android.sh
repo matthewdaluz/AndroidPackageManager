@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="${SCRIPT_DIR}/build"
 
-# Default safe platform for Binder NDK
+# Default Android platform
 DEFAULT_PLATFORM="android-34"
 
 echo "Cleaning build directory..."
@@ -46,11 +46,10 @@ if [[ $# -ge 1 ]]; then
   DEFAULT_PLATFORM="android-${USER_API}"
 fi
 
-# Guard against unsupported binder APIs
 API_LEVEL=${DEFAULT_PLATFORM#android-}
 if (( API_LEVEL < 29 )); then
   echo ""
-  echo "⚠ ERROR: Android API < 29 does not support NDK Binder symbols like AIBinder_decStrong."
+  echo "⚠ ERROR: Android API < 29 is not supported by APM builds."
   echo "  You selected: ${DEFAULT_PLATFORM}"
   echo "  APM requires ANDROID_PLATFORM >= android-29 (recommended: 34)"
   exit 1
@@ -103,4 +102,3 @@ echo "Building with make -j$(nproc)..."
 cmake --build "${BUILD_DIR}" -- -j"$(nproc)"
 
 echo "Build completed successfully for API ${API_LEVEL}."
-

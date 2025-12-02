@@ -9,7 +9,6 @@ set(CMAKE_ANDROID_API 29)
 
 # Emulator mode for x86_64 Linux PC builds
 option(APM_EMULATOR_MODE "Build APM in emulator mode for x86_64 Linux" OFF)
-option(APM_ENABLE_BINDER "Build Binder transport support (deprecated by default)" OFF)
 if(APM_EMULATOR_MODE)
   add_compile_definitions(APM_EMULATOR_MODE=1)
   message(STATUS "APM Emulator Mode: ENABLED")
@@ -456,14 +455,6 @@ set(APM_CLIENT_SOURCES
     src/util/crypto/sha256.cpp
 )
 
-if(APM_ENABLE_BINDER)
-  list(APPEND APM_CLIENT_SOURCES
-    src/apm/binder_client.cpp
-    src/core/binder_support.cpp
-  )
-  add_compile_definitions(APM_ENABLE_BINDER=1)
-endif()
-
 add_executable(apm ${APM_CLIENT_SOURCES})
 
 target_include_directories(apm PRIVATE
@@ -528,15 +519,6 @@ set(APM_DAEMON_SOURCES
     src/apmd/security_manager.cpp
 )
 
-if(APM_ENABLE_BINDER)
-  list(APPEND APM_DAEMON_SOURCES
-    src/apmd/binder_service.cpp
-    src/apm/binder_client.cpp
-    src/core/binder_support.cpp
-  )
-  add_compile_definitions(APM_ENABLE_BINDER=1)
-endif()
-
 add_executable(apmd ${APM_DAEMON_SOURCES})
 
 target_include_directories(apmd PRIVATE
@@ -560,23 +542,6 @@ target_link_libraries(apmd PRIVATE
     ${OPENSSL_CRYPTO_LIBRARY}
     ${APM_BUNDLED_TLS_LIBS}
 )
-
-if(ANDROID AND APM_ENABLE_BINDER)
-  find_library(ANDROID_BINDER_NDK_LIB binder_ndk)
-  find_library(ANDROID_DL_LIB dl)
-
-  if(ANDROID_BINDER_NDK_LIB)
-    target_link_libraries(apm PRIVATE ${ANDROID_BINDER_NDK_LIB})
-    target_link_libraries(apmd PRIVATE ${ANDROID_BINDER_NDK_LIB})
-  endif()
-
-  if(ANDROID_DL_LIB)
-    target_link_libraries(apm PRIVATE ${ANDROID_DL_LIB})
-    target_link_libraries(apmd PRIVATE ${ANDROID_DL_LIB})
-  endif()
-endif()
-
-
 
 if(TARGET mbedcrypto)
   add_dependencies(apm mbedcrypto)

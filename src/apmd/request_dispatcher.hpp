@@ -6,8 +6,8 @@
  *
  * File: request_dispatcher.hpp
  * Purpose: Declare a reusable request dispatcher that executes apmd commands
- * using a supplied progress callback. This lets Binder and legacy IPC share
- * the same command handling logic.
+ * using a supplied progress callback. Binder shims (kept in binder_* files)
+ * can reuse this if that transport is ever re-enabled.
  * Last Modified: November 28th, 2025. - 8:59 AM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *

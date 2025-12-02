@@ -12,7 +12,7 @@ enum class TransportMode { IPC };
 // transport-specific headers here.
 using ProgressHandler = std::function<void(const Response &)>;
 
-// Detect desired transport mode. Binder is fully disabled; IPC is always used.
+// Detect desired transport mode (IPC-only).
 TransportMode detectTransportMode();
 
 // Dispatch request over the IPC socket transport.

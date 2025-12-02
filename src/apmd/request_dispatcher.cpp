@@ -5,9 +5,9 @@
  * Copyright (C) 2025 RedHead Industries
  *
  * File: request_dispatcher.cpp
- * Purpose: Implement the reusable request dispatcher shared by Binder and the
- * legacy IPC server. It converts parsed requests into responses and emits
- * progress callbacks when available.
+ * Purpose: Implement the reusable request dispatcher used by the IPC server.
+ * Legacy Binder wiring (retained in binder_* files) can reuse this entrypoint
+ * if re-enabled in the future.
  * Last Modified: November 28th, 2025. - 8:59 AM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
