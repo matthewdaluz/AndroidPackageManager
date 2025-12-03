@@ -45,6 +45,16 @@ enum class RepoTrustPolicy {
   Skip     // explicitly trust without verification
 };
 
+// Package (.deb) signature policy per source
+// - Disabled: do not attempt package-level GPG verification
+// - Optional: attempt verification if signature is available; continue on failure
+// - Required: require successful verification; fail install otherwise
+enum class DebSignaturePolicy {
+  Disabled = 0,
+  Optional,
+  Required
+};
+
 struct PackageEntry {
   std::string packageName;
   std::string version;
@@ -82,6 +92,7 @@ struct RepoSource {
   RepoFormat format = RepoFormat::Debian;
   bool isTermuxRepo = false;
   RepoTrustPolicy trustPolicy = RepoTrustPolicy::Default;
+  DebSignaturePolicy debSignaturePolicy = DebSignaturePolicy::Disabled;
 };
 
 using RepoSourceList = std::vector<RepoSource>;

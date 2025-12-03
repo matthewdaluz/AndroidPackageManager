@@ -632,6 +632,27 @@ static bool parseSingleSourcesFile(const std::string &path,
                               path + " (defaulting to verification)");
             src.trustPolicy = RepoTrustPolicy::Default;
           }
+        } else if (keyLower == "deb-signatures") {
+          std::string valLower = val;
+          std::transform(valLower.begin(), valLower.end(), valLower.begin(),
+                         [](unsigned char c) {
+                           return static_cast<char>(std::tolower(c));
+                         });
+
+          if (valLower == "required") {
+            src.debSignaturePolicy = DebSignaturePolicy::Required;
+          } else if (valLower == "optional") {
+            src.debSignaturePolicy = DebSignaturePolicy::Optional;
+          } else if (valLower == "disabled" || valLower == "no" ||
+                     valLower == "false" || valLower == "0") {
+            src.debSignaturePolicy = DebSignaturePolicy::Disabled;
+          } else {
+            apm::logger::warn(
+                "loadSourcesList: unknown deb-signatures value '" + val +
+                "' on line " + std::to_string(lineNo) + " in " + path +
+                "; using 'disabled'");
+            src.debSignaturePolicy = DebSignaturePolicy::Disabled;
+          }
         }
       }
 

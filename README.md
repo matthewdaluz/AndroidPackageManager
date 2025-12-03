@@ -135,6 +135,12 @@ Notes:
   - `[trusted=required]` enforces Release verification; the source is skipped
     if the signature or trusted key is missing.
   - No `trusted` option defaults to verifying Release signatures.
+- Package-level signatures:
+  - `[deb-signatures=required]` enforces GPG verification for each `.deb` using detached signatures (`.asc` preferred, `.gpg` fallback). Missing or invalid signatures abort installation.
+  - `[deb-signatures=optional]` attempts verification when a signature is available; installation proceeds if verification fails.
+  - `[deb-signatures=disabled]` skips package-level verification (default).
+  - Verified signatures are cached in `apm`’s package cache directory at `PKGS_DIR/sig-cache.json`, keyed by the `.deb` file’s SHA256. Cache entries include signature type, source, and local path.
+  - Trusted keys must be present in `apm::config::TRUSTED_KEYS_DIR` (ASCII-armored `.asc` or binary `.gpg`). Use the key import helper to add trusted keys.
 - Set `APM_CAINFO=/path/to/cacert.pem` to point curl at a custom CA bundle; otherwise the downloader tries common Android/Linux locations or builds a bundle from `/system/etc/security/cacerts`.
 
 
