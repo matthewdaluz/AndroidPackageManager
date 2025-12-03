@@ -1853,8 +1853,10 @@ int cmdSigCacheClear() {
 
 // Entry point that parses global options and dispatches to subcommands.
 int main(int argc, char **argv) {
+  // Quiet CLI: write only errors to a local log file, no stderr mirroring.
   apm::logger::setLogFile("apm-cli.log");
-  apm::logger::setMinLogLevel(apm::logger::Level::Debug);
+  apm::logger::setMinLogLevel(apm::logger::Level::Error);
+  apm::logger::enableStderr(false);
 
   int i = 1;
   while (i < argc) {
