@@ -80,6 +80,12 @@ static bool startsWith(const std::string &s, const std::string &prefix) {
   return s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0;
 }
 
+static bool hasSuffix(const std::string &s, const std::string &suffix) {
+  if (s.size() < suffix.size())
+    return false;
+  return s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
 // Normalize hex for comparison (strip whitespace, lowercase).
 static std::string normalizeHex(const std::string &hex) {
   std::string out;
@@ -271,7 +277,7 @@ static void storeSigCache(const std::unordered_map<std::string, SigCacheEntry> &
         << "  }";
   }
   out << "\n}\n";
-  apm::fs::writeFileAtomic(sigCachePath(), out.str());
+  apm::fs::writeFile(sigCachePath(), out.str(), true);
 }
 
 static apm::repo::DebSignaturePolicy getDebSigPolicy(const apm::repo::RepoIndexList &indices,
@@ -312,18 +318,14 @@ static bool ensureDebSignature(const apm::repo::PackageEntry &pkg,
 
   // Try download .asc
   auto ascUrl = makeSigUrl(pkg, ".asc");
-  apm::net::DownloadRequest reqAsc;
-  reqAsc.url = ascUrl;
-  reqAsc.destPath = ascPath;
-  if (apm::net::downloadFile(reqAsc, progressCb)) {
+  std::string dlErr;
+  if (apm::net::downloadFile(ascUrl, ascPath, &dlErr, nullptr)) {
     if (apm::fs::pathExists(ascPath)) { sigPathOut = ascPath; return true; }
   }
   // Fallback to .gpg
   auto gpgUrl = makeSigUrl(pkg, ".gpg");
-  apm::net::DownloadRequest reqGpg;
-  reqGpg.url = gpgUrl;
-  reqGpg.destPath = gpgPath;
-  if (apm::net::downloadFile(reqGpg, progressCb)) {
+  dlErr.clear();
+  if (apm::net::downloadFile(gpgUrl, gpgPath, &dlErr, nullptr)) {
     if (apm::fs::pathExists(gpgPath)) { sigPathOut = gpgPath; return true; }
   }
 
@@ -1452,7 +1454,7 @@ bool installWithDeps(const RepoIndexList &repoIndices,
             if (verifyDebGpg(*pkg, debPath, sigPath, &vErr, &fingerprint)) {
               SigCacheEntry e;
               e.sha256 = debSha;
-              e.sigType = apm::fs::hasSuffix(sigPath, ".asc") ? "asc" : "gpg";
+              e.sigType = hasSuffix(sigPath, ".asc") ? "asc" : "gpg";
               e.sigSource = "repo";
               e.sigPath = sigPath;
               e.verifiedBy = fingerprint;
