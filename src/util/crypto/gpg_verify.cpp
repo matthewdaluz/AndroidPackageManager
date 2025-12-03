@@ -231,7 +231,7 @@ bool decodeArmoredBlock(const std::string &text, std::vector<uint8_t> &out,
     armorFound = true;
     if (!decodeBase64(payload, out)) {
       if (errorMsg)
-        *errorMsg = "Failed to decode ASCII-armored data";
+        *errorMsg = "ASCII armor detected, but Base64 decode failed";
       return false;
     }
     return true;

@@ -1313,19 +1313,25 @@ bool updateFromSourcesList(const std::string &sourcesPath,
 
     if (shouldVerify) {
       if (!signatureReady) {
-        apm::logger::warn("updateFromSourcesList: no Release signature found "
-                          "for " +
-                          src.uri + " " + src.dist);
-        continue;
-      }
-
-      std::string sigErr;
-      if (!apm::crypto::verifyDetachedSignature(
-              relPath, relGpgPath, apm::config::getTrustedKeysDir(), &sigErr)) {
-        apm::logger::warn("updateFromSourcesList: Release signature "
-                          "verification failed for " +
-                          src.uri + " " + src.dist + ": " + sigErr);
-        continue;
+        if (src.trustPolicy == RepoTrustPolicy::Require) {
+          apm::logger::warn("updateFromSourcesList: no Release signature found for " +
+                            src.uri + " " + src.dist + " (trust=require)");
+          continue;
+        }
+        apm::logger::warn("updateFromSourcesList: no Release signature found for " +
+                          src.uri + " " + src.dist + "; proceeding unverified");
+      } else {
+        std::string sigErr;
+        if (!apm::crypto::verifyDetachedSignature(
+                relPath, relGpgPath, apm::config::getTrustedKeysDir(), &sigErr)) {
+          if (src.trustPolicy == RepoTrustPolicy::Require) {
+            apm::logger::warn("updateFromSourcesList: Release signature verification failed for " +
+                              src.uri + " " + src.dist + " (trust=require): " + sigErr);
+            continue;
+          }
+          apm::logger::warn("updateFromSourcesList: Release signature verification failed for " +
+                            src.uri + " " + src.dist + ": " + sigErr + "; proceeding unverified");
+        }
       }
     } else {
       apm::logger::info("updateFromSourcesList: trusted=yes for " + src.uri +
