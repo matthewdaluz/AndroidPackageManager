@@ -87,18 +87,25 @@ ui_print "************************"
 ui_print "APM System-wide Installer"
 ui_print "************************"
 ui_print ""
+ui_print "ZIP: $ZIP"
 
 ui_print "Extracting files"
 TMP=/tmp/apm-install
 rm -rf "$TMP"
 mkdir -p "$TMP"
 cd "$TMP"
-unzip -o "$ZIP"
+ui_print "Unzipping to $TMP"
+unzip -o "$ZIP" || error "Failed to extract ZIP"
 rm -rf META-INF
+ui_print "Extraction complete"
+ls -la > /tmp/apm-extract-listing.txt 2>&1
 
 # Check for arch
+ui_print "Checking architecture..."
 GAPPS_ARCH=$(getprop2 $TMP/build.prop arch)
 CPU_ARCH=$(getprop ro.bionic.arch)
+ui_print "Package arch: $GAPPS_ARCH"
+ui_print "Device arch: $CPU_ARCH"
 if [ "$GAPPS_ARCH" != "$CPU_ARCH" ]; then
   error "This package is built for $GAPPS_ARCH but your device is $CPU_ARCH! Aborting"
 fi
@@ -126,17 +133,20 @@ if [ ! -z "$CURRENTSLOT" ]; then
 fi
 
 SYSTEM_BLOCK=$(find_block "system")
+ui_print "System block device: $SYSTEM_BLOCK"
 
 # Disable rw protection on dynamic partitions
 if [ "$DYNAMIC_PARTITIONS" = "true" ]; then
+  ui_print "Disabling write protection..."
   blockdev --setrw "$SYSTEM_BLOCK" 2>/dev/null || true
 fi
 
 # Mount system
 SYSTEM_MNT=/mnt/system
 mkdir -p "$SYSTEM_MNT" 2>/dev/null || true
+ui_print "Attempting to mount $SYSTEM_BLOCK to $SYSTEM_MNT"
 if mount -o rw "$SYSTEM_BLOCK" "$SYSTEM_MNT"; then
-  ui_print "$SYSTEM_MNT mounted"
+  ui_print "$SYSTEM_MNT mounted successfully"
 else
   error_mounting "$SYSTEM_MNT"
 fi
@@ -146,13 +156,10 @@ fi
 # so we copy into ${SYSTEM_MNT}/ to land in /system/...
 SYSTEM_OUT="${SYSTEM_MNT}"
 
-# Skip version check for now - getprop2 may fail in some recovery environments
-# TODO: Implement more robust version detection
-# GAPPS_VERSION=$(getprop2 $TMP/build.prop version)
-# ANDROID_VERSION=$(getprop2 $SYSTEM_MNT/build.prop ro.build.version.sdk)
-
 ui_print "Generating addon.d file"
-cd system
+cd system || error "Failed to cd into system directory"
+ui_print "Current directory: $(pwd)"
+ls -la addon.d/ > /tmp/apm-addond-listing.txt 2>&1
 cat addon.d/addond_head > addon.d/30-apm.sh
 for f in `find . ! -path "./addon.d/*" -type f`; do
   line=$(echo "$f" | sed 's/\.\///')
@@ -160,6 +167,7 @@ for f in `find . ! -path "./addon.d/*" -type f`; do
 done
 cat addon.d/addond_tail >> addon.d/30-apm.sh
 rm addon.d/addond_head addon.d/addond_tail
+ui_print "addon.d file generated"
 
 ui_print "Preparing files for copying"
 for d in `find . -mindepth 1 -type d`; do
@@ -167,50 +175,112 @@ for d in `find . -mindepth 1 -type d`; do
   set_owner root root $d
 done
 for f in `find . -type f`; do
-  type=$(echo "$f" | sed 's/.*\.//')
-  if [ "$type" == "sh" ] || [ "$type" == "$f" ]; then
-    set_perm 0755 $f
-  else
-    set_perm 0644 $f
-  fi
+  # Check if file is in bin/ or xbin/ directory
+  case "$f" in
+    ./bin/*|./xbin/*)
+      # All files in bin/xbin are executable
+      set_perm 0755 $f
+      ;;
+    *.sh)
+      # Shell scripts are executable
+      set_perm 0755 $f
+      ;;
+    *)
+      # Everything else is read-only
+      set_perm 0644 $f
+      ;;
+  esac
   set_owner root root $f
   set_con system_file $f
 done
 
-ui_print "Copying files to system partition"
-cp --preserve=a -r ./* "${SYSTEM_OUT}/"
+ui_print "Current directory: $(pwd)"
+ls -la > /tmp/apm-pwd-listing.txt 2>&1
+ui_print "Contents of current directory:"
+for item in *; do
+  ui_print "  - $item"
+done
+
+ui_print "Target directory: ${SYSTEM_OUT}"
+ls -la "${SYSTEM_OUT}/" > /tmp/apm-system-root-before.txt 2>&1
+
+# CRITICAL: /mnt/system/bin and /mnt/system/etc are symlinks to /system/bin and /system/etc
+# This creates a circular reference. We need to copy to the real location: /mnt/system/system/
+ui_print "Detecting system structure..."
+if [ -L "${SYSTEM_OUT}/bin" ]; then
+  ui_print "  /bin is a symlink - using /system/ subdirectory"
+  REAL_SYSTEM="${SYSTEM_OUT}/system"
+  mkdir -p "${REAL_SYSTEM}" 2>/dev/null || true
+else
+  ui_print "  /bin is real directory - using root"
+  REAL_SYSTEM="${SYSTEM_OUT}"
+fi
+
+ui_print "Copying files to system partition..."
+ui_print "Target: ${REAL_SYSTEM}/"
+cp --preserve=a -r ./* "${REAL_SYSTEM}/" 2>&1 | tee /tmp/apm-copy-output.txt
+COPY_RESULT=$?
+ui_print "Copy exit code: $COPY_RESULT"
+
+if [ $COPY_RESULT -ne 0 ]; then
+  ui_print "WARNING: Some copy errors occurred (check logs)"
+else
+  ui_print "Copy completed successfully"
+fi
+
+ui_print "Verifying installation..."
+ls -la "${SYSTEM_OUT}/" > /tmp/apm-system-root-after.txt 2>&1
+ls -la "${REAL_SYSTEM}/bin/" > /tmp/apm-system-bin-listing.txt 2>&1
+ls -la "${REAL_SYSTEM}/etc/init/" > /tmp/apm-system-etc-init-listing.txt 2>&1
+ls -la "${REAL_SYSTEM}/etc/selinux/" > /tmp/apm-system-etc-selinux-listing.txt 2>&1
+
+ui_print "Checking if APM binaries exist:"
+if [ -f "${REAL_SYSTEM}/bin/apm" ]; then
+  ui_print "  ✓ apm binary found at ${REAL_SYSTEM}/bin/apm"
+  ls -l "${REAL_SYSTEM}/bin/apm" | tee -a /tmp/apm-verify.txt
+else
+  ui_print "  ✗ apm binary NOT found"
+  echo "apm binary missing at ${REAL_SYSTEM}/bin/apm" >> /tmp/apm-verify.txt
+fi
+
+if [ -f "${REAL_SYSTEM}/bin/apmd" ]; then
+  ui_print "  ✓ apmd binary found at ${REAL_SYSTEM}/bin/apmd"
+  ls -l "${REAL_SYSTEM}/bin/apmd" | tee -a /tmp/apm-verify.txt
+else
+  ui_print "  ✗ apmd binary NOT found"
+  echo "apmd binary missing at ${REAL_SYSTEM}/bin/apmd" >> /tmp/apm-verify.txt
+fi
 
 ui_print "Setting binary executable permissions"
-set_perm 0755 "${SYSTEM_OUT}/bin/apm"
-set_perm 0755 "${SYSTEM_OUT}/bin/apmd"
-set_con system_file "${SYSTEM_OUT}/bin/apm"
-set_con apmd_exec "${SYSTEM_OUT}/bin/apmd"
+set_perm 0755 "${REAL_SYSTEM}/bin/apm"
+set_perm 0755 "${REAL_SYSTEM}/bin/apmd"
+set_con system_file "${REAL_SYSTEM}/bin/apm"
+set_con apmd_exec "${REAL_SYSTEM}/bin/apmd"
 
 ui_print "Installing SELinux policies"
-# Set permissions on SELinux policy files
-if [ -f "${SYSTEM_OUT}/etc/selinux/apm.cil" ]; then
-  set_perm 0644 "${SYSTEM_OUT}/etc/selinux/apm.cil"
-  set_con system_file "${SYSTEM_OUT}/etc/selinux/apm.cil"
+if [ -f "${REAL_SYSTEM}/etc/selinux/apm.cil" ]; then
+  set_perm 0644 "${REAL_SYSTEM}/etc/selinux/apm.cil"
+  set_con system_file "${REAL_SYSTEM}/etc/selinux/apm.cil"
   ui_print "  - Installed apm.cil policy"
 fi
 
-if [ -f "${SYSTEM_OUT}/etc/selinux/apm_file_contexts" ]; then
-  set_perm 0644 "${SYSTEM_OUT}/etc/selinux/apm_file_contexts"
-  set_con system_file "${SYSTEM_OUT}/etc/selinux/apm_file_contexts"
+if [ -f "${REAL_SYSTEM}/etc/selinux/apm_file_contexts" ]; then
+  set_perm 0644 "${REAL_SYSTEM}/etc/selinux/apm_file_contexts"
+  set_con system_file "${REAL_SYSTEM}/etc/selinux/apm_file_contexts"
   ui_print "  - Installed apm_file_contexts"
 fi
 
-if [ -f "${SYSTEM_OUT}/etc/selinux/apm_service_contexts" ]; then
-  set_perm 0644 "${SYSTEM_OUT}/etc/selinux/apm_service_contexts"
-  set_con system_file "${SYSTEM_OUT}/etc/selinux/apm_service_contexts"
+if [ -f "${REAL_SYSTEM}/etc/selinux/apm_service_contexts" ]; then
+  set_perm 0644 "${REAL_SYSTEM}/etc/selinux/apm_service_contexts"
+  set_con system_file "${REAL_SYSTEM}/etc/selinux/apm_service_contexts"
   ui_print "  - Installed apm_service_contexts"
 fi
 
 ui_print "SELinux policy will load on next boot"
 
 # Set xbin tools if present
-if [ -d "${SYSTEM_OUT}/xbin" ]; then
-  for tool in "${SYSTEM_OUT}/xbin"/*; do
+if [ -d "${REAL_SYSTEM}/xbin" ]; then
+  for tool in "${REAL_SYSTEM}/xbin"/*; do
     [ -f "$tool" ] && set_perm 0755 "$tool"
     [ -f "$tool" ] && set_con system_file "$tool"
   done

@@ -1,1 +1,63 @@
-# this is a dummy file, the magic is in update-binary, which is a shell script
+ui_print("************************");
+ui_print("APM System-wide Installer");
+ui_print("************************");
+ui_print("");
+
+# Mount system partition
+ui_print("Mounting system partition...");
+run_program("/system/bin/mount", "/system") || run_program("/system/bin/mount", "-o", "rw", "/system");
+
+# Extract files
+ui_print("Extracting files...");
+package_extract_dir("system", "/system");
+
+# Set permissions for binaries
+ui_print("Setting permissions...");
+set_perm(0, 0, 0755, "/system/bin/apm");
+set_perm(0, 0, 0755, "/system/bin/apmd");
+
+# Set permissions for init script
+set_perm(0, 0, 0644, "/system/etc/init/init.apmd.rc");
+
+# Set permissions for SELinux policy files
+set_perm(0, 0, 0644, "/system/etc/selinux/apm.cil");
+set_perm(0, 0, 0644, "/system/etc/selinux/apm_file_contexts");
+set_perm(0, 0, 0644, "/system/etc/selinux/apm_service_contexts");
+
+# Set permissions for addon.d
+set_perm(0, 0, 0755, "/system/addon.d/30-apm.sh");
+
+# Set permissions for xbin tools if present
+set_perm(0, 0, 0755, "/system/xbin/xz");
+set_perm(0, 0, 0755, "/system/xbin/xzcat");
+set_perm(0, 0, 0755, "/system/xbin/unxz");
+set_perm(0, 0, 0755, "/system/xbin/xzdiff");
+set_perm(0, 0, 0755, "/system/xbin/xzcmp");
+set_perm(0, 0, 0755, "/system/xbin/xzgrep");
+set_perm(0, 0, 0755, "/system/xbin/xzegrep");
+set_perm(0, 0, 0755, "/system/xbin/xzfgrep");
+set_perm(0, 0, 0755, "/system/xbin/xzless");
+set_perm(0, 0, 0755, "/system/xbin/xzmore");
+set_perm(0, 0, 0755, "/system/xbin/lzmainfo");
+
+# Unmount
+ui_print("Unmounting partitions...");
+unmount("/system");
+
+ui_print("");
+ui_print("APM installed successfully!");
+ui_print("");
+ui_print("============================================");
+ui_print("APM uses custom SELinux policy (apm.cil)");
+ui_print("  - apmd runs as u:r:apmd:s0 domain");
+ui_print("  - Service: u:object_r:apmd_service:s0");
+ui_print("  - Works in SELinux enforcing mode");
+ui_print("============================================");
+ui_print("");
+ui_print("IMPORTANT: Reboot required for policy load");
+ui_print("");
+ui_print("After reboot:");
+ui_print("  - Verify: getenforce (should be Enforcing)");
+ui_print("  - Test: apm ping");
+ui_print("");
+ui_print("Done!");

@@ -8,7 +8,5 @@
 # APM data directory
 /data/apm(/.*)?                 u:object_r:apmd_data_file:s0
 
-# APM socket (IPC-only default)
+# APM socket (IPC-only)
 /data/apm/apmd.sock             u:object_r:apmd_socket:s0
-# Legacy socket mapping (kept for backward compatibility if used)
-/dev/socket/apmd                u:object_r:apmd_socket:s0
