@@ -334,11 +334,12 @@ static bool ensureDebSignature(const apm::repo::PackageEntry &pkg,
 static bool verifyDebGpg(const apm::repo::PackageEntry &pkg,
                          const std::string &debPath,
                          const std::string &sigPath,
-                         std::string *errorMsg) {
+                         std::string *errorMsg,
+                         std::string *fingerprintOut = nullptr) {
   std::string err;
   if (!apm::crypto::verifyDetachedSignature(debPath, sigPath,
                                             apm::config::getTrustedKeysDir(),
-                                            &err)) {
+                                            &err, fingerprintOut)) {
     if (errorMsg) *errorMsg = err.empty() ? "Signature verification failed" : err;
     apm::logger::error("verifyDebGpg: " + (errorMsg ? *errorMsg : std::string("failed")));
     return false;
@@ -1447,13 +1448,14 @@ bool installWithDeps(const RepoIndexList &repoIndices,
             }
           } else {
             std::string vErr;
-            if (verifyDebGpg(*pkg, debPath, sigPath, &vErr)) {
+            std::string fingerprint;
+            if (verifyDebGpg(*pkg, debPath, sigPath, &vErr, &fingerprint)) {
               SigCacheEntry e;
               e.sha256 = debSha;
               e.sigType = apm::fs::hasSuffix(sigPath, ".asc") ? "asc" : "gpg";
               e.sigSource = "repo";
               e.sigPath = sigPath;
-              e.verifiedBy = ""; // optional: fill with fingerprint if available
+              e.verifiedBy = fingerprint;
               cache[debSha] = e;
               storeSigCache(cache);
               verified = true;

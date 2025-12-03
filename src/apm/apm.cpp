@@ -879,6 +879,8 @@ void printUsage() {
       << "  search <pattern>            Search available repo packages\n"
       << "  version                     Show APM version and build date\n"
       << "  key-add <file.asc|.gpg>     Import a trusted public key\n"
+      << "  sig-cache show              Show cached .deb signature verifications\n"
+      << "  sig-cache clear             Clear the signature cache\n"
       << "\n"
       << "  help                        Show this help\n"
       << std::endl;
@@ -1734,6 +1736,113 @@ int cmdKeyAdd(const std::string &path) {
   return 0;
 }
 
+// Show the contents of the .deb signature cache.
+int cmdSigCacheShow() {
+  std::string cachePath = apm::fs::joinPath(apm::config::getPkgsDir(), "sig-cache.json");
+  if (!apm::fs::pathExists(cachePath)) {
+    std::cout << "Signature cache is empty (no cache file found)\n";
+    return 0;
+  }
+
+  std::string content;
+  if (!apm::fs::readFile(cachePath, content)) {
+    std::cerr << "Failed to read cache file: " << cachePath << "\n";
+    return 1;
+  }
+
+  if (content.empty() || content == "{\n}\n" || content == "{}\n") {
+    std::cout << "Signature cache is empty\n";
+    return 0;
+  }
+
+  std::cout << "Signature Cache:\n";
+  std::cout << "Location: " << cachePath << "\n\n";
+  
+  // Simple JSON parser to extract entries
+  std::istringstream in(content);
+  std::string line;
+  std::string currentSha;
+  std::string sigType, sigSource, sigPath, verifiedBy;
+  
+  while (std::getline(in, line)) {
+    // Trim whitespace
+    size_t start = line.find_first_not_of(" \t");
+    if (start == std::string::npos) continue;
+    line = line.substr(start);
+    
+    // Look for SHA256 key
+    if (line[0] == '"' && line.find("\":") != std::string::npos) {
+      size_t end = line.find('"', 1);
+      if (end != std::string::npos) {
+        currentSha = line.substr(1, end - 1);
+        sigType.clear(); sigSource.clear(); sigPath.clear(); verifiedBy.clear();
+      }
+    }
+    // Parse fields
+    else if (line.find("\"sigType\":") != std::string::npos) {
+      size_t valStart = line.find('"', line.find(':'));
+      if (valStart != std::string::npos) {
+        size_t valEnd = line.find('"', valStart + 1);
+        if (valEnd != std::string::npos)
+          sigType = line.substr(valStart + 1, valEnd - valStart - 1);
+      }
+    }
+    else if (line.find("\"sigSource\":") != std::string::npos) {
+      size_t valStart = line.find('"', line.find(':'));
+      if (valStart != std::string::npos) {
+        size_t valEnd = line.find('"', valStart + 1);
+        if (valEnd != std::string::npos)
+          sigSource = line.substr(valStart + 1, valEnd - valStart - 1);
+      }
+    }
+    else if (line.find("\"sigPath\":") != std::string::npos) {
+      size_t valStart = line.find('"', line.find(':'));
+      if (valStart != std::string::npos) {
+        size_t valEnd = line.find('"', valStart + 1);
+        if (valEnd != std::string::npos)
+          sigPath = line.substr(valStart + 1, valEnd - valStart - 1);
+      }
+    }
+    else if (line.find("\"verifiedBy\":") != std::string::npos) {
+      size_t valStart = line.find('"', line.find(':'));
+      if (valStart != std::string::npos) {
+        size_t valEnd = line.find('"', valStart + 1);
+        if (valEnd != std::string::npos)
+          verifiedBy = line.substr(valStart + 1, valEnd - valStart - 1);
+      }
+    }
+    // End of entry
+    else if (line[0] == '}' && !currentSha.empty()) {
+      std::cout << "Package SHA256: " << currentSha << "\n";
+      std::cout << "  Signature Type: " << (sigType.empty() ? "(unknown)" : sigType) << "\n";
+      std::cout << "  Source:         " << (sigSource.empty() ? "(unknown)" : sigSource) << "\n";
+      std::cout << "  Path:           " << (sigPath.empty() ? "(none)" : sigPath) << "\n";
+      std::cout << "  Verified By:    " << (verifiedBy.empty() ? "(not recorded)" : verifiedBy) << "\n";
+      std::cout << "\n";
+      currentSha.clear();
+    }
+  }
+  
+  return 0;
+}
+
+// Clear the .deb signature cache.
+int cmdSigCacheClear() {
+  std::string cachePath = apm::fs::joinPath(apm::config::getPkgsDir(), "sig-cache.json");
+  if (!apm::fs::pathExists(cachePath)) {
+    std::cout << "Signature cache is already empty\n";
+    return 0;
+  }
+
+  if (!apm::fs::removeFile(cachePath)) {
+    std::cerr << "Failed to remove cache file: " << cachePath << "\n";
+    return 1;
+  }
+
+  std::cout << "Signature cache cleared\n";
+  return 0;
+}
+
 } // namespace
 
 //
@@ -1926,6 +2035,21 @@ int main(int argc, char **argv) {
       return 1;
     }
     return cmdKeyAdd(argv[i]);
+  }
+  if (cmd == "sig-cache") {
+    if (i >= argc) {
+      std::cerr << "apm: 'sig-cache' requires an operation (show|clear)\n";
+      return 1;
+    }
+    std::string op = argv[i];
+    if (op == "show")
+      return cmdSigCacheShow();
+    else if (op == "clear")
+      return cmdSigCacheClear();
+    else {
+      std::cerr << "apm: unknown sig-cache operation '" << op << "'\n";
+      return 1;
+    }
   }
   if (cmd == "help")
     return printUsage(), 0;

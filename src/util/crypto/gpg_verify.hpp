@@ -37,11 +37,13 @@ namespace apm::crypto {
 //   trustedKeysDir contains trusted public keys (*.asc or *.gpg)
 //
 // Returns true if the signature verifies against at least one trusted key;
-// false otherwise. errorMsg is optional.
+// false otherwise. errorMsg is optional. If fingerprintOut is provided and
+// verification succeeds, it is filled with the fingerprint of the key used.
 bool verifyDetachedSignature(const std::string &dataPath,
                              const std::string &sigPath,
                              const std::string &trustedKeysDir,
-                             std::string *errorMsg = nullptr);
+                             std::string *errorMsg = nullptr,
+                             std::string *fingerprintOut = nullptr);
 
 // Verify a clearsigned OpenPGP Release (InRelease) file. On success, returns
 // true and fills outCleartext with the decoded, dash-unescaped cleartext

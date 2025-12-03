@@ -1093,7 +1093,8 @@ static bool extractClearsignedBodies(const std::string &in,
 bool verifyDetachedSignature(const std::string &dataPath,
                              const std::string &sigPath,
                              const std::string &trustedKeysDir,
-                             std::string *errorMsg) {
+                             std::string *errorMsg,
+                             std::string *fingerprintOut) {
   std::ifstream sigFile(sigPath, std::ios::binary);
   if (!sigFile.is_open()) {
     if (errorMsg)
@@ -1202,6 +1203,8 @@ bool verifyDetachedSignature(const std::string &dataPath,
 
     if (verifyWithKey(key, digest, sigPadded, &keyErr)) {
       apm::logger::info("Signature verified with key " + fingerprint);
+      if (fingerprintOut)
+        *fingerprintOut = fingerprint;
       return true;
     }
 
