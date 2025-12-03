@@ -37,66 +37,44 @@ endfunction()
 # Android NDK Setup
 # ======================================================
 if(ANDROID)
-  set(ANDROID_NDK_PATH "$ENV{HOME}/Android/NDK" CACHE PATH "Path to Android NDK")
-  
-  if(NOT EXISTS "${ANDROID_NDK_PATH}")
-    message(STATUS "Android NDK not found at ${ANDROID_NDK_PATH}, downloading...")
-    
-    set(ANDROID_NDK_URL "https://dl.google.com/android/repository/android-ndk-r27d-linux.zip")
-    set(ANDROID_NDK_ZIP "${CMAKE_BINARY_DIR}/android-ndk-r27d-linux.zip")
-    set(ANDROID_NDK_EXTRACT_DIR "$ENV{HOME}/Android")
-    
-    # Create Android directory if it doesn't exist
-    file(MAKE_DIRECTORY "${ANDROID_NDK_EXTRACT_DIR}")
-    
-    # Download NDK
-    file(DOWNLOAD
-      ${ANDROID_NDK_URL}
-      ${ANDROID_NDK_ZIP}
-      SHOW_PROGRESS
-      STATUS download_status
-    )
-    
-    list(GET download_status 0 status_code)
-    list(GET download_status 1 status_message)
-    
-    if(NOT status_code EQUAL 0)
-      message(FATAL_ERROR "Failed to download Android NDK: ${status_message}")
-    endif()
-    
-    # Extract NDK
-    execute_process(
-      COMMAND ${CMAKE_COMMAND} -E tar xzf "${ANDROID_NDK_ZIP}"
-      WORKING_DIRECTORY "${ANDROID_NDK_EXTRACT_DIR}"
-      RESULT_VARIABLE extract_result
-    )
-    
-    if(NOT extract_result EQUAL 0)
-      message(FATAL_ERROR "Failed to extract Android NDK")
-    endif()
-    
-    # Rename extracted folder to NDK
-    execute_process(
-      COMMAND ${CMAKE_COMMAND} -E rename "android-ndk-r27d" "NDK"
-      WORKING_DIRECTORY "${ANDROID_NDK_EXTRACT_DIR}"
-      RESULT_VARIABLE rename_result
-    )
-    
-    if(NOT rename_result EQUAL 0)
-      message(FATAL_ERROR "Failed to rename Android NDK directory")
-    endif()
-    
-    # Clean up downloaded zip
-    file(REMOVE "${ANDROID_NDK_ZIP}")
-    
-    message(STATUS "Android NDK successfully installed to ${ANDROID_NDK_PATH}")
-  else()
-    message(STATUS "Android NDK found at ${ANDROID_NDK_PATH}")
+  set(ANDROID_SDK_ROOT "$ENV{ANDROID_SDK_ROOT}" CACHE PATH "Path to Android SDK" FORCE)
+  if(NOT ANDROID_SDK_ROOT OR ANDROID_SDK_ROOT STREQUAL "")
+    set(ANDROID_SDK_ROOT "/opt/android-sdk" CACHE PATH "Path to Android SDK" FORCE)
   endif()
-  
-  # Set NDK path for CMake
-  set(ANDROID_NDK "${ANDROID_NDK_PATH}" CACHE PATH "Path to Android NDK" FORCE)
-  set(CMAKE_ANDROID_API 34 CACHE STRING "Target Android API level" FORCE)
+
+  # Allow user to provide explicit NDK root, otherwise derive from SDK root
+  set(ANDROID_NDK_ROOT "$ENV{ANDROID_NDK_ROOT}" CACHE PATH "Path to Android NDK" FORCE)
+  if(NOT ANDROID_NDK_ROOT OR ANDROID_NDK_ROOT STREQUAL "")
+    # Try common env fallbacks
+    if(DEFINED ENV{ANDROID_NDK_HOME} AND NOT "$ENV{ANDROID_NDK_HOME}" STREQUAL "")
+      set(ANDROID_NDK_ROOT "$ENV{ANDROID_NDK_HOME}" CACHE PATH "Path to Android NDK" FORCE)
+    endif()
+  endif()
+
+  # If still not set, attempt to auto-detect latest NDK under /opt/android-sdk/ndk/*
+  if((NOT ANDROID_NDK_ROOT OR ANDROID_NDK_ROOT STREQUAL "") AND EXISTS "${ANDROID_SDK_ROOT}/ndk")
+    file(GLOB _APM_NDK_DIRS LIST_DIRECTORIES TRUE "${ANDROID_SDK_ROOT}/ndk/*")
+    if(_APM_NDK_DIRS)
+      list(SORT _APM_NDK_DIRS)
+      list(REVERSE _APM_NDK_DIRS)
+      list(GET _APM_NDK_DIRS 0 _APM_NDK_CANDIDATE)
+      set(ANDROID_NDK_ROOT "${_APM_NDK_CANDIDATE}" CACHE PATH "Auto-detected Android NDK" FORCE)
+    endif()
+  endif()
+
+  if(NOT ANDROID_NDK_ROOT OR NOT EXISTS "${ANDROID_NDK_ROOT}")
+    message(FATAL_ERROR "Android NDK not found. Set ANDROID_NDK_ROOT or ensure it exists under ${ANDROID_SDK_ROOT}/ndk/")
+  endif()
+
+  # Set CMake's Android NDK variables
+  set(CMAKE_ANDROID_NDK "${ANDROID_NDK_ROOT}" CACHE PATH "Android NDK root" FORCE)
+  # Harmonize API level with ANDROID_PLATFORM if provided by toolchain invocation
+  if(DEFINED ANDROID_PLATFORM)
+    string(REPLACE "android-" "" _APM_API "${ANDROID_PLATFORM}")
+    set(CMAKE_ANDROID_API "${_APM_API}" CACHE STRING "Target Android API level" FORCE)
+  else()
+    set(CMAKE_ANDROID_API 34 CACHE STRING "Target Android API level" FORCE)
+  endif()
 endif()
 
 # ======================================================
@@ -412,7 +390,28 @@ if((NOT OPENSSL_SSL_LIBRARY OR NOT OPENSSL_CRYPTO_LIBRARY)
   endif()
 endif()
 if(NOT OPENSSL_SSL_LIBRARY OR NOT OPENSSL_CRYPTO_LIBRARY)
-  message(FATAL_ERROR "OpenSSL/BoringSSL libraries not found. Install libssl or ensure NDK-provided BoringSSL is available.")
+  message(FATAL_ERROR 
+    "OpenSSL/BoringSSL libraries not found.\n"
+    "\n"
+    "To build BoringSSL for this project:\n"
+    "  1. Clone BoringSSL:\n"
+    "       git clone https://github.com/google/boringssl.git\n"
+    "       cd boringssl\n"
+    "\n"
+    "  2. Build BoringSSL:\n"
+    "       mkdir build && cd build\n"
+    "       cmake -DCMAKE_BUILD_TYPE=Release ..\n"
+    "       make -j$(nproc)\n"
+    "\n"
+    "  3. Copy the built libraries to the prebuilt directory:\n"
+    "       mkdir -p ${CMAKE_SOURCE_DIR}/prebuilt/boringssl\n"
+    "       cp ssl/libssl.a ${CMAKE_SOURCE_DIR}/prebuilt/boringssl/\n"
+    "       cp crypto/libcrypto.a ${CMAKE_SOURCE_DIR}/prebuilt/boringssl/\n"
+    "       cp -r ../include ${CMAKE_SOURCE_DIR}/prebuilt/boringssl/\n"
+    "\n"
+    "  4. Re-run CMake to detect the prebuilt libraries.\n"
+    "\n"
+    "Alternatively, install system OpenSSL development packages (e.g., libssl-dev).")
 endif()
 
 
@@ -465,7 +464,7 @@ target_include_directories(apm PRIVATE
     src/util/include
     src/util/crypto
     src/apm/commands/include
-    /usr/include
+    $<IF:$<BOOL:${ANDROID}>,, /usr/include>
     src/thirdparty/include
     include
 )
@@ -529,7 +528,7 @@ target_include_directories(apmd PRIVATE
     src/util/include
     src/util/crypto
     src/apm/commands/include
-    /usr/include
+    $<IF:$<BOOL:${ANDROID}>,, /usr/include>
     src/thirdparty/include
     include
 )

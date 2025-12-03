@@ -39,3 +39,4 @@ __pycache__/
 ZIPSigning/
 apm-flashable/magiskpolicy-arm64
 apm-magisk/apm-magisk.zip
+prebuilt/

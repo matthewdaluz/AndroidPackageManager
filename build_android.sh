@@ -69,15 +69,24 @@ if [[ "${EMULATOR_MODE}" == "1" ]]; then
     -DCMAKE_BUILD_TYPE=Release
 
 else
-  # Normal Android build with NDK
-  NDK_ROOT="${ANDROID_NDK:-${ANDROID_NDK_HOME:-$HOME/Android/NDK}}"
-  TOOLCHAIN_FILE="${NDK_ROOT}/build/cmake/android.toolchain.cmake"
+  # Normal Android build with NDK resolved under /opt/android-sdk
+  ANDROID_SDK_ROOT_ENV="${ANDROID_SDK_ROOT:-/opt/android-sdk}"
+  ANDROID_NDK_ROOT_ENV="${ANDROID_NDK_ROOT:-${ANDROID_NDK_HOME:-}}"
 
-  if [[ ! -d "${NDK_ROOT}" ]]; then
-    echo "Android NDK not found at ${NDK_ROOT}. Set ANDROID_NDK or ANDROID_NDK_HOME." >&2
+  if [[ -z "${ANDROID_NDK_ROOT_ENV}" ]]; then
+    if [[ -d "${ANDROID_SDK_ROOT_ENV}/ndk" ]]; then
+      # Auto-detect latest NDK directory by lexicographic sort (versioned folders)
+      ANDROID_NDK_ROOT_ENV=$(ls -1 "${ANDROID_SDK_ROOT_ENV}/ndk" | sort -r | head -n1)
+      ANDROID_NDK_ROOT_ENV="${ANDROID_SDK_ROOT_ENV}/ndk/${ANDROID_NDK_ROOT_ENV}"
+    fi
+  fi
+
+  if [[ -z "${ANDROID_NDK_ROOT_ENV}" || ! -d "${ANDROID_NDK_ROOT_ENV}" ]]; then
+    echo "Android NDK not found. Set ANDROID_NDK_ROOT or install under ${ANDROID_SDK_ROOT_ENV}/ndk/." >&2
     exit 1
   fi
 
+  TOOLCHAIN_FILE="${ANDROID_NDK_ROOT_ENV}/build/cmake/android.toolchain.cmake"
   if [[ ! -f "${TOOLCHAIN_FILE}" ]]; then
     echo "Android toolchain file not found at ${TOOLCHAIN_FILE}." >&2
     exit 1
@@ -87,7 +96,8 @@ else
   echo "Configuring:"
   echo "  ABI       = ${ANDROID_ABI}"
   echo "  Platform  = ${DEFAULT_PLATFORM}"
-  echo "  NDK       = ${NDK_ROOT}"
+  echo "  SDK       = ${ANDROID_SDK_ROOT_ENV}"
+  echo "  NDK       = ${ANDROID_NDK_ROOT_ENV}"
   echo ""
 
   cmake -S "${SCRIPT_DIR}" -B "${BUILD_DIR}" \
@@ -95,7 +105,9 @@ else
     -DANDROID_ABI="${ANDROID_ABI}" \
     -DANDROID_PLATFORM="${DEFAULT_PLATFORM}" \
     -DCMAKE_TOOLCHAIN_FILE="${TOOLCHAIN_FILE}" \
-    -DANDROID_STL="c++_static"
+    -DANDROID_STL="c++_static" \
+    -DANDROID_SDK_ROOT="${ANDROID_SDK_ROOT_ENV}" \
+    -DANDROID_NDK_ROOT="${ANDROID_NDK_ROOT_ENV}"
 fi
 
 echo "Building with make -j$(nproc)..."
