@@ -35,6 +35,7 @@
 #include <cerrno>
 #include <chrono>
 #include <cstdlib>
+#include <cstring>
 #include <sstream>
 #include <string>
 #include <sys/file.h>

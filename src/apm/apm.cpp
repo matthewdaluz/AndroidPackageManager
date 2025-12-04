@@ -455,6 +455,10 @@ static void attachSession(apm::ipc::Request &req,
     req.sessionToken = sessionToken;
 }
 
+// Route module-related IPC to AMSD and return enriched error messages.
+static bool sendModuleRequest(apm::ipc::Request &req, apm::ipc::Response &resp,
+                              std::string &errorOut);
+
 static bool requiresAuthSession(const std::string &cmd) {
   return cmd == "update" || cmd == "install" || cmd == "remove" ||
          cmd == "upgrade" || cmd == "autoremove" || cmd == "module-install" ||
