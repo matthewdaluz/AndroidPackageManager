@@ -80,7 +80,7 @@ on post-fs-data
     mkdir /data/apm-system-overlay/sepolicy 0755 root root
     mkdir /data/apm-system-overlay/logs 0755 root root
     start apmd-setup
-    # Removed legacy keeper; apmd is managed directly by init
+    # apmd will be started by init on boot completion; no polling restarts
 
 service apmd-setup /system/bin/sh -c '\
     BASE=/data/apm; \
@@ -154,8 +154,8 @@ service apmd-setup /system/bin/sh -c '\
             fi; \
         done; \
     done; \
-    /system/bin/setprop ctl.start apmd; \
-    log "apmd start requested"; \
+    # Startup of apmd is managed via init triggers (see below); avoid property-based loops \ 
+    log "apmd setup completed"; \
     exit 0'
     class late_start
     oneshot
@@ -170,3 +170,11 @@ service apmd /system/bin/apmd
     group root system inet shell
     disabled
     seclabel u:r:init:s0
+
+# Start apmd once the system reports boot completed
+on property:sys.boot_completed=1
+    start apmd
+
+# Rate-limit restarts to avoid rapid loops if apmd crashes
+service apmd /system/bin/apmd
+    restart_period 120

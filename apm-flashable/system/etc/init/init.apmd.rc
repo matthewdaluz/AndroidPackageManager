@@ -80,17 +80,19 @@ on post-fs-data
     restorecon_recursive /data/ams
 
 service apmd /system/bin/apmd
-    class late_start
+    class core
     user root
     group root system inet shell
     # IPC-only: daemon binds /data/apm/apmd.sock itself
     seclabel u:r:apmd:s0
     capabilities NET_ADMIN NET_RAW SYS_MODULE SYS_ADMIN DAC_OVERRIDE DAC_READ_SEARCH
-    # Auto-restart if crashes - oneshot is false to keep running
+    # Keep the daemon running; apmd itself waits for /data readiness.
     restart
-    # Ensure /data is mounted and writable before starting
-    disabled
 
-on property:sys.boot_completed=1
-    # Start apmd once boot is complete and /data is fully ready
+on boot
+    # Start apmd as soon as init begins booting; apmd handles /data readiness internally
     start apmd
+
+# Optional admin trigger to restart apmd if needed (avoids fixed 5-second loops)
+on property:apm.restart=1
+    restart apmd
