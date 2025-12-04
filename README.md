@@ -1,8 +1,8 @@
 # APM — Android Package Manager
 
-APM is a GPLv3-licensed package manager for rooted Android. It mirrors the APT workflow (sources lists, Packages indices, dependency tracking) while adding Android-specific features: a root daemon that performs filesystem changes, CLI helpers that work offline when possible, Termux compatibility, APK install/uninstall helpers, and a Magisk-inspired module system (AMS) for OverlayFS-based system customization. The AMS layer now runs as a dedicated `amsd` daemon owning `/ams`, separate from `apmd`.
+APM is a GPLv3-licensed package manager for rooted Android. It mirrors the APT workflow (sources lists, Packages indices, dependency tracking) while adding Android-specific features: a root daemon that performs filesystem changes, CLI helpers that work offline when possible, Termux compatibility, APK install/uninstall helpers, and a Magisk-inspired module system (AMS) for OverlayFS-based system customization. The runtime is IPC-only over UNIX sockets (Binder is deprecated but left in the tree) and now ships a dedicated `amsd` daemon owning `/ams` plus a safe-mode boot counter to avoid overlay boot loops. An emulator mode is available for host-side testing.
 
-> Upgrade note: AMSD builds require factory-resetting previous `/data/apm` installs before flashing. Legacy modules under `/data/apm/modules` will block startup; remove them or perform a full reset first.
+> Upgrade note: AMSD builds require factory-resetting previous `/data/apm` installs before flashing. Legacy modules under `/data/apm/modules` will block startup; remove them or perform a full reset first. The current CLI/daemon release is **APM 1.8.0b (closed beta)**.
 
 
 ## Components
@@ -10,8 +10,8 @@ APM is a GPLv3-licensed package manager for rooted Android. It mirrors the APT w
 | Piece | Role |
 | ----- | ---- |
 | `apm` | User-facing CLI. Talks to the daemon over `/data/apm/apmd.sock` (IPC-only), renders progress, and runs local-only queries (`list`, `info`, `search`, manual installs). |
-| `apmd` | Root daemon. Downloads repo metadata, installs/upgrades/removes packages, maintains PATH helper scripts, and handles APK/system-overlay work. |
-| `amsd` | AMS daemon. Owns the `/ams` hierarchy, applies OverlayFS layers for enabled modules, tracks safe-mode boot counters, and exposes module-only IPC on `/dev/socket/amsd`. |
+| `apmd` | Root daemon. Downloads repo metadata, installs/upgrades/removes packages, maintains PATH helper scripts, performs package/APK verification, and handles APK/system-overlay work. |
+| `amsd` | AMS daemon. Owns the `/ams` hierarchy, applies OverlayFS layers for enabled modules, tracks safe-mode boot counters (threshold file-backed under `/ams`), and exposes module-only IPC on `/dev/socket/amsd`. |
 | AMS | Built-in module system similar to Magisk. Modules live under `/ams/modules`, carry metadata + overlay payloads, and are mounted via OverlayFS by `amsd` at startup or when partitions appear. |
 | Core | Shared plumbing for repo parsing, status DB, dependency resolution, tar/deb extraction, and download helpers (curl + zlib). |
 
@@ -20,10 +20,10 @@ Repository layout:
 ```
 src/
   apm/        # CLI + commands + IPC client
-  apmd/       # Daemon, IPC server, installers, PATH helpers
+  apmd/       # Daemon, IPC server, installers, PATH helpers, security manager
   ams/        # AMS module manager + metadata/state helpers
   core/       # Repo parsing, status DB, deb/tar extractors, downloader
-  util/       # Filesystem helpers, crypto stubs (SHA-256, GPG stub)
+  util/       # Filesystem helpers, crypto helpers (SHA256/MD5/GPG verification)
 ```
 
 
@@ -44,7 +44,8 @@ src/
 | `/ams` | AMS runtime root owned by `amsd` (modules + overlays + logs) |
 | `/ams/modules` | Installed AMS modules and their per-module logs |
 | `/ams/.runtime` | OverlayFS work/base/upper areas owned by `amsd` |
-| `/data/apm/keys` | Placeholder for trusted keyrings (GPG check currently stubbed) |
+| `/ams/.amsd_boot_counter`, `/ams/.amsd_safe_mode`, `/ams/.amsd_safe_mode_threshold` | Safe-mode counter/flag/threshold files consulted before mounting overlays |
+| `/data/apm/keys` | Trusted keyrings for Release/.deb verification (`.asc` or `.gpg`) |
 | `/data/apm/apmd.sock` | Default UNIX socket |
 | `/data/apm/logs` | `apm`/`apmd` logs; module logs live under `/data/apm/logs/modules` |
 | `/data/apm/modules` | AMS modules; `.runtime` holds OverlayFS upper/work/base dirs |
@@ -151,11 +152,8 @@ Notes:
 
 - Termux repos are detected automatically; Debian arches are mapped to Termux equivalents.
 - `apm update` downloads Release + Packages(.gz) into `/data/apm/lists` and parses them locally; `.xz` indices are intentionally skipped on Android.
-- Release metadata is verified against trusted keys in `/data/apm/keys` (`.asc`
-  or `.gpg`, including inline `InRelease` signatures). Missing signatures or
-  keys cause the source to be skipped unless `[trusted=yes]` is set. SHA256
-  verification of Packages/Release is wired but currently bypassed for `.deb`
-  payloads.
+- Release metadata is verified against trusted keys in `/data/apm/keys` (`.asc` or `.gpg`, including inline `InRelease` signatures). Missing signatures or keys cause the source to be skipped unless `[trusted=yes]` is set.
+- Packages and `.deb` payloads are hash-verified (SHA256 preferred, MD5 fallback from repo metadata). Detached package signatures can be enforced per-source and successful results are cached in `PKGS_DIR/sig-cache.json`.
 - Per-source trust overrides:
   - `[trusted=yes]` skips Release signature verification for that repo.
   - `[trusted=required]` enforces Release verification; the source is skipped
@@ -165,8 +163,8 @@ Notes:
   - `[deb-signatures=required]` enforces GPG verification for each `.deb` using detached signatures (`.asc` preferred, `.gpg` fallback). Missing or invalid signatures abort installation.
   - `[deb-signatures=optional]` attempts verification when a signature is available; installation proceeds if verification fails.
   - `[deb-signatures=disabled]` skips package-level verification (default).
-  - Verified signatures are cached in `apm`’s package cache directory at `PKGS_DIR/sig-cache.json`, keyed by the `.deb` file’s SHA256. Cache entries include signature type, source, and local path.
-  - Trusted keys must be present in `apm::config::TRUSTED_KEYS_DIR` (ASCII-armored `.asc` or binary `.gpg`). Use the key import helper to add trusted keys.
+  - Verified signatures are cached in `apm`’s package cache directory at `PKGS_DIR/sig-cache.json`, keyed by the `.deb` file’s SHA256. Cache entries include signature type, source, verifier fingerprint (if available), and local path.
+  - Trusted keys must be present in `apm::config::TRUSTED_KEYS_DIR` (ASCII-armored `.asc` or binary `.gpg`). Use `apm key-add <key.asc|.gpg>` to import.
 - Set `APM_CAINFO=/path/to/cacert.pem` to point curl at a custom CA bundle; otherwise the downloader tries common Android/Linux locations or builds a bundle from `/system/etc/security/cacerts`.
 
 
@@ -183,10 +181,13 @@ Most commands hit the daemon; `list`, `info`, and `search` operate offline.
 | `apm upgrade [pkg ...]` | Upgrade all installed packages or a subset; uses the same resolver and installer as `install`. |
 | `apm autoremove` | Remove packages marked `Auto-Installed` in the status DB. |
 | `apm factory-reset` | Wipe installed commands/deps, credentials, repo lists, AMS modules, and system app overlays (prompts before running). |
+| `apm forgot-password` | Recover access with stored security questions and issue a fresh session token. |
 | `apm list` | Print installed packages from `/data/apm/status`. |
 | `apm info <pkg>` | Show installed metadata plus the candidate version from cached indices. |
 | `apm search <pattern ...>` | Case-insensitive search across cached repo descriptions. |
 | `apm package-install <file>` | Local-only install of `.deb` or `.tar.*` archives that contain `package-info.json`; records manifests under `/data/apm/manual-packages`. |
+| `apm key-add <key.asc|.gpg>` | Import a trusted GPG key into `/data/apm/keys` for Release/.deb verification. |
+| `apm sig-cache show|clear` | Inspect or clear the cached `.deb` signature verification results. |
 | `apm apk-install <apk> [--install-as-system]` | Ask the daemon to install an APK via `pm install -r` or stage it as a system app overlay under `/data/adb/modules/apm-system-apps`. |
 | `apm apk-uninstall <pkg>` | Uninstall via `pm uninstall`, fall back to `--user 0`, then clean any system overlay. |
 | `apm module-list` | List AMS modules and status. |
@@ -196,9 +197,9 @@ Most commands hit the daemon; `list`, `info`, and `search` operate offline.
 
 ## Security
 
-- The first privileged command (e.g., `apm update`, `apm install`, module/APK operations) prompts you to set an APM password/PIN. Losing it requires a factory reset to clear `passpin.bin`.
-- The secret is stored as AES-256-GCM ciphertext in `/data/apm/.security/passpin.bin`; the key never leaves Keystore2 (alias `apm_passkey`, non-exportable, encrypt/decrypt only).
-- Successful authentication starts a 3-minute session recorded at `/data/apm/.security/session.bin`; during that window, privileged commands run without re-entering the password/PIN.
+- The first privileged command (e.g., `apm update`, `apm install`, module/APK operations) prompts you to set an APM password/PIN plus three recovery questions. Losing it requires successful recovery or a factory reset to clear `passpin.bin`.
+- Secrets are protected with AES-256-GCM using a randomly generated master key stored locally at `/data/apm/.security/masterkey.bin`; the password/PIN is salted, stretched with PBKDF2, and encrypted into `/data/apm/.security/passpin.bin`. Session HMACs and ciphertexts are generated with BoringSSL; there is no hardware-keystore dependency.
+- Successful authentication starts a 3-minute session recorded at `/data/apm/.security/session.bin`; during that window, privileged commands run without re-entering the password/PIN. `apm forgot-password` performs a security-question challenge before issuing a new session. Reset attempts are rate-limited (cooldown recorded in `/data/apm/.security/reset-lockout.txt`).
 
 
 ## Manual packages
@@ -245,7 +246,7 @@ AMS is a Magisk-style overlay framework baked into `apmd`. It targets rooted dev
 
 - **Layout:** `/data/apm/modules/<name>/` contains `module-info.json`, `overlay/{system,vendor,product}`, optional `post-fs-data.sh` and `service.sh`, `workdir/` (upper/work scratch dirs), and daemon-maintained `state.json`. Runtime state lives under `/data/apm/modules/.runtime/{upper,work,base}`; per-module logs land in `/data/apm/logs/modules/<name>.log`.
 - **Metadata:** `module-info.json` fields: `name`, `version`, `author`, `description`, `mount` (enable overlay), `post_fs_data` (run script after mount), `service` (background script). `state.json` tracks `enabled`, ISO8601 timestamps, and `last_error`.
-- **Lifecycle:** `apm module-install <zip>` extracts the ZIP (single nested dir tolerated), validates metadata, creates workdirs, marks the module enabled, rebuilds overlays, and runs lifecycle scripts. `module-enable/disable/remove` toggle state, rebuild overlays, and persist `state.json`. `module-list` prints module info + state.
+- **Lifecycle:** `apm module-install <zip>` extracts the ZIP (single nested dir tolerated), validates metadata, creates workdirs, marks the module enabled, rebuilds overlays, and runs lifecycle scripts. `module-enable/disable/remove` toggle state, rebuild overlays, and persist `state.json`. `module-list` prints module info + state. Boot-counter-based safe mode under `/ams` skips overlays after repeated failures until reset.
 - **Overlay rules:** AMS snapshots base mounts for `/system`, `/vendor`, `/product` into `.runtime/base` and layers enabled modules alphabetically (last wins). Overlays use shared upper/work dirs under `.runtime`. If no modules remain, AMS remounts the base mirrors.
 - **Packaging:** ZIP contents should be flat (module-info.json at root). Packaging steps: create `overlay/{system,vendor,product}`, optional scripts, then `zip -r ../my-module.zip .` from inside the module dir.
 - **Troubleshooting:** Check `/data/apm/logs/modules/<name>.log`; `module-list` surfaces `Last-Error`. Ensure overlay paths exist and scripts exit cleanly. Alphabetical module order controls override priority.
@@ -254,19 +255,19 @@ AMS is a Magisk-style overlay framework baked into `apmd`. It targets rooted dev
 ## Logging & troubleshooting
 
 - CLI log: `apm-cli.log` in the current working directory, mirrored to stderr.
-- Daemon log: `/data/apm/logs/apmd.log`.
-- Module logs: `/data/apm/logs/modules/<module>.log`.
+- Daemon log: `/data/apm/logs/apmd.log`. AMSD logs to `/data/ams/logs/amsd.log`; module logs live under `/data/apm/logs/modules/<module>.log`.
 - Socket override: `apm --socket /tmp/custom.sock ...` / `apmd --socket /tmp/custom.sock`.
 - Binder transport: deprecated and unused by default; code remains for reference only.
 
 
 ## Known limitations / roadmap
 
-- GPG verification is disabled; only use trusted mirrors. SHA256 verification for `.deb` payloads is also bypassed in dev mode.
+- Binder transport is disabled at runtime; only the UNIX socket transport is exercised.
 - Dependency resolution only follows the first alternative and goes one level deep.
 - `Packages.xz` indices are ignored on Android builds.
 - System APK install assumes Magisk-owned `/data/adb/modules`.
 - AMS requires a clean base mount snapshot; if `/system` is already overlay-mounted, capture will fail until the device reboots cleanly.
+- Secrets are protected in software with a locally stored master key; there is no hardware keystore binding or revocation for imported signing keys.
 
 
 ## Contributing
