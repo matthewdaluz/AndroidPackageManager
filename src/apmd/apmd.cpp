@@ -7,7 +7,7 @@
  * File: apmd.cpp
  * Purpose: Bootstrap apmd, configure logging, and run the IPC-backed service
  * loop.
- * Last Modified: November 28th, 2025. - 8:59 AM Eastern Time. Author: Matthew
+ * Last Modified: December 4th, 2025. - 09:07 AM Eastern Time. Author: Matthew
  * DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -52,6 +52,25 @@ bool isDataAccessible() {
     return false;
   }
   return access("/data", R_OK | W_OK | X_OK) == 0;
+}
+
+bool hasLegacyModules(std::string &detail) {
+  const std::string legacyRoot = "/data/apm/modules";
+  detail.clear();
+  if (!apm::fs::isDirectory(legacyRoot))
+    return false;
+
+  auto entries = apm::fs::listDir(legacyRoot, false);
+  for (const auto &name : entries) {
+    std::string infoPath =
+        apm::fs::joinPath(apm::fs::joinPath(legacyRoot, name),
+                          "module-info.json");
+    if (apm::fs::isFile(infoPath)) {
+      detail = infoPath;
+      return true;
+    }
+  }
+  return false;
 }
 
 // Poll until /data is mounted and accessible to avoid crashing on startup.
@@ -141,6 +160,18 @@ int runDaemon(bool debugMode, bool emulatorMode,
   }
   if (emulatorMode) {
     apm::logger::info("apmd: EMULATOR mode enabled");
+  }
+
+  std::string legacyDetail;
+  if (hasLegacyModules(legacyDetail)) {
+    std::string msg =
+        "Legacy modules detected under /data/apm/modules. Factory reset is "
+        "required before running the AMSD-enabled release.";
+    apm::logger::error("apmd: " + msg);
+    if (!legacyDetail.empty())
+      apm::logger::error("apmd: found module-info.json at " + legacyDetail);
+    std::cerr << msg << std::endl;
+    return 1;
   }
 
   apm::daemon::path::ensureProfileLoaded();

@@ -1,6 +1,30 @@
 #!/usr/bin/env bash
 #
 # APM - Android Package Manager
+#
+# RedHead Industries - Technologies Branch
+# Copyright (C) 2025 RedHead Industries
+#
+# File: build_recovery_zip.sh
+# Purpose: Build the flashable recovery ZIP containing APM/APMD/AMSD binaries and init scripts.
+# Last Modified: December 4th, 2025. - 09:07 AM Eastern Time
+# Author: Matthew DaLuz - RedHead Founder
+#
+# APM is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# APM is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with APM. If not, see <https://www.gnu.org/licenses/>.
+#
+#
+# APM - Android Package Manager
 # Recovery ZIP Build Script
 #
 # Copyright (C) 2025 RedHead Industries
@@ -34,13 +58,13 @@ log_error() {
 }
 
 # Check if binaries exist
-if [ ! -f "${BUILD_DIR}/apm" ] || [ ! -f "${BUILD_DIR}/apmd" ]; then
+if [ ! -f "${BUILD_DIR}/apm" ] || [ ! -f "${BUILD_DIR}/apmd" ] || [ ! -f "${BUILD_DIR}/amsd" ]; then
     log_error "APM binaries not found in ${BUILD_DIR}/"
     log_info "Running build_android.sh to build ARM64 binaries..."
     cd "${PROJECT_ROOT}"
     # Build for arm64 non-interactively
     echo "1" | ./build_android.sh
-    if [ ! -f "${BUILD_DIR}/apm" ] || [ ! -f "${BUILD_DIR}/apmd" ]; then
+    if [ ! -f "${BUILD_DIR}/apm" ] || [ ! -f "${BUILD_DIR}/apmd" ] || [ ! -f "${BUILD_DIR}/amsd" ]; then
         log_error "Build failed! Cannot create recovery ZIP."
         exit 1
     fi
@@ -52,8 +76,10 @@ log_info "Found APM binaries in ${BUILD_DIR}/"
 log_info "Copying binaries to ${FLASHABLE_DIR}/system/bin/"
 cp "${BUILD_DIR}/apm" "${FLASHABLE_DIR}/system/bin/apm"
 cp "${BUILD_DIR}/apmd" "${FLASHABLE_DIR}/system/bin/apmd"
+cp "${BUILD_DIR}/amsd" "${FLASHABLE_DIR}/system/bin/amsd"
 chmod 755 "${FLASHABLE_DIR}/system/bin/apm"
 chmod 755 "${FLASHABLE_DIR}/system/bin/apmd"
+chmod 755 "${FLASHABLE_DIR}/system/bin/amsd"
 
 # Copy xz tools if available
 if [ -d "${PROJECT_ROOT}/prebuilt/xz" ]; then
@@ -95,8 +121,14 @@ if [ -f "${ZIP_PATH}" ]; then
     if unzip -l "${ZIP_PATH}" | grep -q "system/bin/apmd"; then
         log_info "  ✓ APM binaries included"
     fi
+    if unzip -l "${ZIP_PATH}" | grep -q "system/bin/amsd"; then
+        log_info "  ✓ AMSD binary included"
+    fi
     if unzip -l "${ZIP_PATH}" | grep -q "system/etc/init/init.apmd.rc"; then
         log_info "  ✓ Init service included"
+    fi
+    if unzip -l "${ZIP_PATH}" | grep -q "system/etc/init/init.amsd.rc"; then
+        log_info "  ✓ AMSD init service included"
     fi
     if unzip -l "${ZIP_PATH}" | grep -q "system/etc/selinux/apm.cil"; then
         log_info "  ✓ SELinux policy (apm.cil) included"

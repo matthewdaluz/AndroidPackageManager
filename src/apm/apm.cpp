@@ -7,7 +7,7 @@
  * File: apm.cpp
  * Purpose: Implement the apm CLI, including local commands and IPC-backed
  * operations.
- * Last Modified: November 28th, 2025. - 8:59 AM Eastern Time.
+ * Last Modified: December 4th, 2025. - 09:07 AM Eastern Time
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -901,7 +901,7 @@ int cmdPing() {
   apm::ipc::Response resp;
   std::string err;
 
-  if (!apm::ipc::sendRequestAuto(req, resp, &err)) {
+  if (!sendModuleRequest(req, resp, err)) {
     std::cerr << "Error: " << err << "\n";
     return 1;
   }
@@ -1311,7 +1311,7 @@ int cmdRemove(const std::string &sessionToken, const std::string &pkg) {
   apm::ipc::Response resp;
   std::string err;
 
-  if (!apm::ipc::sendRequestAuto(req, resp, &err)) {
+  if (!sendModuleRequest(req, resp, err)) {
     std::cerr << "Error: " << err << "\n";
     return 1;
   }
@@ -1336,7 +1336,7 @@ int cmdApkInstall(const std::string &sessionToken, const std::string &apk,
   apm::ipc::Response resp;
   std::string err;
 
-  if (!apm::ipc::sendRequestAuto(req, resp, &err)) {
+  if (!sendModuleRequest(req, resp, err)) {
     std::cerr << "Error: " << err << "\n";
     return 1;
   }
@@ -1506,6 +1506,23 @@ int cmdModuleInstall(const std::string &sessionToken,
                              : "Module install failed: ")
             << resp.message << "\n";
   return resp.success ? 0 : 1;
+}
+
+static bool sendModuleRequest(apm::ipc::Request &req, apm::ipc::Response &resp,
+                              std::string &errorOut) {
+  const std::string socketPath = apm::config::getAmsdSocketPath();
+  errorOut.clear();
+
+  if (apm::ipc::sendRequestToSocket(req, resp, socketPath, &errorOut))
+    return true;
+
+  if (errorOut.empty()) {
+    errorOut = "Unable to reach AMSD at " + socketPath;
+  } else {
+    errorOut += " (socket: " + socketPath + ")";
+  }
+  errorOut += ". Check 'getprop amsd.ready' or /ams/logs/amsd.log.";
+  return false;
 }
 
 static int runModuleToggle(const std::string &sessionToken,

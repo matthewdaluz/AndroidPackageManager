@@ -1,6 +1,8 @@
 # APM — Android Package Manager
 
-APM is a GPLv3-licensed package manager for rooted Android. It mirrors the APT workflow (sources lists, Packages indices, dependency tracking) while adding Android-specific features: a root daemon that performs filesystem changes, CLI helpers that work offline when possible, Termux compatibility, APK install/uninstall helpers, and a Magisk-inspired module system (AMS) for OverlayFS-based system customization.
+APM is a GPLv3-licensed package manager for rooted Android. It mirrors the APT workflow (sources lists, Packages indices, dependency tracking) while adding Android-specific features: a root daemon that performs filesystem changes, CLI helpers that work offline when possible, Termux compatibility, APK install/uninstall helpers, and a Magisk-inspired module system (AMS) for OverlayFS-based system customization. The AMS layer now runs as a dedicated `amsd` daemon owning `/ams`, separate from `apmd`.
+
+> Upgrade note: AMSD builds require factory-resetting previous `/data/apm` installs before flashing. Legacy modules under `/data/apm/modules` will block startup; remove them or perform a full reset first.
 
 
 ## Components
@@ -9,7 +11,8 @@ APM is a GPLv3-licensed package manager for rooted Android. It mirrors the APT w
 | ----- | ---- |
 | `apm` | User-facing CLI. Talks to the daemon over `/data/apm/apmd.sock` (IPC-only), renders progress, and runs local-only queries (`list`, `info`, `search`, manual installs). |
 | `apmd` | Root daemon. Downloads repo metadata, installs/upgrades/removes packages, maintains PATH helper scripts, and handles APK/system-overlay work. |
-| AMS | Built-in module system similar to Magisk. Modules live under `/data/apm/modules`, carry metadata + overlay payloads, and are mounted via OverlayFS by `apmd` at startup or on demand. |
+| `amsd` | AMS daemon. Owns the `/ams` hierarchy, applies OverlayFS layers for enabled modules, tracks safe-mode boot counters, and exposes module-only IPC on `/dev/socket/amsd`. |
+| AMS | Built-in module system similar to Magisk. Modules live under `/ams/modules`, carry metadata + overlay payloads, and are mounted via OverlayFS by `amsd` at startup or when partitions appear. |
 | Core | Shared plumbing for repo parsing, status DB, dependency resolution, tar/deb extraction, and download helpers (curl + zlib). |
 
 Repository layout:
@@ -38,6 +41,9 @@ src/
 | `/data/apm/lists` | Cached `Release`/`Packages` indices |
 | `/data/apm/status` | dpkg-style status database |
 | `/data/apm/sources` | `sources.list` plus `sources.list.d/*.list` |
+| `/ams` | AMS runtime root owned by `amsd` (modules + overlays + logs) |
+| `/ams/modules` | Installed AMS modules and their per-module logs |
+| `/ams/.runtime` | OverlayFS work/base/upper areas owned by `amsd` |
 | `/data/apm/keys` | Placeholder for trusted keyrings (GPG check currently stubbed) |
 | `/data/apm/apmd.sock` | Default UNIX socket |
 | `/data/apm/logs` | `apm`/`apmd` logs; module logs live under `/data/apm/logs/modules` |

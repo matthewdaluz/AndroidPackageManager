@@ -6,7 +6,7 @@
  *
  * File: config.hpp
  * Purpose: Declare filesystem layout constants used by both CLI and daemon.
- * Last Modified: November 28th, 2025. - 8:59 AM Eastern Time.
+ * Last Modified: December 4th, 2025. - 09:07 AM Eastern Time
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -80,6 +80,7 @@ std::string getSourcesMain();
 std::string getSourcesListD();
 std::string getSourcesList();
 std::string getIpcSocketPath();
+std::string getAmsdSocketPath();
 std::string getTrustedKeysDir();
 std::string getSecurityDir();
 std::string getMasterKeyFile();
@@ -124,15 +125,15 @@ inline constexpr const char *TERMUX_HOME_DIR =
     "/data/apm/installed/termux/home";
 inline constexpr const char *TERMUX_TMP_DIR = "/data/apm/installed/termux/tmp";
 
-inline constexpr const char *MODULES_DIR = "/data/apm/modules";
-inline constexpr const char *MODULE_LOGS_DIR = "/data/apm/logs/modules";
-inline constexpr const char *MODULE_RUNTIME_DIR = "/data/apm/modules/.runtime";
+inline constexpr const char *MODULES_DIR = "/ams/modules";
+inline constexpr const char *MODULE_LOGS_DIR = "/ams/logs/modules";
+inline constexpr const char *MODULE_RUNTIME_DIR = "/ams/.runtime";
 inline constexpr const char *MODULE_RUNTIME_UPPER_DIR =
-    "/data/apm/modules/.runtime/upper";
+    "/ams/.runtime/upper";
 inline constexpr const char *MODULE_RUNTIME_WORK_DIR =
-    "/data/apm/modules/.runtime/work";
+    "/ams/.runtime/work";
 inline constexpr const char *MODULE_RUNTIME_BASE_DIR =
-    "/data/apm/modules/.runtime/base";
+    "/ams/.runtime/base";
 
 // Status DB (dpkg-style)
 inline constexpr const char *STATUS_FILE = "/data/apm/status";

@@ -6,7 +6,8 @@
  *
  * File: security.cpp
  * Purpose: Implement shared security helpers for session persistence and time
- * handling. Last Modified: November 25th, 2025. - 11:35 AM Eastern Time.
+ * handling.
+ * Last Modified: December 4th, 2025. - 09:07 AM Eastern Time
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -36,7 +37,11 @@
 #include <cstdlib>
 #include <sstream>
 #include <string>
+#include <sys/file.h>
+#include <sys/types.h>
 #include <sys/stat.h>
+#include <unistd.h>
+#include <fcntl.h>
 
 namespace apm::security {
 
@@ -50,6 +55,58 @@ static inline void trim(std::string &s) {
                        [](unsigned char ch) { return !std::isspace(ch); })
               .base(),
           s.end());
+}
+
+static bool lockFdWithFallback(int fd, int operation, std::string *errorMsg) {
+  if (::flock(fd, operation) == 0)
+    return true;
+
+  if (operation == LOCK_SH && errno == EINVAL) {
+    if (::flock(fd, LOCK_EX) == 0)
+      return true;
+  }
+
+  if (errorMsg)
+    *errorMsg = "flock failed: " + std::string(std::strerror(errno));
+  return false;
+}
+
+static bool readAllFromFd(int fd, std::string &out, std::string *errorMsg) {
+  out.clear();
+  char buf[512];
+  while (true) {
+    ssize_t n = ::read(fd, buf, sizeof(buf));
+    if (n < 0) {
+      if (errno == EINTR)
+        continue;
+      if (errorMsg)
+        *errorMsg = "read() failed: " + std::string(std::strerror(errno));
+      return false;
+    }
+    if (n == 0)
+      break;
+    out.append(buf, static_cast<std::size_t>(n));
+  }
+  return true;
+}
+
+static bool writeAllToFd(int fd, const std::string &data,
+                         std::string *errorMsg) {
+  const char *ptr = data.data();
+  std::size_t remaining = data.size();
+  while (remaining > 0) {
+    ssize_t n = ::write(fd, ptr, remaining);
+    if (n < 0) {
+      if (errno == EINTR)
+        continue;
+      if (errorMsg)
+        *errorMsg = "write() failed: " + std::string(std::strerror(errno));
+      return false;
+    }
+    remaining -= static_cast<std::size_t>(n);
+    ptr += n;
+  }
+  return true;
 }
 
 } // namespace
@@ -128,12 +185,28 @@ bool parseSession(const std::string &raw, SessionState &out,
 }
 
 bool loadSession(SessionState &out, std::string *errorMsg) {
-  std::string raw;
-  if (!apm::fs::readFile(apm::config::getSessionFile(), raw)) {
+  const std::string sessionFile = apm::config::getSessionFile();
+  int fd = ::open(sessionFile.c_str(), O_RDONLY);
+  if (fd < 0) {
     if (errorMsg)
       *errorMsg = "Unable to read session file";
     return false;
   }
+
+  std::string raw;
+  bool ok = false;
+
+  do {
+    if (!lockFdWithFallback(fd, LOCK_SH, errorMsg))
+      break;
+    if (!readAllFromFd(fd, raw, errorMsg))
+      break;
+    ok = true;
+  } while (false);
+
+  ::close(fd);
+  if (!ok)
+    return false;
   return parseSession(raw, out, errorMsg);
 }
 
@@ -142,15 +215,28 @@ bool writeSession(const SessionState &state, std::string *errorMsg) {
     return false;
 
   const std::string sessionFile = apm::config::getSessionFile();
-  const std::string serialized = serializeSession(state);
-  if (!apm::fs::writeFile(sessionFile, serialized, true)) {
+  int fd = ::open(sessionFile.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+  if (fd < 0) {
     if (errorMsg)
-      *errorMsg = "Failed to write session file";
+      *errorMsg = "Failed to open session file for writing";
     return false;
   }
 
-  ::chmod(sessionFile.c_str(), 0600);
-  return true;
+  bool ok = false;
+  const std::string serialized = serializeSession(state);
+
+  do {
+    if (!lockFdWithFallback(fd, LOCK_EX, errorMsg))
+      break;
+    if (!writeAllToFd(fd, serialized, errorMsg))
+      break;
+    ok = true;
+  } while (false);
+
+  ::close(fd);
+  if (ok)
+    ::chmod(sessionFile.c_str(), 0600);
+  return ok;
 }
 
 bool isSessionExpired(const SessionState &state, std::uint64_t nowSeconds) {

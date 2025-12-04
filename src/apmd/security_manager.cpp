@@ -7,7 +7,7 @@
  * File: security_manager.cpp
  * Purpose: Implement daemon-side password/PIN handling plus session issuance
  * and validation using BoringSSL primitives.
- * Last Modified: November 25th, 2025. - 11:45 AM Eastern Time.
+ * Last Modified: December 4th, 2025. - 09:07 AM Eastern Time
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -673,6 +673,9 @@ bool SecurityManager::validateSessionToken(const std::string &token,
       *errorMsg = "Session token mismatch";
     return false;
   }
+
+  // Persist the session to keep the shared token file in sync for AMSD.
+  apm::security::writeSession(state, nullptr);
 
   return true;
 }

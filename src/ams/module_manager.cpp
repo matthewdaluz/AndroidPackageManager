@@ -6,7 +6,8 @@
  *
  * File: module_manager.cpp
  * Purpose: Implement AMS module lifecycle management plus OverlayFS
- * orchestration. Last Modified: November 18th, 2025. - 3:00 PM Eastern Time.
+ * orchestration.
+ * Last Modified: December 4th, 2025. - 09:07 AM Eastern Time
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -30,16 +31,22 @@
 #include "fs.hpp"
 #include "logger.hpp"
 
+#include <array>
 #include <cerrno>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <limits.h>
 #include <map>
+#include <mutex>
+#include <set>
 #include <sstream>
 #include <string>
 #include <sys/mount.h>
+#include <sys/stat.h>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 
@@ -68,7 +75,8 @@ constexpr OverlayTarget kOverlayTargets[] = {
 };
 
 std::string baseMirrorPath(const OverlayTarget &target) {
-  return apm::fs::joinPath(apm::config::MODULE_RUNTIME_BASE_DIR, target.name);
+  return apm::fs::joinPath(apm::config::getModuleRuntimeBaseDir(),
+                           target.name);
 }
 
 std::string normalizeMountPath(const std::string &p) {
@@ -288,10 +296,12 @@ namespace apm::ams {
 
 ModuleManager::ModuleManager()
     : modulesRoot_(apm::config::getModulesDir()),
-      logsRoot_(apm::config::MODULE_LOGS_DIR) {
+      logsRoot_(apm::config::getModuleLogsDir()) {
   apm::fs::createDirs(modulesRoot_);
   apm::fs::createDirs(logsRoot_);
 }
+
+ModuleManager::~ModuleManager() { stopPartitionMonitor(); }
 
 std::string ModuleManager::modulePath(const std::string &name) const {
   return apm::fs::joinPath(modulesRoot_, name);
@@ -346,6 +356,7 @@ void ModuleManager::logModuleEvent(const std::string &name,
 bool ModuleManager::installFromZip(const std::string &zipPath,
                                    ModuleOperationResult &out) {
   out = ModuleOperationResult{};
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   if (zipPath.empty()) {
     out.message = "Module zip path is empty";
     return false;
@@ -473,6 +484,7 @@ bool ModuleManager::writeState(const std::string &moduleDir, ModuleState &state,
 bool ModuleManager::enableModule(const std::string &name,
                                  ModuleOperationResult &out) {
   out = ModuleOperationResult{};
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   ModuleInfo info;
   ModuleState state;
   std::string err;
@@ -513,6 +525,7 @@ bool ModuleManager::enableModule(const std::string &name,
 bool ModuleManager::disableModule(const std::string &name,
                                   ModuleOperationResult &out) {
   out = ModuleOperationResult{};
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   ModuleInfo info;
   ModuleState state;
   std::string err;
@@ -550,6 +563,7 @@ bool ModuleManager::disableModule(const std::string &name,
 bool ModuleManager::removeModule(const std::string &name,
                                  ModuleOperationResult &out) {
   out = ModuleOperationResult{};
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   ModuleInfo info;
   ModuleState state;
   std::string err;
@@ -577,43 +591,44 @@ bool ModuleManager::removeModule(const std::string &name,
 }
 
 bool ModuleManager::ensureRuntimeDirs(std::string *errorMsg) const {
-  if (!ensureDir(apm::config::MODULE_RUNTIME_DIR)) {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
+  if (!ensureDir(apm::config::getModuleRuntimeDir())) {
     if (errorMsg)
       *errorMsg = "Failed to create runtime dir: " +
-                  std::string(apm::config::MODULE_RUNTIME_DIR);
+                  apm::config::getModuleRuntimeDir();
     return false;
   }
-  if (!ensureDir(apm::config::MODULE_RUNTIME_UPPER_DIR)) {
+  if (!ensureDir(apm::config::getModuleRuntimeUpperDir())) {
     if (errorMsg)
       *errorMsg = "Failed to create runtime upper dir";
     return false;
   }
-  if (!ensureDir(apm::config::MODULE_RUNTIME_WORK_DIR)) {
+  if (!ensureDir(apm::config::getModuleRuntimeWorkDir())) {
     if (errorMsg)
       *errorMsg = "Failed to create runtime work dir";
     return false;
   }
-  if (!ensureDir(apm::config::MODULE_RUNTIME_BASE_DIR)) {
+  if (!ensureDir(apm::config::getModuleRuntimeBaseDir())) {
     if (errorMsg)
       *errorMsg = "Failed to create runtime base dir";
     return false;
   }
   for (const auto &target : kOverlayTargets) {
-    if (!ensureDir(apm::fs::joinPath(apm::config::MODULE_RUNTIME_UPPER_DIR,
+    if (!ensureDir(apm::fs::joinPath(apm::config::getModuleRuntimeUpperDir(),
                                      target.name))) {
       if (errorMsg)
         *errorMsg =
             "Failed to prepare upper dir for " + std::string(target.name);
       return false;
     }
-    if (!ensureDir(apm::fs::joinPath(apm::config::MODULE_RUNTIME_WORK_DIR,
+    if (!ensureDir(apm::fs::joinPath(apm::config::getModuleRuntimeWorkDir(),
                                      target.name))) {
       if (errorMsg)
         *errorMsg =
             "Failed to prepare work dir for " + std::string(target.name);
       return false;
     }
-    if (!ensureDir(apm::fs::joinPath(apm::config::MODULE_RUNTIME_BASE_DIR,
+    if (!ensureDir(apm::fs::joinPath(apm::config::getModuleRuntimeBaseDir(),
                                      target.name))) {
       if (errorMsg)
         *errorMsg =
@@ -624,19 +639,10 @@ bool ModuleManager::ensureRuntimeDirs(std::string *errorMsg) const {
   return true;
 }
 
-bool ModuleManager::rebuildOverlays(std::string *errorMsg) const {
-  if (!ensureRuntimeDirs(errorMsg))
-    return false;
-
-  if (!ensureBaseMirrors(errorMsg))
-    return false;
+ModuleManager::OverlayStacks ModuleManager::buildOverlayStacks() const {
+  OverlayStacks stacks;
 
   std::vector<std::string> modules = apm::fs::listDir(modulesRoot_, false);
-  struct Stack {
-    std::vector<std::string> layers;
-  };
-  std::map<std::string, Stack> stacks;
-
   for (const auto &name : modules) {
     std::string dir = modulePath(name);
     if (!apm::fs::isDirectory(dir))
@@ -658,64 +664,135 @@ bool ModuleManager::rebuildOverlays(std::string *errorMsg) const {
       std::string subdir =
           apm::fs::joinPath(overlayRoot, std::string(target.name));
       if (apm::fs::isDirectory(subdir)) {
-        stacks[target.name].layers.push_back(subdir);
+        stacks[target.name].push_back(subdir);
       }
     }
   }
 
-  for (const auto &target : kOverlayTargets) {
-    auto it = stacks.find(target.name);
-    std::vector<std::string> layers;
-    if (it != stacks.end())
-      layers = it->second.layers;
+  return stacks;
+}
 
-    bool overlayActive = isOverlayMounted(target);
-
-    if (layers.empty() && !overlayActive)
-      continue;
-
-    if (!unmountPath(target.mountPoint, errorMsg))
-      return false;
-
-    if (layers.empty()) {
-      if (!mountBaseOnly(target, errorMsg))
-        return false;
-      continue;
-    }
-
-    std::ostringstream lower;
-    for (size_t i = 0; i < layers.size(); ++i) {
-      if (i > 0)
-        lower << ':';
-      lower << layers[i];
-    }
-    lower << ':' << baseMirrorPath(target);
-
-    std::string upperDir =
-        apm::fs::joinPath(apm::config::MODULE_RUNTIME_UPPER_DIR, target.name);
-    std::string workDir =
-        apm::fs::joinPath(apm::config::MODULE_RUNTIME_WORK_DIR, target.name);
-
-    std::ostringstream opts;
-    opts << "lowerdir=" << lower.str() << ",upperdir=" << upperDir
-         << ",workdir=" << workDir;
-
-    if (::mount("overlay", target.mountPoint, "overlay", 0,
-                opts.str().c_str()) != 0) {
-      std::string mountErr = std::string("Overlay mount failed for ") +
-                             target.mountPoint + ": " +
-                             std::strerror(errno);
-      mountBaseOnly(target, nullptr);
-      if (errorMsg)
-        *errorMsg = mountErr;
-      return false;
-    }
-
-    apm::logger::info("AMS overlay updated for " +
-                      std::string(target.mountPoint));
+bool ModuleManager::applyOverlayForTarget(std::size_t targetIndex,
+                                          const std::vector<std::string> &layers,
+                                          std::string *errorMsg) {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
+  if (targetIndex >= std::size(kOverlayTargets)) {
+    if (errorMsg)
+      *errorMsg = "Invalid overlay target index";
+    return false;
   }
 
+  const auto &target = kOverlayTargets[targetIndex];
+  std::string localErr;
+
+  if (!ensureRuntimeDirs(&localErr)) {
+    apm::logger::error("AMS overlay: " + localErr);
+    if (errorMsg)
+      *errorMsg = localErr;
+    return false;
+  }
+
+  if (!ensureBaseMirrorForTarget(target, &localErr)) {
+    apm::logger::error("AMS overlay: " + localErr);
+    if (errorMsg)
+      *errorMsg = localErr;
+    return false;
+  }
+
+  bool overlayActive = isOverlayMounted(target);
+
+  if (layers.empty() && !overlayActive)
+    return true;
+
+  if (!unmountPath(target.mountPoint, &localErr)) {
+    apm::logger::error("AMS overlay: " + localErr);
+    if (errorMsg)
+      *errorMsg = localErr;
+    return false;
+  }
+
+  if (layers.empty()) {
+    if (!mountBaseOnly(target, &localErr)) {
+      apm::logger::error("AMS overlay: " + localErr);
+      if (errorMsg)
+        *errorMsg = localErr;
+      return false;
+    }
+    apm::logger::info("AMS restored stock " +
+                      std::string(target.mountPoint) + " mount");
+    if (errorMsg)
+      errorMsg->clear();
+    return true;
+  }
+
+  std::ostringstream lower;
+  for (size_t i = 0; i < layers.size(); ++i) {
+    if (i > 0)
+      lower << ':';
+    lower << layers[i];
+  }
+  lower << ':' << baseMirrorPath(target);
+
+  std::string upperDir = apm::fs::joinPath(
+      apm::config::getModuleRuntimeUpperDir(), target.name);
+  std::string workDir = apm::fs::joinPath(apm::config::getModuleRuntimeWorkDir(),
+                                          target.name);
+
+  std::ostringstream opts;
+  opts << "lowerdir=" << lower.str() << ",upperdir=" << upperDir
+       << ",workdir=" << workDir;
+
+  if (::mount("overlay", target.mountPoint, "overlay", 0,
+              opts.str().c_str()) != 0) {
+    localErr = std::string("Overlay mount failed for ") +
+               target.mountPoint + ": " + std::strerror(errno);
+    mountBaseOnly(target, nullptr);
+    apm::logger::error("AMS overlay: " + localErr);
+    if (errorMsg)
+      *errorMsg = localErr;
+    return false;
+  }
+
+  apm::logger::info("AMS overlay updated for " +
+                    std::string(target.mountPoint));
+  if (errorMsg)
+    errorMsg->clear();
   return true;
+}
+
+bool ModuleManager::rebuildOverlays(std::string *errorMsg) {
+  if (!ensureRuntimeDirs(errorMsg))
+    return false;
+
+  OverlayStacks stacks = buildOverlayStacks();
+  bool ok = true;
+  std::string firstErr;
+
+  for (std::size_t idx = 0; idx < std::size(kOverlayTargets); ++idx) {
+    std::vector<std::string> layers;
+    auto it = stacks.find(kOverlayTargets[idx].name);
+    if (it != stacks.end())
+      layers = it->second;
+
+    std::string perErr;
+    if (!applyOverlayForTarget(idx, layers, &perErr)) {
+      ok = false;
+      if (firstErr.empty() && !perErr.empty())
+        firstErr = perErr;
+      else if (perErr.empty() && firstErr.empty())
+        firstErr = "Overlay apply failed for " +
+                   std::string(kOverlayTargets[idx].mountPoint);
+    }
+  }
+
+  if (errorMsg) {
+    if (!firstErr.empty())
+      *errorMsg = firstErr;
+    else
+      errorMsg->clear();
+  }
+
+  return ok;
 }
 
 bool ModuleManager::runScript(const std::string &path,
@@ -760,16 +837,12 @@ bool ModuleManager::runLifecycleScripts(const ModuleInfo &info,
 }
 
 bool ModuleManager::applyEnabledModules(std::string *errorMsg) {
-  std::string err;
-  if (!rebuildOverlays(&err)) {
-    if (errorMsg)
-      *errorMsg = err;
-    return false;
-  }
-  return true;
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
+  return rebuildOverlays(errorMsg);
 }
 
 void ModuleManager::startEnabledModules() {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   auto modules = apm::fs::listDir(modulesRoot_, false);
   for (const auto &name : modules) {
     ModuleInfo info;
@@ -784,6 +857,7 @@ void ModuleManager::startEnabledModules() {
 
 bool ModuleManager::listModules(std::vector<ModuleStatusEntry> &out,
                                 std::string *errorMsg) const {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   out.clear();
   auto modules = apm::fs::listDir(modulesRoot_, false);
   for (const auto &name : modules) {
@@ -800,6 +874,163 @@ bool ModuleManager::listModules(std::vector<ModuleStatusEntry> &out,
   if (errorMsg)
     errorMsg->clear();
   return true;
+}
+
+bool ModuleManager::isPartitionMounted(const std::string &mountPoint) const {
+  std::ifstream mounts("/proc/mounts");
+  if (!mounts.is_open())
+    return false;
+
+  std::string normalized = resolveForMount(mountPoint);
+  std::string line;
+  while (std::getline(mounts, line)) {
+    std::istringstream iss(line);
+    std::string source;
+    std::string target;
+    std::string fsType;
+    if (!(iss >> source >> target >> fsType))
+      continue;
+    if (resolveForMount(target) == normalized)
+      return true;
+  }
+
+  return false;
+}
+
+void ModuleManager::monitorPartitions() {
+  using namespace std::chrono_literals;
+  std::set<std::size_t> observed;
+
+  constexpr int kMaxIterations = 30;
+  constexpr auto kSleep = 5s;
+
+  for (int attempt = 0; attempt < kMaxIterations && !monitorStop_.load();
+       ++attempt) {
+    OverlayStacks stacks;
+    {
+      std::lock_guard<std::recursive_mutex> lock(mutex_);
+      stacks = buildOverlayStacks();
+    }
+
+    for (std::size_t idx = 0; idx < std::size(kOverlayTargets); ++idx) {
+      if (observed.count(idx))
+        continue;
+      if (!isPartitionMounted(kOverlayTargets[idx].mountPoint))
+        continue;
+
+      std::vector<std::string> layers;
+      auto it = stacks.find(kOverlayTargets[idx].name);
+      if (it != stacks.end())
+        layers = it->second;
+
+      std::string err;
+      if (!applyOverlayForTarget(idx, layers, &err)) {
+        apm::logger::error(
+            "Partition monitor: failed to apply overlay for " +
+            std::string(kOverlayTargets[idx].mountPoint) +
+            (err.empty() ? "" : (": " + err)));
+      }
+      observed.insert(idx);
+    }
+
+    if (observed.size() == std::size(kOverlayTargets) || monitorStop_.load())
+      break;
+
+    std::this_thread::sleep_for(kSleep);
+  }
+
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
+  monitorRunning_ = false;
+}
+
+void ModuleManager::startPartitionMonitor() {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
+  if (monitorRunning_)
+    return;
+
+  monitorStop_.store(false);
+  monitorRunning_ = true;
+  monitorThread_ = std::thread([this]() { monitorPartitions(); });
+}
+
+void ModuleManager::stopMonitorLocked() { monitorStop_.store(true); }
+
+void ModuleManager::stopPartitionMonitor() {
+  std::thread worker;
+  {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    stopMonitorLocked();
+    worker.swap(monitorThread_);
+    monitorRunning_ = false;
+  }
+
+  if (worker.joinable())
+    worker.join();
+}
+
+bool ModuleManager::incrementBootCounter(const std::string &path,
+                                         std::uint64_t *newValue) {
+  std::uint64_t current = getBootCounter(path);
+  if (current == UINT64_MAX)
+    current = 0;
+  ++current;
+
+  if (!apm::fs::writeFile(path, std::to_string(current), true))
+    return false;
+
+  ::chmod(path.c_str(), 0600);
+  if (newValue)
+    *newValue = current;
+  return true;
+}
+
+std::uint64_t ModuleManager::getBootCounter(const std::string &path) {
+  std::string raw;
+  if (!apm::fs::readFile(path, raw))
+    return 0;
+
+  errno = 0;
+  char *end = nullptr;
+  unsigned long long val = std::strtoull(raw.c_str(), &end, 10);
+  if (errno != 0 || end == raw.c_str())
+    return 0;
+  return static_cast<std::uint64_t>(val);
+}
+
+bool ModuleManager::resetBootCounter(const std::string &path) {
+  if (!apm::fs::writeFile(path, "0", true))
+    return false;
+  ::chmod(path.c_str(), 0600);
+  return true;
+}
+
+std::uint64_t ModuleManager::getBootThreshold(const std::string &path,
+                                              std::uint64_t defaultValue) {
+  std::string raw;
+  if (!apm::fs::readFile(path, raw))
+    return defaultValue;
+
+  errno = 0;
+  char *end = nullptr;
+  unsigned long long val = std::strtoull(raw.c_str(), &end, 10);
+  if (errno != 0 || end == raw.c_str())
+    return defaultValue;
+  return val == 0 ? defaultValue : static_cast<std::uint64_t>(val);
+}
+
+bool ModuleManager::enterSafeMode(const std::string &path) {
+  if (!apm::fs::writeFile(path, "1", true))
+    return false;
+  ::chmod(path.c_str(), 0600);
+  return true;
+}
+
+bool ModuleManager::isSafeModeActive(const std::string &path) {
+  return apm::fs::isFile(path);
+}
+
+bool ModuleManager::clearSafeMode(const std::string &path) {
+  return apm::fs::removeFile(path);
 }
 
 } // namespace apm::ams

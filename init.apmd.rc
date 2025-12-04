@@ -7,7 +7,7 @@
 # * File: init.apmd.rc
 # * Purpose: Bootstrap apmd on Android without Magisk: provision /data/apm, fix SELinux
 # *          contexts for staged payloads, and keep the daemon running as root.
-# * Last Modified: January 29th, 2025. - 11:21 AM Eastern Time.
+# * Last Modified: December 4th, 2025. - 09:07 AM Eastern Time
 # * Author: Matthew DaLuz - RedHead Founder
 # *
 # * APM is free software: you can redistribute it and/or modify
@@ -59,20 +59,10 @@ on post-fs-data
     mkdir /data/apm/installed/termux/usr/var 0775 root shell
     mkdir /data/apm/installed/termux/usr/tmp 0775 root shell
     mkdir /data/apm/logs 0775 root shell
-    mkdir /data/apm/logs/modules 0775 root shell
     mkdir /data/apm/sources 0775 root shell
     mkdir /data/apm/sources/sources.list.d 0775 root shell
     mkdir /data/apm/manual-packages 0775 root shell
-    mkdir /data/apm/modules 0775 root shell
-    mkdir /data/apm/modules/.runtime 0700 root shell
-    mkdir /data/apm/modules/.runtime/upper 0700 root shell
-    mkdir /data/apm/modules/.runtime/work 0700 root shell
-    mkdir /data/apm/modules/.runtime/base 0700 root shell
     mkdir /data/apm/.security 0700 root root
-    mkdir /data/ams 0775 root shell
-    mkdir /data/ams/modules 0775 root shell
-    mkdir /data/ams/overlays 0775 root shell
-    mkdir /data/ams/merged 0775 root shell
     mkdir /data/apm-system-overlay 0755 root root
     mkdir /data/apm-system-overlay/system 0755 root root
     mkdir /data/apm-system-overlay/system/bin 0755 root root
@@ -170,11 +160,8 @@ service apmd /system/bin/apmd
     group root system inet shell
     disabled
     seclabel u:r:init:s0
-
-# Start apmd once the system reports boot completed
-on property:sys.boot_completed=1
-    start apmd
-
-# Rate-limit restarts to avoid rapid loops if apmd crashes
-service apmd /system/bin/apmd
     restart_period 120
+
+# Start apmd after amsd signals readiness
+on property:amsd.ready=1
+    start apmd

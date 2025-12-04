@@ -1,3 +1,27 @@
+# APM - Android Package Manager
+#
+# RedHead Industries - Technologies Branch
+# Copyright (C) 2025 RedHead Industries
+#
+# File: CMakeLists.txt
+# Purpose: Configure the build for APM components (CLI, apmd, amsd) and dependencies.
+# Last Modified: December 4th, 2025. - 09:07 AM Eastern Time
+# Author: Matthew DaLuz - RedHead Founder
+#
+# APM is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# APM is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with APM. If not, see <https://www.gnu.org/licenses/>.
+#
+
 cmake_minimum_required(VERSION 3.14)
 project(APM)
 include_directories(SYSTEM /usr/include /usr/include/openssl)
@@ -542,17 +566,61 @@ target_link_libraries(apmd PRIVATE
     ${APM_BUNDLED_TLS_LIBS}
 )
 
+set(AMSD_DAEMON_SOURCES
+    src/amsd/amsd.cpp
+    src/amsd/ipc_server.cpp
+    src/amsd/request_dispatcher.cpp
+    src/amsd/security_manager.cpp
+    src/apmd/protocol.cpp
+    src/apmd/boringssl_client.cpp
+    src/core/config.cpp
+    src/core/logger.cpp
+    src/core/security.cpp
+    src/ams/module_info.cpp
+    src/ams/module_manager.cpp
+    src/util/fs.cpp
+    src/util/process_lock.cpp
+    src/util/crypto/sha256.cpp
+    src/util/crypto/md5.cpp
+    src/util/crypto/gpg_verify.cpp
+)
+
+add_executable(amsd ${AMSD_DAEMON_SOURCES})
+
+target_include_directories(amsd PRIVATE
+    src/amsd
+    src/apmd/include
+    src/ams/include
+    src/core/include
+    src/util/include
+    src/util/crypto
+    $<IF:$<BOOL:${ANDROID}>,, /usr/include>
+    src/thirdparty/include
+    include
+)
+
+target_link_libraries(amsd PRIVATE
+    CURL::libcurl
+    ZLIB::ZLIB
+    ${OPENSSL_SSL_LIBRARY}
+    ${OPENSSL_CRYPTO_LIBRARY}
+    ${APM_BUNDLED_TLS_LIBS}
+)
+
 if(TARGET mbedcrypto)
   add_dependencies(apm mbedcrypto)
   add_dependencies(apmd mbedcrypto)
+  add_dependencies(amsd mbedcrypto)
 endif()
 
 if(TARGET mbedx509)
   add_dependencies(apm mbedx509)
   add_dependencies(apmd mbedx509)
+  add_dependencies(amsd mbedx509)
 endif()
 
 if(TARGET mbedtls)
   add_dependencies(apm mbedtls)
   add_dependencies(apmd mbedtls)
+  add_dependencies(amsd mbedtls)
 endif()

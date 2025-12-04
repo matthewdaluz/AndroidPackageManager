@@ -1,5 +1,8 @@
-Below is what the top of every file should have.
-Last Modified Example: "January 1st, 2025. - 10:00 AM Eastern Time"
+/*
+ * AMSD - APM Module System Daemon
+ *
+ * Simple UNIX domain socket server for module IPC.
+ */
 
 /*
  * APM - Android Package Manager
@@ -7,9 +10,9 @@ Last Modified Example: "January 1st, 2025. - 10:00 AM Eastern Time"
  * RedHead Industries - Technologies Branch
  * Copyright (C) 2025 RedHead Industries
  *
- * File: <File name here>
- * Purpose: <Short description of what the code file does here>
- * Last Modified: <Insert current date and time here. Use the `date` and `time` command.>
+ * File: ipc_server.hpp
+ * Purpose: Declare the AMSD UNIX domain socket server used for module IPC.
+ * Last Modified: December 4th, 2025. - 09:07 AM Eastern Time
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -26,3 +29,32 @@ Last Modified Example: "January 1st, 2025. - 10:00 AM Eastern Time"
  * along with APM. If not, see <https://www.gnu.org/licenses/>.
  *
  */
+
+#pragma once
+
+#include "request_dispatcher.hpp"
+
+#include <atomic>
+#include <string>
+
+namespace apm::amsd {
+
+class IpcServer {
+public:
+  IpcServer(const std::string &socketPath, RequestDispatcher &dispatcher);
+  ~IpcServer();
+
+  bool start();
+  void run();
+  void stop();
+
+private:
+  int listenFd_;
+  std::string socketPath_;
+  std::atomic<bool> running_;
+  RequestDispatcher &dispatcher_;
+
+  void handleClient(int clientFd);
+};
+
+} // namespace apm::amsd

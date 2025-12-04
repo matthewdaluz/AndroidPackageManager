@@ -7,7 +7,7 @@
 # * File: init.apmd.rc (System-wide Installation)
 # * Purpose: Bootstrap apmd on Android from /system/bin: provision /data/apm
 # *          directories and keep the daemon running as root.
-# * Last Modified: December 1st, 2025
+# * Last Modified: December 4th, 2025. - 09:07 AM Eastern Time
 # * Author: Matthew DaLuz - RedHead Founder
 # *
 # * APM is free software: you can redistribute it and/or modify
@@ -60,25 +60,13 @@ on post-fs-data
     mkdir /data/apm/installed/termux/usr/var 0775 root shell
     mkdir /data/apm/installed/termux/usr/tmp 0775 root shell
     mkdir /data/apm/logs 0775 root shell
-    mkdir /data/apm/logs/modules 0775 root shell
     mkdir /data/apm/sources 0775 root shell
     mkdir /data/apm/sources/sources.list.d 0775 root shell
     mkdir /data/apm/manual-packages 0775 root shell
-    mkdir /data/apm/modules 0775 root shell
-    mkdir /data/apm/modules/.runtime 0700 root shell
-    mkdir /data/apm/modules/.runtime/upper 0700 root shell
-    mkdir /data/apm/modules/.runtime/work 0700 root shell
-    mkdir /data/apm/modules/.runtime/base 0700 root shell
     mkdir /data/apm/.security 0700 root root
-    mkdir /data/ams 0775 root shell
-    mkdir /data/ams/modules 0775 root shell
-    mkdir /data/ams/overlays 0775 root shell
-    mkdir /data/ams/merged 0775 root shell
 
     # Restore SELinux contexts
     restorecon_recursive /data/apm
-    restorecon_recursive /data/ams
-
 service apmd /system/bin/apmd
     class core
     user root
@@ -86,11 +74,9 @@ service apmd /system/bin/apmd
     # IPC-only: daemon binds /data/apm/apmd.sock itself
     seclabel u:r:apmd:s0
     capabilities NET_ADMIN NET_RAW SYS_MODULE SYS_ADMIN DAC_OVERRIDE DAC_READ_SEARCH
-    # Keep the daemon running; apmd itself waits for /data readiness.
     restart
 
-on boot
-    # Start apmd as soon as init begins booting; apmd handles /data readiness internally
+on property:amsd.ready=1
     start apmd
 
 # Optional admin trigger to restart apmd if needed (avoids fixed 5-second loops)

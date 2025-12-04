@@ -6,7 +6,7 @@
  *
  * File: Android.bp
  * Purpose: Define Soong build targets for the apm CLI, the apmd daemon, and supporting licensing metadata.
- * Last Modified: November 25th, 2025. - 11:45 AM Eastern Time.
+ * Last Modified: December 4th, 2025. - 09:07 AM Eastern Time
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -128,4 +128,44 @@ cc_binary {
         "src/apm/commands/include",
     ],
     init_rc: ["init.apmd.rc"],
+}
+
+cc_binary {
+    name: "amsd",
+    defaults: ["apm_cc_defaults"],
+    installable: true,
+    srcs: [
+        "src/amsd/amsd.cpp",
+        "src/amsd/ipc_server.cpp",
+        "src/amsd/request_dispatcher.cpp",
+        "src/amsd/security_manager.cpp",
+        "src/apmd/protocol.cpp",
+        "src/apmd/boringssl_client.cpp",
+        "src/core/config.cpp",
+        "src/core/logger.cpp",
+        "src/core/security.cpp",
+        "src/ams/module_info.cpp",
+        "src/ams/module_manager.cpp",
+        "src/util/crypto/sha256.cpp",
+        "src/util/crypto/gpg_verify.cpp",
+        "src/util/crypto/md5.cpp",
+        "src/util/fs.cpp",
+    ],
+    local_include_dirs: [
+        "src/amsd",
+        "src/apm/include",
+        "src/apmd/include",
+        "src/ams/include",
+        "src/core/include",
+        "src/util/include",
+        "src/util/crypto",
+    ],
+    init_rc: ["init.amsd.rc"],
+}
+
+prebuilt_etc {
+    name: "init.amsd.rc",
+    src: "init.amsd.rc",
+    sub_dir: "init",
+    filename: "init.amsd.rc",
 }

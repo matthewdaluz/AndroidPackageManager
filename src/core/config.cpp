@@ -6,7 +6,7 @@
  *
  * File: config.cpp
  * Purpose: Runtime configuration for emulator mode path management.
- * Last Modified: November 29th, 2025.
+ * Last Modified: December 4th, 2025. - 09:07 AM Eastern Time
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -33,6 +33,7 @@ namespace apm::config {
 namespace {
 bool g_emulatorMode = false;
 std::string g_emulatorRoot;
+std::string g_emulatorAmsRoot;
 
 std::string getHomeDir() {
   const char *home = ::getenv("HOME");
@@ -48,6 +49,19 @@ std::string buildEmulatorPath(const char *suffix) {
   if (!suffix || !*suffix)
     return g_emulatorRoot;
   std::string result = g_emulatorRoot;
+  if (result.back() != '/' && suffix[0] != '/')
+    result += '/';
+  result += suffix;
+  return result;
+}
+
+std::string buildEmulatorAmsPath(const char *suffix) {
+  if (g_emulatorAmsRoot.empty()) {
+    g_emulatorAmsRoot = getHomeDir() + "/APMEmulator/ams";
+  }
+  if (!suffix || !*suffix)
+    return g_emulatorAmsRoot;
+  std::string result = g_emulatorAmsRoot;
   if (result.back() != '/' && suffix[0] != '/')
     result += '/';
   result += suffix;
@@ -183,38 +197,38 @@ std::string getTermuxTmpDir() {
 
 std::string getModulesDir() {
   if (g_emulatorMode)
-    return buildEmulatorPath("modules");
-  return "/data/apm/modules";
+    return buildEmulatorAmsPath("modules");
+  return "/ams/modules";
 }
 
 std::string getModuleLogsDir() {
   if (g_emulatorMode)
-    return buildEmulatorPath("logs/modules");
-  return "/data/apm/logs/modules";
+    return buildEmulatorAmsPath("logs/modules");
+  return "/ams/logs/modules";
 }
 
 std::string getModuleRuntimeDir() {
   if (g_emulatorMode)
-    return buildEmulatorPath("modules/.runtime");
-  return "/data/apm/modules/.runtime";
+    return buildEmulatorAmsPath(".runtime");
+  return "/ams/.runtime";
 }
 
 std::string getModuleRuntimeUpperDir() {
   if (g_emulatorMode)
-    return buildEmulatorPath("modules/.runtime/upper");
-  return "/data/apm/modules/.runtime/upper";
+    return buildEmulatorAmsPath(".runtime/upper");
+  return "/ams/.runtime/upper";
 }
 
 std::string getModuleRuntimeWorkDir() {
   if (g_emulatorMode)
-    return buildEmulatorPath("modules/.runtime/work");
-  return "/data/apm/modules/.runtime/work";
+    return buildEmulatorAmsPath(".runtime/work");
+  return "/ams/.runtime/work";
 }
 
 std::string getModuleRuntimeBaseDir() {
   if (g_emulatorMode)
-    return buildEmulatorPath("modules/.runtime/base");
-  return "/data/apm/modules/.runtime/base";
+    return buildEmulatorAmsPath(".runtime/base");
+  return "/ams/.runtime/base";
 }
 
 std::string getStatusFile() {
@@ -247,6 +261,12 @@ std::string getIpcSocketPath() {
   if (g_emulatorMode)
     return buildEmulatorPath("apmd.socket");
   return "/data/apm/apmd.sock";
+}
+
+std::string getAmsdSocketPath() {
+  if (g_emulatorMode)
+    return buildEmulatorAmsPath("amsd.socket");
+  return "/dev/socket/amsd";
 }
 
 std::string getTrustedKeysDir() {
