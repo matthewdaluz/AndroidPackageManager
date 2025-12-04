@@ -32,7 +32,6 @@
 on post-fs-data
     mkdir /data/apm 0755 root root
     mkdir /data/apm/logs 0755 root root
-    mkdir /data/ams 0755 root root
     start apmd-bootstrap
     start apmd-watchdog
 
@@ -49,7 +48,7 @@ service apmd-bootstrap /system/bin/sh -c '\
     SOCKET=/dev/socket/apmd; \
     BINS="/system/bin/apmd /data/apm/bin/apmd"; \
     SU_BIN=$(command -v su 2>/dev/null || true); \
-    mkdir -p "$LOG_DIR" /data/ams/modules /data/ams/overlays; \
+    mkdir -p "$LOG_DIR"; \
     touch "$BOOT_LOG"; chmod 0644 "$BOOT_LOG"; \
     log() { echo "$(date +%F\ %T) - $*" >>"$BOOT_LOG"; }; \
     check_running() { /system/bin/pidof apmd >/dev/null 2>&1; }; \

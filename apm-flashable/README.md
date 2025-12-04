@@ -1,6 +1,8 @@
 # APM System-Wide Recovery Flashable ZIP
 
-This directory contains the structure for creating a LineageOS Recovery flashable ZIP that installs APM (Android Package Manager) directly to the system partition.
+**⚠️ DEPRECATED/EXPERIMENTAL:** This deployment method is currently deprioritized due to SELinux policy conflicts on boot. **Use the Magisk module (`apm-magisk/`) instead**, which handles policy application and daemon lifecycle correctly.
+
+This directory contains the structure for creating a LineageOS Recovery flashable ZIP that installs APM (Android Package Manager) directly to the system partition. It is retained for reference and future development but should not be used for production deployments.
 
 ## Structure
 

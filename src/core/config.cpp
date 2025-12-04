@@ -198,37 +198,37 @@ std::string getTermuxTmpDir() {
 std::string getModulesDir() {
   if (g_emulatorMode)
     return buildEmulatorAmsPath("modules");
-  return "/ams/modules";
+  return "/data/ams/modules";
 }
 
 std::string getModuleLogsDir() {
   if (g_emulatorMode)
-    return buildEmulatorAmsPath("logs/modules");
-  return "/ams/logs/modules";
+    return buildEmulatorAmsPath("logs");
+  return "/data/ams/logs";
 }
 
 std::string getModuleRuntimeDir() {
   if (g_emulatorMode)
     return buildEmulatorAmsPath(".runtime");
-  return "/ams/.runtime";
+  return "/data/ams/.runtime";
 }
 
 std::string getModuleRuntimeUpperDir() {
   if (g_emulatorMode)
     return buildEmulatorAmsPath(".runtime/upper");
-  return "/ams/.runtime/upper";
+  return "/data/ams/.runtime/upper";
 }
 
 std::string getModuleRuntimeWorkDir() {
   if (g_emulatorMode)
     return buildEmulatorAmsPath(".runtime/work");
-  return "/ams/.runtime/work";
+  return "/data/ams/.runtime/work";
 }
 
 std::string getModuleRuntimeBaseDir() {
   if (g_emulatorMode)
     return buildEmulatorAmsPath(".runtime/base");
-  return "/ams/.runtime/base";
+  return "/data/ams/.runtime/base";
 }
 
 std::string getStatusFile() {

@@ -24,21 +24,23 @@
 # *
 # */
 
-# AMSD init script - provisions /ams hierarchy and launches amsd early
+# AMSD init script - provisions /data/ams hierarchy and launches amsd early
 
-on init
-    mkdir /ams 0755 root root
-    mkdir /ams/modules 0755 root root
-    mkdir /ams/logs 0755 root root
-    mkdir /ams/.runtime 0700 root root
-    mkdir /ams/.runtime/upper 0700 root root
-    mkdir /ams/.runtime/work 0700 root root
-    mkdir /ams/.runtime/base 0700 root root
+on post-fs-data
+    mkdir /data/ams 0755 root root
+    mkdir /data/ams/modules 0755 root root
+    mkdir /data/ams/logs 0755 root root
+    mkdir /data/ams/.runtime 0700 root root
+    mkdir /data/ams/.runtime/upper 0700 root root
+    mkdir /data/ams/.runtime/work 0700 root root
+    mkdir /data/ams/.runtime/base 0700 root root
+    start amsd
 
 service amsd /system/bin/amsd
     class core
     user root
     group root system
-    seclabel u:r:init:s0
+    seclabel u:r:su:s0
     socket amsd stream 0666 root root
-    restart_period 90
+    disabled
+    oneshot

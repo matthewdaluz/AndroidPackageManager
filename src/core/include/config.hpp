@@ -125,15 +125,15 @@ inline constexpr const char *TERMUX_HOME_DIR =
     "/data/apm/installed/termux/home";
 inline constexpr const char *TERMUX_TMP_DIR = "/data/apm/installed/termux/tmp";
 
-inline constexpr const char *MODULES_DIR = "/ams/modules";
-inline constexpr const char *MODULE_LOGS_DIR = "/ams/logs/modules";
-inline constexpr const char *MODULE_RUNTIME_DIR = "/ams/.runtime";
+inline constexpr const char *MODULES_DIR = "/data/ams/modules";
+inline constexpr const char *MODULE_LOGS_DIR = "/data/ams/logs";
+inline constexpr const char *MODULE_RUNTIME_DIR = "/data/ams/.runtime";
 inline constexpr const char *MODULE_RUNTIME_UPPER_DIR =
-    "/ams/.runtime/upper";
+    "/data/ams/.runtime/upper";
 inline constexpr const char *MODULE_RUNTIME_WORK_DIR =
-    "/ams/.runtime/work";
+    "/data/ams/.runtime/work";
 inline constexpr const char *MODULE_RUNTIME_BASE_DIR =
-    "/ams/.runtime/base";
+    "/data/ams/.runtime/base";
 
 // Status DB (dpkg-style)
 inline constexpr const char *STATUS_FILE = "/data/apm/status";

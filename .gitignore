@@ -41,3 +41,8 @@ apm-flashable/magiskpolicy-arm64
 apm-magisk/apm-magisk.zip
 prebuilt/
 apm-systemwide-*.zip
+
+# Some prebuilt stuff.
+apm-flashable/system/bin/
+apm-flashable/system/xbin/
+apm-magisk/files/

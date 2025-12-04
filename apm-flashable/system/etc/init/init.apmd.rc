@@ -72,9 +72,8 @@ service apmd /system/bin/apmd
     user root
     group root system inet shell
     # IPC-only: daemon binds /data/apm/apmd.sock itself
-    seclabel u:r:apmd:s0
+    seclabel u:r:su:s0
     capabilities NET_ADMIN NET_RAW SYS_MODULE SYS_ADMIN DAC_OVERRIDE DAC_READ_SEARCH
-    restart
 
 on property:amsd.ready=1
     start apmd

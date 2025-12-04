@@ -109,6 +109,26 @@ APM ships a Soong blueprint for Android 15 platform builds.
 
 ## Deploying on-device
 
+### Magisk Module (Recommended)
+
+1. Build the Magisk module:
+   ```bash
+   ./build_android.sh  # Compile apm, apmd, amsd binaries
+   cd apm-magisk
+   ```
+2. Install on your device:
+   - **Option A:** Flash the module via Magisk Manager (recommended).
+   - **Option B:** Manual install: `adb push apm-magisk /data/adb/modules/apm && adb shell killall magiskd && adb shell sleep 2 && adb reboot`
+3. After boot, daemons start automatically. Verify: `adb shell ps | grep -E 'apmd|amsd'`
+
+**Why Magisk?** The module handles SELinux policy application, filesystem overlays, and daemon lifecycle without requiring custom ROMs or recovery flashing. It survives OTA updates and avoids boot-time SELinux policy conflicts.
+
+### Recovery Flashable ZIP (Deprecated/Experimental)
+
+> **Note:** Flashable ZIP deployments are currently deprioritized due to SELinux policy conflicts on boot. Use the Magisk module instead.
+
+Legacy instructions (if recovery flashing is needed):
+
 1. Push `apm` and `apmd` (e.g., to `/data/local/tmp`).
 2. Initialize the layout once: `su -c 'mkdir -p /data/apm/{installed,pkgs,lists,cache,logs,sources,sources.list.d,keys}'`.
 3. Start the daemon as root: `su -c "/data/local/tmp/apmd"` (the daemon binds `/data/apm/apmd.sock` by default).
@@ -246,7 +266,6 @@ AMS is a Magisk-style overlay framework baked into `apmd`. It targets rooted dev
 - Dependency resolution only follows the first alternative and goes one level deep.
 - `Packages.xz` indices are ignored on Android builds.
 - System APK install assumes Magisk-owned `/data/adb/modules`.
-- SELinux policies are provided by the flashable ZIP to permit `/data/apm` writes, socket access, and OverlayFS mounts.
 - AMS requires a clean base mount snapshot; if `/system` is already overlay-mounted, capture will fail until the device reboots cleanly.
 
 
