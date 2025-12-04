@@ -49,7 +49,7 @@ src/
 | `/data/apm/apmd.sock` | Default UNIX socket |
 | `/data/apm/logs` | `apm`/`apmd` logs; module logs live under `/data/apm/logs/modules` |
 | `/data/apm/modules` | AMS modules; `.runtime` holds OverlayFS upper/work/base dirs |
-
+> `/ams/` is to be changed to `/data/apm/ams/` in v1.9.0b and later due to filesystem issues.
 
 ## Building
 
@@ -65,14 +65,15 @@ Needed tools:
 - OpenSSL/`libssl` headers (TLS for host builds; the Android build can also use NDK BoringSSL)
 
 Distro-friendly install hints:
-- **Ubuntu/Debian:** `sudo apt update && sudo apt install build-essential cmake pkg-config git patch zlib1g-dev libcurl4-openssl-dev libssl-dev`
+- **Ubuntu/Debian:** `sudo apt update && sudo apt install build-essential cmake pkg-config git patch zlib1g-dev libcurl4-openssl-dev libssl-dev google-android-tools-installer sdkmanager`
 - **Fedora/RHEL:** `sudo dnf groupinstall "Development Tools" && sudo dnf install cmake git patch zlib-devel libcurl-devel openssl-devel`
 - **Arch/Manjaro:** `sudo pacman -S --needed base-devel cmake git patch zlib curl openssl`
 - **openSUSE:** `sudo zypper install -t pattern devel_C_C++ && sudo zypper install cmake git patch zlib-devel libcurl-devel libopenssl-devel`
+> The `Ubuntu/Debian` packages installation method has been tested, and it is not guaranteed that the other methods will work.
 
 If you skip the curl/zlib dev packages, CMake will transparently build the bundled versions.
 
-### Build on Linux (host)
+### Build on Linux (host) (Not recommended)
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -85,13 +86,14 @@ Outputs under `build/`:
 | ------ | ----------- |
 | `apm`  | CLI (can run unprivileged if it can reach the daemon socket). |
 | `apmd` | Root daemon that writes under `/data/apm`. |
+| `amsd` | Daemon for AMS. |
 
 ### Build for Android
 
 Use the helper script to target a specific ABI with the NDK toolchain:
 
 ```bash
-./build_android.sh        # prompts for ABI, uses $ANDROID_NDK or ~/Android/NDK
+./build_android.sh        # prompts for ABI, uses $ANDROID_NDK, ~/Android/NDK, or /opt/android-sdk
 ```
 
 Notes:
