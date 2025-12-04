@@ -40,4 +40,4 @@ ZIPSigning/
 apm-flashable/magiskpolicy-arm64
 apm-magisk/apm-magisk.zip
 prebuilt/
-apm-systemwide-arm64-*.zip
+apm-systemwide-*.zip
