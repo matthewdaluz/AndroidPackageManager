@@ -10,6 +10,8 @@ CompileFlags:
 # (CMake will generate this automatically)
 
 Diagnostics:
+  UnusedIncludes: Strict
+  MissingIncludes: Strict
   Suppress:
     - unused-variable
     - unused-parameter
