@@ -28,6 +28,7 @@
 
 #include "fs.hpp"
 #include "logger.hpp"
+#include "security.hpp"
 
 #include <cerrno>
 #include <cstdio>
@@ -36,6 +37,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -62,7 +64,7 @@ bool isRoot() { return (::geteuid() == 0); }
 
 std::string exitCodeString(int rc) {
   if (rc == -1) {
-    return "system() failed";
+    return "command failed";
   }
   if (WIFEXITED(rc)) {
     return "exit code " + std::to_string(WEXITSTATUS(rc));
@@ -71,6 +73,46 @@ std::string exitCodeString(int rc) {
     return "signal " + std::to_string(WTERMSIG(rc));
   }
   return "status " + std::to_string(rc);
+}
+
+int runPmCommand(const std::vector<std::string> &args,
+                 std::string *errorMsg = nullptr) {
+  if (args.empty()) {
+    if (errorMsg) {
+      *errorMsg = "pm args are empty";
+    }
+    return -1;
+  }
+
+  pid_t pid = ::fork();
+  if (pid < 0) {
+    if (errorMsg) {
+      *errorMsg = "fork() failed: " + std::string(std::strerror(errno));
+    }
+    return -1;
+  }
+
+  if (pid == 0) {
+    std::vector<char *> argv;
+    argv.reserve(args.size() + 2);
+    argv.push_back(const_cast<char *>("pm"));
+    for (const auto &arg : args) {
+      argv.push_back(const_cast<char *>(arg.c_str()));
+    }
+    argv.push_back(nullptr);
+    ::execvp("pm", argv.data());
+    _exit(127);
+  }
+
+  int status = 0;
+  if (::waitpid(pid, &status, 0) < 0) {
+    if (errorMsg) {
+      *errorMsg = "waitpid() failed: " + std::string(std::strerror(errno));
+    }
+    return -1;
+  }
+
+  return status;
 }
 
 // ---------------------------------------------------------------------
@@ -413,37 +455,51 @@ bool uninstallApk(const std::string &packageName, ApkUninstallResult &result) {
     return false;
   }
 
+  std::string nameErr;
+  if (!apm::security::validatePackageName(packageName, &nameErr)) {
+    result.ok = false;
+    result.message = nameErr;
+    apm::logger::error("apk_uninstall: " + nameErr);
+    return false;
+  }
+
   apm::logger::info("apk_uninstall: uninstalling " + packageName);
 
   // 1) First try normal uninstall.
   {
-    std::string cmd = "pm uninstall " + packageName;
-    apm::logger::info("apk_uninstall: running: " + cmd);
-
-    int rc = ::system(cmd.c_str());
+    apm::logger::info("apk_uninstall: running: pm uninstall " + packageName);
+    std::string pmErr;
+    int rc = runPmCommand({"uninstall", packageName}, &pmErr);
     if (rc == 0) {
       result.ok = true;
       result.message = "Package uninstalled: " + packageName;
       apm::logger::info("apk_uninstall: pm uninstall succeeded");
     } else {
-      apm::logger::warn("apk_uninstall: pm uninstall failed (" +
-                        exitCodeString(rc) +
+      std::string reason = exitCodeString(rc);
+      if (!pmErr.empty()) {
+        reason += ": " + pmErr;
+      }
+      apm::logger::warn("apk_uninstall: pm uninstall failed (" + reason +
                         "), trying system-app fallback...");
     }
   }
 
   // 2) System app fallback: uninstall for user 0.
   if (!result.ok) {
-    std::string cmd = "pm uninstall --user 0 " + packageName;
-    apm::logger::info("apk_uninstall: running fallback: " + cmd);
-
-    int rc = ::system(cmd.c_str());
+    apm::logger::info("apk_uninstall: running fallback: pm uninstall --user 0 " +
+                      packageName);
+    std::string pmErr;
+    int rc = runPmCommand({"uninstall", "--user", "0", packageName}, &pmErr);
     if (rc == 0) {
       result.ok = true;
       result.message =
           "Package uninstalled for user 0 (system app): " + packageName;
       apm::logger::info("apk_uninstall: pm uninstall --user 0 succeeded");
     } else {
+      if (!pmErr.empty()) {
+        apm::logger::warn("apk_uninstall: pm uninstall --user 0 error: " +
+                          pmErr);
+      }
       result.ok = false;
       result.message = "Failed to uninstall " + packageName +
                        " (pm uninstall and --user 0 both failed)";

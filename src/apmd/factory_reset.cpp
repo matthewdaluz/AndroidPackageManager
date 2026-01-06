@@ -31,12 +31,70 @@
 #include "fs.hpp"
 #include "logger.hpp"
 
+#include <cerrno>
 #include <cstdlib>
+#include <cstring>
 #include <sstream>
 #include <string>
 #include <vector>
 
+#include <sys/wait.h>
+#include <unistd.h>
+
 namespace {
+
+std::string exitStatusString(int rc) {
+  if (rc == -1) {
+    return "command failed";
+  }
+  if (WIFEXITED(rc)) {
+    return "exit code " + std::to_string(WEXITSTATUS(rc));
+  }
+  if (WIFSIGNALED(rc)) {
+    return "signal " + std::to_string(WTERMSIG(rc));
+  }
+  return "status " + std::to_string(rc);
+}
+
+int runPmCommand(const std::vector<std::string> &args,
+                 std::string *errorMsg = nullptr) {
+  if (args.empty()) {
+    if (errorMsg) {
+      *errorMsg = "pm args are empty";
+    }
+    return -1;
+  }
+
+  pid_t pid = ::fork();
+  if (pid < 0) {
+    if (errorMsg) {
+      *errorMsg = "fork() failed: " + std::string(std::strerror(errno));
+    }
+    return -1;
+  }
+
+  if (pid == 0) {
+    std::vector<char *> argv;
+    argv.reserve(args.size() + 2);
+    argv.push_back(const_cast<char *>("pm"));
+    for (const auto &arg : args) {
+      argv.push_back(const_cast<char *>(arg.c_str()));
+    }
+    argv.push_back(nullptr);
+    ::execvp("pm", argv.data());
+    _exit(127);
+  }
+
+  int status = 0;
+  if (::waitpid(pid, &status, 0) < 0) {
+    if (errorMsg) {
+      *errorMsg = "waitpid() failed: " + std::string(std::strerror(errno));
+    }
+    return -1;
+  }
+
+  return status;
+}
 
 bool removePathRecursive(const std::string &path, const std::string &label,
                          std::vector<std::string> &errors) {
@@ -111,14 +169,18 @@ bool cleanupSystemApps(std::vector<std::string> &errors) {
   if (apm::fs::isDirectory(kSystemAppRoot)) {
     auto overlays = apm::fs::listDir(kSystemAppRoot, false);
     for (const auto &dir : overlays) {
-      std::string cmd = "pm uninstall --user 0 " + dir + " >/dev/null 2>&1";
-      int rc = ::system(cmd.c_str());
+      std::string pmErr;
+      int rc = runPmCommand({"uninstall", "--user", "0", dir}, &pmErr);
       if (rc == 0) {
         apm::logger::info("factory_reset: uninstalled system app package " +
                           dir);
       } else {
         std::string msg = "Failed to uninstall system app package " + dir +
-                          " (pm uninstall --user 0)";
+                          " (pm uninstall --user 0: " + exitStatusString(rc) +
+                          ")";
+        if (!pmErr.empty()) {
+          msg += ": " + pmErr;
+        }
         errors.push_back(msg);
         apm::logger::warn("factory_reset: " + msg);
       }
