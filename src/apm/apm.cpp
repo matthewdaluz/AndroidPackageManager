@@ -7,7 +7,7 @@
  * File: apm.cpp
  * Purpose: Implement the apm CLI, including local commands and IPC-backed
  * operations.
- * Last Modified: December 4th, 2025. - 09:07 AM Eastern Time
+ * Last Modified: January 6th, 2026. - 09:52 AM Eastern Time
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -473,6 +473,12 @@ static bool ensureManualSlotAvailable(const std::string &pkgName,
   if (pkgName.empty()) {
     if (errorMsg)
       *errorMsg = "Package name is empty";
+    return false;
+  }
+  std::string nameErr;
+  if (!apm::security::validatePackageName(pkgName, &nameErr)) {
+    if (errorMsg)
+      *errorMsg = nameErr;
     return false;
   }
   if (apm::manual::isInstalled(pkgName)) {

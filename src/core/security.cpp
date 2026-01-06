@@ -7,7 +7,7 @@
  * File: security.cpp
  * Purpose: Implement shared security helpers for session persistence and time
  * handling.
- * Last Modified: December 4th, 2025. - 09:07 AM Eastern Time
+ * Last Modified: January 6th, 2026. - 9:55 AM Eastern Time
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -119,6 +119,50 @@ bool ensureSecurityDir(std::string *errorMsg) {
   if (errorMsg)
     *errorMsg = "Failed to create security directory at " + secDir;
   return false;
+}
+
+bool validatePackageName(const std::string &name, std::string *errorMsg) {
+  if (name.empty()) {
+    if (errorMsg)
+      *errorMsg = "Package name is empty";
+    return false;
+  }
+
+  if (name.find('/') != std::string::npos ||
+      name.find('\\') != std::string::npos) {
+    if (errorMsg)
+      *errorMsg =
+          "Invalid package name '" + name + "': contains path separators";
+    return false;
+  }
+
+  if (name.find("..") != std::string::npos) {
+    if (errorMsg)
+      *errorMsg = "Invalid package name '" + name + "': contains '..'";
+    return false;
+  }
+
+  const unsigned char first = static_cast<unsigned char>(name.front());
+  if (!std::islower(first) && !std::isdigit(first)) {
+    if (errorMsg)
+      *errorMsg =
+          "Invalid package name '" + name + "': must start with [a-z0-9]";
+    return false;
+  }
+
+  for (char c : name) {
+    const unsigned char uc = static_cast<unsigned char>(c);
+    if (std::islower(uc) || std::isdigit(uc) || c == '+' || c == '-' ||
+        c == '.') {
+      continue;
+    }
+    if (errorMsg)
+      *errorMsg = "Invalid package name '" + name +
+                  "': contains unsupported characters";
+    return false;
+  }
+
+  return true;
 }
 
 std::uint64_t currentUnixSeconds() {

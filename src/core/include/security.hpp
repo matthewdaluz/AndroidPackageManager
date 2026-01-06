@@ -6,7 +6,7 @@
  *
  * File: security.hpp
  * Purpose: Declare shared security helpers for session storage and metadata handling.
- * Last Modified: November 23rd, 2025. - 12:06 PM Eastern Time.
+ * Last Modified: January 6th, 2026. - 9:55 AM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -41,6 +41,8 @@ struct SessionState {
 };
 
 bool ensureSecurityDir(std::string *errorMsg = nullptr);
+bool validatePackageName(const std::string &name,
+                         std::string *errorMsg = nullptr);
 std::string serializeSession(const SessionState &state);
 bool parseSession(const std::string &raw, SessionState &out,
                   std::string *errorMsg = nullptr);

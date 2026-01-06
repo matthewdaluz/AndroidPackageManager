@@ -6,7 +6,7 @@
  *
  * File: manual_package.cpp
  * Purpose: Implement manual package metadata parsing, persistence, and lifecycle helpers.
- * Last Modified: November 18th, 2025. - 3:00 PM Eastern Time.
+ * Last Modified: January 6th, 2026. - 9:55 AM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -29,6 +29,7 @@
 #include "config.hpp"
 #include "fs.hpp"
 #include "logger.hpp"
+#include "security.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -390,6 +391,18 @@ std::string escapeJsonString(const std::string &input) {
   return out;
 }
 
+static bool validateManualPackageName(const std::string &name,
+                                      std::string *errorMsg) {
+  std::string err;
+  if (!apm::security::validatePackageName(name, &err)) {
+    if (errorMsg)
+      *errorMsg = err;
+    apm::logger::error("manual_package: " + err);
+    return false;
+  }
+  return true;
+}
+
 } // namespace
 
 namespace apm::manual {
@@ -468,6 +481,8 @@ std::string installedInfoPath(const std::string &name) {
 // Load a manual package manifest if it exists on disk.
 bool loadInstalledPackage(const std::string &name, PackageInfo &info,
                           std::string *errorMsg) {
+  if (!validateManualPackageName(name, errorMsg))
+    return false;
   std::string path = installedInfoPath(name);
   if (!apm::fs::pathExists(path)) {
     if (errorMsg)
@@ -484,6 +499,8 @@ bool saveInstalledPackage(const PackageInfo &info, std::string *errorMsg) {
       *errorMsg = "Manual package name is empty";
     return false;
   }
+  if (!validateManualPackageName(info.name, errorMsg))
+    return false;
   if (!apm::fs::createDirs(apm::config::MANUAL_PACKAGES_DIR)) {
     if (errorMsg)
       *errorMsg = std::string("Failed to create directory: ") +
@@ -495,6 +512,8 @@ bool saveInstalledPackage(const PackageInfo &info, std::string *errorMsg) {
 
 // Delete the manifest for a manual package (no-op if not present).
 bool removeInstalledPackage(const std::string &name, std::string *errorMsg) {
+  if (!validateManualPackageName(name, errorMsg))
+    return false;
   std::string path = installedInfoPath(name);
   if (!apm::fs::pathExists(path))
     return true;
@@ -534,6 +553,8 @@ bool listInstalledPackages(std::vector<PackageInfo> &out,
 
 // Quick existence check for a manual package.
 bool isInstalled(const std::string &name) {
+  if (!validateManualPackageName(name, nullptr))
+    return false;
   return apm::fs::pathExists(installedInfoPath(name));
 }
 

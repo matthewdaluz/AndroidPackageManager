@@ -9,7 +9,7 @@ Scope
 Findings (highest severity first)
 --------------------------------
 
-1) CRITICAL: Unsafe tar extraction allows write outside destination
+1) CRITICAL: Unsafe tar extraction allows write outside destination (Fixed)
    - Impact:
      - Any .deb or manual archive can write to arbitrary paths via absolute paths
        or ".." traversal inside tar entries. This can overwrite system files,
@@ -29,7 +29,7 @@ Findings (highest severity first)
      - Consider tar flags to disable ownership/perms/device nodes (platform-specific).
      - Extract to a temp dir and validate resulting paths before moving into place.
 
-2) CRITICAL: Package names used directly in filesystem paths
+2) CRITICAL: Package names used directly in filesystem paths (Fixed)
    - Impact:
      - Malicious package names can escape /data/apm using "../" or absolute paths.
      - Can overwrite arbitrary files or directories during install/remove.

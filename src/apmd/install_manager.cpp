@@ -6,8 +6,9 @@
  *
  * File: install_manager.cpp
  * Purpose: Implement package downloading, dependency resolution, and
- * install/remove/upgrade workflows. Last Modified: November 25th, 2025. - 11:35
- * AM Eastern Time. Author: Matthew DaLuz - RedHead Founder
+ * install/remove/upgrade workflows.
+ * Last Modified: January 6th, 2026. - 9:55 AM Eastern Time
+ * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -38,6 +39,7 @@
 #include "repo_index.hpp"
 #include "sha256.hpp"
 #include "status_db.hpp"
+#include "security.hpp"
 #include "tar_extractor.hpp"
 #include "gpg_verify.hpp"
 
@@ -45,6 +47,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cctype>
 #include <cerrno>
 #include <cstring>
@@ -389,6 +392,14 @@ static bool ensureDebForPackage(
     const PackageEntry &pkg, std::string &debPath, std::string *errorMsg,
     const InstallProgressCallback &progressCb,
     std::vector<apm::net::DownloadRequest> *pendingDownloads = nullptr) {
+  std::string nameErr;
+  if (!apm::security::validatePackageName(pkg.packageName, &nameErr)) {
+    if (errorMsg)
+      *errorMsg = nameErr;
+    apm::logger::error("ensureDebForPackage: " + nameErr);
+    return false;
+  }
+
   std::string debName = makeDebFileName(pkg);
   debPath = apm::fs::joinPath(apm::config::getPkgsDir(), debName);
 
@@ -905,6 +916,14 @@ static bool installSinglePackage(const PackageEntry &pkg,
                                  const InstallOptions &opts,
                                  const std::string &installRoot,
                                  std::string *errorMsg) {
+  std::string nameErr;
+  if (!apm::security::validatePackageName(pkg.packageName, &nameErr)) {
+    if (errorMsg)
+      *errorMsg = nameErr;
+    apm::logger::error("installSinglePackage: " + nameErr);
+    return false;
+  }
+
   apm::logger::info("installSinglePackage: installing " + pkg.packageName +
                     " from " + debPath);
 
@@ -1160,6 +1179,14 @@ bool installWithDeps(const RepoIndexList &repoIndices,
     result.ok = false;
     result.message = "Root package name is empty";
     apm::logger::error("installWithDeps: root package is empty");
+    return false;
+  }
+
+  std::string rootNameErr;
+  if (!apm::security::validatePackageName(rootPackage, &rootNameErr)) {
+    result.ok = false;
+    result.message = rootNameErr;
+    apm::logger::error("installWithDeps: " + result.message);
     return false;
   }
 
@@ -1477,6 +1504,14 @@ bool installWithDeps(const RepoIndexList &repoIndices,
       }
     }
 
+    std::string nameErr;
+    if (!apm::security::validatePackageName(pkg->packageName, &nameErr)) {
+      result.ok = false;
+      result.message = nameErr;
+      apm::logger::error("installWithDeps: " + result.message);
+      return false;
+    }
+
     bool installAsDependency = (pkg->packageName != rootPackage);
     std::string installRoot;
     if (termuxMode) {
@@ -1584,6 +1619,13 @@ bool removePackage(const std::string &packageName, const RemoveOptions &opts,
     result.ok = false;
     result.message = "Package name is empty";
     apm::logger::error("removePackage: package name is empty");
+    return false;
+  }
+  std::string nameErr;
+  if (!apm::security::validatePackageName(packageName, &nameErr)) {
+    result.ok = false;
+    result.message = nameErr;
+    apm::logger::error("removePackage: " + result.message);
     return false;
   }
 
