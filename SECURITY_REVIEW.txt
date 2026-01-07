@@ -47,7 +47,7 @@ Findings (highest severity first)
      - Reject names with '/', '\\', or ".." sequences.
      - Normalize and validate before any path construction or logging.
 
-3) HIGH: Command injection via system() with unquoted package names
+3) HIGH: Command injection via system() with unquoted package names (Fixed)
    - Impact:
      - If a package name contains shell metacharacters, system() executes attacker
        controlled commands. This is a remote code execution vector via IPC.
