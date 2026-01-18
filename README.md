@@ -2,7 +2,7 @@
 
 APM is a GPLv3-licensed package manager for rooted Android. It mirrors the APT workflow (sources lists, Packages indices, dependency tracking) while adding Android-specific features: a root daemon that performs filesystem changes, CLI helpers that work offline when possible, Termux compatibility, APK install/uninstall helpers, and a Magisk-inspired module system (AMS) for OverlayFS-based system customization. The runtime is IPC-only over UNIX sockets (Binder code is retained for reference). `apmd` handles package lifecycle; `amsd` applies AMS overlays from `/data/ams`, exposes module IPC on `/dev/socket/amsd`, and uses safe-mode counters under `/ams` to avoid overlay boot loops. Emulator mode is available for host-side testing (`$HOME/APMEmulator`).
 
-> Upgrade note: AMSD builds require factory-resetting previous `/data/apm` installs before flashing. Legacy modules under `/data/apm/modules` will block startup; remove them or perform a full reset first. The current CLI/daemon release is **APM 1.8.0b (open beta)**.
+> Upgrade note: AMSD builds require factory-resetting previous `/data/apm` installs before flashing. Legacy modules under `/data/apm/modules` will block startup; remove them or perform a full reset first. The current CLI/daemon release is **APM 1.9.0b (Open Beta)**.
 
 
 ## Components
