@@ -27,6 +27,7 @@
 #include "include/ipc_server.hpp"
 #include "config.hpp"
 #include "include/apk_installer.hpp"
+#include "factory_reset.hpp"
 #include "install_manager.hpp"
 #include "logger.hpp"
 #include "protocol.hpp"
@@ -246,7 +247,8 @@ void IpcServer::handleClient(int clientFd) {
   resp.id = req.id;
 
   auto requiresAuth = [](RequestType t) {
-    return !(t == RequestType::Ping || t == RequestType::Authenticate);
+    return !(t == RequestType::Ping || t == RequestType::Authenticate ||
+             t == RequestType::ForgotPassword);
   };
 
   if (requiresAuth(req.type)) {
@@ -302,6 +304,104 @@ void IpcServer::handleClient(int clientFd) {
                        : "Session unlocked.";
     resp.rawFields["session_token"] = session.token;
     resp.rawFields["session_expires"] = std::to_string(session.expiresAt);
+    break;
+  }
+
+  case RequestType::ForgotPassword: {
+    auto collectAnswers = [&](std::vector<std::string> &answersOut) -> bool {
+      answersOut.clear();
+      for (std::size_t idx = 0; idx < apm::security::SECURITY_QUESTION_COUNT;
+           ++idx) {
+        const std::string key = "security_a" + std::to_string(idx + 1);
+        auto it = req.rawFields.find(key);
+        if (it == req.rawFields.end() || it->second.empty())
+          return false;
+        answersOut.push_back(it->second);
+      }
+      return true;
+    };
+
+    std::string stage = "questions";
+    auto itStage = req.rawFields.find("reset_stage");
+    if (itStage != req.rawFields.end() && !itStage->second.empty())
+      stage = itStage->second;
+
+    if (stage == "questions") {
+      std::vector<std::string> questions;
+      std::string err;
+      if (!m_securityManager.fetchSecurityQuestions(questions, &err)) {
+        resp.success = false;
+        resp.message = err.empty() ? "Unable to load security questions" : err;
+        break;
+      }
+
+      resp.success = true;
+      resp.message =
+          "Answer the security questions to reset your password/PIN.";
+      for (std::size_t idx = 0; idx < questions.size(); ++idx) {
+        resp.rawFields["security_q" + std::to_string(idx + 1)] = questions[idx];
+      }
+      break;
+    }
+
+    if (stage == "verify") {
+      std::vector<std::string> answers;
+      if (!collectAnswers(answers)) {
+        resp.success = false;
+        resp.message = "All security questions must be answered.";
+        break;
+      }
+
+      std::string err;
+      if (!m_securityManager.validateSecurityAnswers(answers, &err)) {
+        resp.success = false;
+        resp.message = err.empty() ? "Security answers did not match" : err;
+        break;
+      }
+
+      resp.success = true;
+      resp.message = "Security answers verified. Set a new password/PIN.";
+      break;
+    }
+
+    if (stage == "reset") {
+      std::vector<std::string> answers;
+      if (!collectAnswers(answers)) {
+        resp.success = false;
+        resp.message = "All security questions must be answered.";
+        break;
+      }
+
+      std::string newSecret;
+      auto itSecret = req.rawFields.find("new_secret");
+      if (itSecret != req.rawFields.end())
+        newSecret = itSecret->second;
+
+      if (newSecret.empty()) {
+        resp.success = false;
+        resp.message = "New password/PIN is required.";
+        break;
+      }
+
+      apm::security::SessionState session;
+      std::string err;
+      if (!m_securityManager.resetForgottenSecret(newSecret, answers, session,
+                                                  &err)) {
+        resp.success = false;
+        resp.message =
+            err.empty() ? "Failed to reset password/PIN." : std::move(err);
+        break;
+      }
+
+      resp.success = true;
+      resp.message = "Password/PIN reset. Session active.";
+      resp.rawFields["session_token"] = session.token;
+      resp.rawFields["session_expires"] = std::to_string(session.expiresAt);
+      break;
+    }
+
+    resp.success = false;
+    resp.message = "Unknown forgot-password stage";
     break;
   }
 
@@ -448,6 +548,25 @@ void IpcServer::handleClient(int clientFd) {
 
     resp.success = true;
     resp.message = res.message;
+    break;
+  }
+
+  case RequestType::Autoremove: {
+    apm::logger::info("IpcServer: Autoremove request received");
+
+    apm::install::RemoveOptions opts;
+    apm::install::AutoremoveResult ares;
+    if (!apm::install::autoremove(opts, ares)) {
+      resp.success = false;
+      resp.message = ares.message.empty() ? "Autoremove failed" : ares.message;
+      break;
+    }
+
+    resp.success = ares.ok;
+    resp.message = ares.message;
+    if (!ares.removedPackages.empty()) {
+      resp.rawFields["removed"] = joinPackages(ares.removedPackages);
+    }
     break;
   }
 
@@ -638,6 +757,22 @@ void IpcServer::handleClient(int clientFd) {
 
     resp.success = true;
     resp.message = body.str();
+    break;
+  }
+
+  case RequestType::FactoryReset: {
+    apm::logger::info("IpcServer: FactoryReset request received");
+
+    apm::daemon::FactoryResetResult result;
+    if (!apm::daemon::performFactoryReset(m_moduleManager, result)) {
+      resp.success = false;
+      resp.message =
+          result.message.empty() ? "Factory reset failed" : result.message;
+    } else {
+      resp.success = true;
+      resp.message =
+          result.message.empty() ? "Factory reset completed." : result.message;
+    }
     break;
   }
 

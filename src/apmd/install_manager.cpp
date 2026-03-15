@@ -1749,6 +1749,106 @@ bool removePackage(const std::string &packageName, const RemoveOptions &opts,
   return true;
 }
 
+// Remove auto-installed packages that are no longer required by any installed
+// package. Repeat until no new orphaned auto-installed packages are found.
+bool autoremove(const RemoveOptions &opts, AutoremoveResult &result) {
+  result = AutoremoveResult{};
+  std::vector<std::string> removed;
+
+  while (true) {
+    apm::status::InstalledDb db;
+    std::string dbErr;
+    if (!apm::status::loadStatus(db, &dbErr)) {
+      result.ok = false;
+      result.message = "Failed to load status DB: " + dbErr;
+      apm::logger::error("autoremove: " + result.message);
+      return false;
+    }
+
+    std::vector<std::string> candidates;
+    candidates.reserve(db.size());
+
+    for (const auto &kv : db) {
+      const std::string &name = kv.first;
+      const auto &pkg = kv.second;
+      if (!pkg.autoInstalled)
+        continue;
+
+      bool requiredByInstalled = false;
+      for (const auto &otherKv : db) {
+        if (otherKv.first == name)
+          continue;
+        const auto &other = otherKv.second;
+        if (other.termuxPackage != pkg.termuxPackage)
+          continue;
+
+        for (const auto &depName : other.depends) {
+          if (depName == name) {
+            requiredByInstalled = true;
+            break;
+          }
+        }
+        if (requiredByInstalled)
+          break;
+      }
+
+      if (!requiredByInstalled) {
+        candidates.push_back(name);
+      }
+    }
+
+    if (candidates.empty()) {
+      break;
+    }
+
+    bool removedAny = false;
+    for (const auto &name : candidates) {
+      RemoveResult removeResult;
+      if (!removePackage(name, opts, removeResult)) {
+        result.ok = false;
+        result.message = removeResult.message.empty()
+                             ? "Failed to autoremove " + name
+                             : removeResult.message;
+        apm::logger::error("autoremove: " + result.message);
+        return false;
+      }
+
+      if (!removeResult.removedPackages.empty()) {
+        removedAny = true;
+        for (const auto &pkgName : removeResult.removedPackages) {
+          if (std::find(removed.begin(), removed.end(), pkgName) ==
+              removed.end()) {
+            removed.push_back(pkgName);
+          }
+        }
+      }
+    }
+
+    if (!removedAny) {
+      break;
+    }
+  }
+
+  result.ok = true;
+  result.removedPackages = removed;
+
+  if (removed.empty()) {
+    result.message = "No auto-installed packages to remove";
+  } else {
+    std::ostringstream oss;
+    oss << "Autoremoved " << removed.size() << " package(s): ";
+    for (std::size_t i = 0; i < removed.size(); ++i) {
+      if (i > 0)
+        oss << " ";
+      oss << removed[i];
+    }
+    result.message = oss.str();
+  }
+
+  apm::logger::info("autoremove: " + result.message);
+  return true;
+}
+
 // ---------------------------------------------------------------------
 // Upgrade
 // ---------------------------------------------------------------------

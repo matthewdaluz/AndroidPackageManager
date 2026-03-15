@@ -57,6 +57,64 @@ static inline void trim(std::string &s) {
           s.end());
 }
 
+// Escape line-delimiter-sensitive characters so values can be safely serialized
+// into single-line key:value frames.
+static std::string escapeFieldValue(const std::string &value) {
+  std::string out;
+  out.reserve(value.size());
+  for (char c : value) {
+    switch (c) {
+    case '\\':
+      out += "\\\\";
+      break;
+    case '\n':
+      out += "\\n";
+      break;
+    case '\r':
+      out += "\\r";
+      break;
+    default:
+      out.push_back(c);
+      break;
+    }
+  }
+  return out;
+}
+
+// Reverse escaping performed by escapeFieldValue().
+static std::string unescapeFieldValue(const std::string &value) {
+  std::string out;
+  out.reserve(value.size());
+
+  for (std::size_t i = 0; i < value.size(); ++i) {
+    char c = value[i];
+    if (c != '\\' || i + 1 >= value.size()) {
+      out.push_back(c);
+      continue;
+    }
+
+    char next = value[++i];
+    switch (next) {
+    case 'n':
+      out.push_back('\n');
+      break;
+    case 'r':
+      out.push_back('\r');
+      break;
+    case '\\':
+      out.push_back('\\');
+      break;
+    default:
+      // Unknown escape: preserve both bytes for forward compatibility.
+      out.push_back('\\');
+      out.push_back(next);
+      break;
+    }
+  }
+
+  return out;
+}
+
 // Parse RFC822-style key:value lines until a blank line and return them.
 static std::unordered_map<std::string, std::string>
 parseKeyValueLines(const std::string &raw, std::string *errorMsg) {
@@ -86,6 +144,7 @@ parseKeyValueLines(const std::string &raw, std::string *errorMsg) {
 
     trim(key);
     trim(value);
+    value = unescapeFieldValue(value);
 
     if (key.empty()) {
       if (errorMsg)
@@ -299,31 +358,31 @@ std::string serializeRequest(const Request &req) {
   out << "type:" << typeToString(req.type) << "\n";
 
   if (!req.id.empty())
-    out << "id:" << req.id << "\n";
+    out << "id:" << escapeFieldValue(req.id) << "\n";
 
   if (!req.sessionToken.empty())
-    out << "session:" << req.sessionToken << "\n";
+    out << "session:" << escapeFieldValue(req.sessionToken) << "\n";
 
   if (req.type == RequestType::Authenticate) {
     if (!req.authAction.empty())
-      out << "auth_action:" << req.authAction << "\n";
+      out << "auth_action:" << escapeFieldValue(req.authAction) << "\n";
     if (!req.authSecret.empty())
-      out << "auth_secret:" << req.authSecret << "\n";
+      out << "auth_secret:" << escapeFieldValue(req.authSecret) << "\n";
   }
 
   if (!req.packageName.empty())
-    out << "package:" << req.packageName << "\n";
+    out << "package:" << escapeFieldValue(req.packageName) << "\n";
 
   if (!req.apkPath.empty())
-    out << "apkPath:" << req.apkPath << "\n";
+    out << "apkPath:" << escapeFieldValue(req.apkPath) << "\n";
 
   if (req.installAsSystem)
     out << "installAsSystem:1\n";
 
   if (!req.modulePath.empty())
-    out << "module_path:" << req.modulePath << "\n";
+    out << "module_path:" << escapeFieldValue(req.modulePath) << "\n";
   if (!req.moduleName.empty())
-    out << "module:" << req.moduleName << "\n";
+    out << "module:" << escapeFieldValue(req.moduleName) << "\n";
 
   for (const auto &kv : req.rawFields) {
     if (kv.first == "type" || kv.first == "id" || kv.first == "package" ||
@@ -332,7 +391,7 @@ std::string serializeRequest(const Request &req) {
         kv.first == "module" || kv.first == "auth_action" ||
         kv.first == "auth_secret")
       continue;
-    out << kv.first << ":" << kv.second << "\n";
+    out << kv.first << ":" << escapeFieldValue(kv.second) << "\n";
   }
 
   out << "\n";
@@ -411,11 +470,11 @@ std::string serializeResponse(const Response &resp) {
 
   out << "status:" << statusStr << "\n";
   if (!resp.id.empty())
-    out << "id:" << resp.id << "\n";
+    out << "id:" << escapeFieldValue(resp.id) << "\n";
   if (!resp.message.empty())
-    out << "message:" << resp.message << "\n";
+    out << "message:" << escapeFieldValue(resp.message) << "\n";
   for (const auto &kv : resp.rawFields) {
-    out << kv.first << ":" << kv.second << "\n";
+    out << kv.first << ":" << escapeFieldValue(kv.second) << "\n";
   }
 
   out << "\n";
