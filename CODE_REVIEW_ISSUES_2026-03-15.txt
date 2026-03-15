@@ -1,0 +1,59 @@
+APM Code Review Findings
+Date: 2026-03-15
+
+1) HIGH: forgot-password, factory-reset, and autoremove are effectively broken in apmd
+- Active server path has its own switch and does not handle these request types, so they fall to “Unsupported request type” (or forgot-password gets blocked by auth first).
+- References:
+  - src/apmd/ipc_server.cpp:248 (auth gate excludes only Ping/Authenticate)
+  - src/apmd/ipc_server.cpp:644 (default unsupported)
+  - src/apm/apm.cpp:926 (ForgotPassword request)
+  - src/apm/apm.cpp:1416 (Autoremove request)
+  - src/apm/apm.cpp:1472 (FactoryReset request)
+  - src/apmd/request_dispatcher.cpp:185 (ForgotPassword exists in newer dispatcher)
+  - src/apmd/request_dispatcher.cpp:606 (FactoryReset exists in newer dispatcher)
+
+2) HIGH: Autoremove missing even in the newer dispatcher
+- RequestType::Autoremove exists and CLI sends it, but no case in request_dispatcher.cpp.
+- References:
+  - src/apmd/include/protocol.hpp:42 (enum includes Autoremove)
+  - src/apm/apm.cpp:1416 (CLI sends Autoremove)
+  - src/apmd/request_dispatcher.cpp:136 (switch starts; no Autoremove case)
+
+3) HIGH: IPC framing/parsing breaks on multiline values (notably module list output)
+- Protocol is line-based key:value; serializer does not escape newlines in values.
+- Module list response writes multiline text (including blank lines), which can split frames or parse incorrectly.
+- References:
+  - src/apmd/protocol.cpp:416 (raw key:value response serialization)
+  - src/apmd/protocol.cpp:75 (parser requires each non-empty line to contain ':')
+  - src/apmd/ipc_server.cpp:615 (multiline module list text)
+  - src/apmd/ipc_server.cpp:635 (blank line inserted between modules)
+
+4) MEDIUM: Socket writes do not handle partial writes
+- Both daemons call write() once for full frame; partial write could truncate responses.
+- References:
+  - src/apmd/ipc_server.cpp:94
+  - src/amsd/ipc_server.cpp:52
+
+5) MEDIUM (SECURITY): session token generation uses mt19937
+- Session tokens should use a CSPRNG; current randomHex uses std::random_device + std::mt19937.
+- References:
+  - src/apmd/security_manager.cpp:78 (RNG implementation)
+  - src/apmd/security_manager.cpp:589 (token issuance)
+
+6) MEDIUM: unbounded request buffering enables memory DoS on local socket
+- Server reads until "\n\n" with no max request size.
+- References:
+  - src/apmd/ipc_server.cpp:210
+  - src/amsd/ipc_server.cpp:159
+
+Open question / assumption
+- Assumed src/apmd/request_dispatcher.cpp is intended to be canonical; if true, ipc_server.cpp should delegate to it to avoid feature drift.
+
+Build/test note
+- cmake --build build -j2 succeeds.
+- Warning observed: src/core/downloader.cpp:414 (-Wignored-attributes)
+
+Recommended next steps
+1. Wire apmd server to RequestDispatcher and remove duplicate switch logic.
+2. Add missing Autoremove handling and integration tests for all CLI request types.
+3. Redesign IPC framing for multiline-safe payloads (length-prefixed frames or escaped/encoded values).
