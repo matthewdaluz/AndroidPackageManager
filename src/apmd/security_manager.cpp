@@ -36,7 +36,6 @@
 #include <cerrno>
 #include <cstdlib>
 #include <iomanip>
-#include <random>
 #include <sstream>
 #include <string>
 #include <sys/stat.h>
@@ -74,16 +73,14 @@ bool SecurityManager::isPasspinConfigured() const {
   return apm::fs::isFile(apm::config::getPassPinFile());
 }
 
-std::string SecurityManager::randomHex(std::size_t bytes) {
-  std::random_device rd;
-  std::mt19937 rng(rd());
-  std::uniform_int_distribution<int> dist(0, 255);
-  std::ostringstream out;
-  for (std::size_t i = 0; i < bytes; ++i) {
-    int v = dist(rng);
-    out << std::hex << std::setw(2) << std::setfill('0') << (v & 0xff);
-  }
-  return out.str();
+bool SecurityManager::randomHex(std::size_t bytes, std::string &out,
+                                std::string *errorMsg) {
+  out.clear();
+  std::vector<uint8_t> random;
+  if (!m_crypto.randomBytes(bytes, random, errorMsg))
+    return false;
+  out = bytesToHex(random);
+  return true;
 }
 
 std::string SecurityManager::bytesToHex(const std::vector<uint8_t> &data) {
@@ -586,7 +583,11 @@ bool SecurityManager::deriveHmac(const apm::security::SessionState &state,
 bool SecurityManager::issueSession(apm::security::SessionState &sessionOut,
                                    std::string *errorMsg) {
   sessionOut = apm::security::SessionState{};
-  sessionOut.token = randomHex(32);
+  if (!randomHex(32, sessionOut.token, errorMsg)) {
+    if (errorMsg && errorMsg->empty())
+      *errorMsg = "Failed to generate session token";
+    return false;
+  }
   sessionOut.expiresAt = apm::security::currentUnixSeconds() + 180;
 
   if (!deriveHmac(sessionOut, sessionOut.hmac, errorMsg))

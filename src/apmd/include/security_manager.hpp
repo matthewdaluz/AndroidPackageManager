@@ -82,7 +82,7 @@ private:
                     std::string *errorMsg);
   bool deriveHmac(const apm::security::SessionState &state, std::string &out,
                   std::string *errorMsg);
-  std::string randomHex(std::size_t bytes);
+  bool randomHex(std::size_t bytes, std::string &out, std::string *errorMsg);
   std::string bytesToHex(const std::vector<uint8_t> &data);
   bool hexToBytes(const std::string &hex, std::vector<uint8_t> &out) const;
   bool constantTimeEquals(const std::vector<uint8_t> &a,

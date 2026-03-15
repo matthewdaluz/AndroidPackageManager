@@ -43,13 +43,40 @@ namespace apm::amsd {
 
 namespace {
 
+constexpr std::size_t kMaxRequestBytes = 64 * 1024;
+
+bool writeAll(int fd, const char *data, std::size_t len,
+              std::string *errorMsg) {
+  std::size_t sent = 0;
+  while (sent < len) {
+    ssize_t n = ::write(fd, data + sent, len - sent);
+    if (n < 0) {
+      if (errno == EINTR)
+        continue;
+      if (errorMsg)
+        *errorMsg = "write() failed: " + std::string(std::strerror(errno));
+      return false;
+    }
+    if (n == 0) {
+      if (errorMsg)
+        *errorMsg = "write() returned 0";
+      return false;
+    }
+    sent += static_cast<std::size_t>(n);
+  }
+  return true;
+}
+
 void sendResponseMessage(int clientFd, apm::ipc::Response resp) {
   if (resp.status == apm::ipc::ResponseStatus::Unknown) {
     resp.status = resp.success ? apm::ipc::ResponseStatus::Ok
                                : apm::ipc::ResponseStatus::Error;
   }
   std::string wire = apm::ipc::serializeResponse(resp);
-  ::write(clientFd, wire.data(), wire.size());
+  std::string err;
+  if (!writeAll(clientFd, wire.data(), wire.size(), &err)) {
+    apm::logger::warn("amsd: sendResponseMessage failed: " + err);
+  }
 }
 
 } // namespace
@@ -168,7 +195,18 @@ void IpcServer::handleClient(int clientFd) {
     if (n == 0)
       break;
 
-    buffer.append(temp, static_cast<std::size_t>(n));
+    const std::size_t incoming = static_cast<std::size_t>(n);
+    if (buffer.size() + incoming > kMaxRequestBytes) {
+      apm::logger::warn("amsd: rejecting oversized request (> " +
+                        std::to_string(kMaxRequestBytes) + " bytes)");
+      apm::ipc::Response badResp;
+      badResp.success = false;
+      badResp.message = "Bad request: request too large";
+      sendResponseMessage(clientFd, badResp);
+      return;
+    }
+
+    buffer.append(temp, incoming);
     if (buffer.find("\n\n") != std::string::npos)
       break;
   }

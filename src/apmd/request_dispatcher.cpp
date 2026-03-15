@@ -419,6 +419,25 @@ void RequestDispatcher::dispatch(const apm::ipc::Request &req,
     break;
   }
 
+  case apm::ipc::RequestType::Autoremove: {
+    apm::logger::info("RequestDispatcher: Autoremove request received");
+
+    apm::install::RemoveOptions opts;
+    apm::install::AutoremoveResult ares;
+    if (!apm::install::autoremove(opts, ares)) {
+      resp.success = false;
+      resp.message = ares.message.empty() ? "Autoremove failed" : ares.message;
+      break;
+    }
+
+    resp.success = ares.ok;
+    resp.message = ares.message;
+    if (!ares.removedPackages.empty()) {
+      resp.rawFields["removed"] = joinPackages(ares.removedPackages);
+    }
+    break;
+  }
+
   case apm::ipc::RequestType::ApkInstall: {
     apm::logger::info("RequestDispatcher: ApkInstall request");
 

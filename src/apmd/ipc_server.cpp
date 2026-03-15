@@ -48,6 +48,8 @@ namespace apm::ipc {
 
 namespace {
 
+constexpr std::size_t kMaxRequestBytes = 64 * 1024;
+
 // Convert a repo update stage enum into a compact logging-friendly string.
 std::string stageToString(apm::repo::RepoUpdateStage stage) {
   switch (stage) {
@@ -87,12 +89,37 @@ static std::string fileNameFromPath(const std::string &path) {
 
 // Serialize and send a response frame to the client. Progress frames are sent
 // as-is; other responses are coerced into Ok/Error status automatically.
+static bool writeAll(int fd, const char *data, std::size_t len,
+                     std::string *errorMsg) {
+  std::size_t sent = 0;
+  while (sent < len) {
+    ssize_t n = ::write(fd, data + sent, len - sent);
+    if (n < 0) {
+      if (errno == EINTR)
+        continue;
+      if (errorMsg)
+        *errorMsg = "write() failed: " + std::string(std::strerror(errno));
+      return false;
+    }
+    if (n == 0) {
+      if (errorMsg)
+        *errorMsg = "write() returned 0";
+      return false;
+    }
+    sent += static_cast<std::size_t>(n);
+  }
+  return true;
+}
+
 void sendResponseMessage(int clientFd, Response resp) {
   if (resp.status == ResponseStatus::Unknown) {
     resp.status = resp.success ? ResponseStatus::Ok : ResponseStatus::Error;
   }
   std::string wire = serializeResponse(resp);
-  ::write(clientFd, wire.data(), wire.size());
+  std::string err;
+  if (!writeAll(clientFd, wire.data(), wire.size(), &err)) {
+    apm::logger::warn("IpcServer::sendResponseMessage: " + err);
+  }
 }
 
 } // namespace
@@ -221,7 +248,20 @@ void IpcServer::handleClient(int clientFd) {
     if (n == 0)
       break;
 
-    buffer.append(temp, static_cast<std::size_t>(n));
+    const std::size_t incoming = static_cast<std::size_t>(n);
+    if (buffer.size() + incoming > kMaxRequestBytes) {
+      apm::logger::warn(
+          "IpcServer::handleClient: rejecting oversized request (> " +
+          std::to_string(kMaxRequestBytes) + " bytes)");
+
+      Response badResp;
+      badResp.success = false;
+      badResp.message = "Bad request: request too large";
+      sendResponseMessage(clientFd, badResp);
+      return;
+    }
+
+    buffer.append(temp, incoming);
 
     if (buffer.find("\n\n") != std::string::npos)
       break;
