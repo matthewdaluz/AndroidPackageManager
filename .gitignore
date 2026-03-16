@@ -45,3 +45,5 @@ apm-systemwide-*.zip
 # Some prebuilt stuff.
 apm-flashable/*
 apm-magisk/*
+apm-lineage-recovery-*.zip
+selinux-contexting

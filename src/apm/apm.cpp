@@ -1531,7 +1531,7 @@ static bool sendModuleRequest(apm::ipc::Request &req, apm::ipc::Response &resp,
   } else {
     errorOut += " (socket: " + socketPath + ")";
   }
-  errorOut += ". Check 'getprop amsd.ready' or /ams/logs/amsd.log.";
+  errorOut += ". Check 'getprop amsd.ready' or /data/ams/logs/amsd.log.";
   return false;
 }
 

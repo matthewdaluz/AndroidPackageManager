@@ -33,8 +33,12 @@
 
 list_files() {
 cat <<EOF
-system/bin/apm
-system/bin/apmd
-system/bin/amsd
-system/etc/init/init.apmd.rc
-system/etc/init/init.amsd.rc
+bin/apm
+bin/apmd
+bin/amsd
+etc/init/init.apmd.rc
+etc/init/init.amsd.rc
+etc/selinux/apm.cil
+etc/selinux/apm_file_contexts
+etc/selinux/apm_property_contexts
+etc/selinux/apm_service_contexts

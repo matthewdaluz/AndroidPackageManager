@@ -302,7 +302,7 @@ std::string getIpcSocketPath() {
 std::string getAmsdSocketPath() {
   if (g_emulatorMode)
     return buildEmulatorAmsPath("amsd.socket");
-  return "/dev/socket/amsd";
+  return "/data/ams/amsd.sock";
 }
 
 std::string getTrustedKeysDir() {

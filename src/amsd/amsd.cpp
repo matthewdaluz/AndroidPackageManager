@@ -141,9 +141,9 @@ int main(int argc, char **argv) {
   apm::ams::ModuleManager moduleManager;
   apm::amsd::SecurityManager securityManager;
 
-  const std::string counterPath = "/ams/.amsd_boot_counter";
-  const std::string thresholdPath = "/ams/.amsd_safe_mode_threshold";
-  const std::string safeModeFlag = "/ams/.amsd_safe_mode";
+  const std::string counterPath = "/data/ams/.amsd_boot_counter";
+  const std::string thresholdPath = "/data/ams/.amsd_safe_mode_threshold";
+  const std::string safeModeFlag = "/data/ams/.amsd_safe_mode";
 
   std::uint64_t threshold =
       apm::ams::ModuleManager::getBootThreshold(thresholdPath, 3);

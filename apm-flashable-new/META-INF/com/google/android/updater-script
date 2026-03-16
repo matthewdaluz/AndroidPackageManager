@@ -1,0 +1,2 @@
+ui_print("APM LineageOS Recovery installer");
+ui_print("Using custom update-binary for slot-aware /mnt/system* install.");

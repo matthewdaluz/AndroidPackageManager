@@ -1,0 +1,25 @@
+# AMSD init for LineageOS flashable deployment
+# Starts early so overlay state is ready before apmd starts.
+
+on post-fs-data
+    mkdir /data/ams 0775 root shell
+    mkdir /data/ams/modules 0775 root shell
+    mkdir /data/ams/logs 0775 root shell
+    mkdir /data/ams/.runtime 0700 root root
+    mkdir /data/ams/.runtime/upper 0700 root root
+    mkdir /data/ams/.runtime/work 0700 root root
+    mkdir /data/ams/.runtime/base 0700 root root
+
+    start amsd
+
+service amsd /system/bin/amsd
+    class core
+    user root
+    group root system shell
+    # Compatibility mode: keep su domain unless custom policy is confirmed loaded.
+    seclabel u:r:su:s0
+    # amsd creates /data/ams/amsd.sock itself.
+    capabilities SYS_ADMIN DAC_OVERRIDE DAC_READ_SEARCH CHOWN FOWNER SETUID SETGID
+
+on property:sys.boot_completed=1
+    start amsd

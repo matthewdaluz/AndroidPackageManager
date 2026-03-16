@@ -1,0 +1,336 @@
+#!/sbin/sh
+#
+# APM - Android Package Manager
+# LineageOS Recovery flashable installer (slot-aware)
+#
+
+OUTFD="/proc/self/fd/$2"
+ZIP="$3"
+TMP="/tmp/apm-install-new"
+TARGET_NAME=""
+TARGET_MNT=""
+TARGET_BLOCK=""
+ACTIVE_SLOT=""
+INSTALL_ROOT=""
+MOUNTED_BY_SCRIPT=0
+
+ui_print() {
+  echo "ui_print $1" > "$OUTFD"
+  echo "ui_print" > "$OUTFD"
+}
+
+fail() {
+  ui_print "ERROR: $1"
+  cleanup
+  exit 1
+}
+
+cleanup() {
+  if [ "$MOUNTED_BY_SCRIPT" = "1" ] && [ -n "$TARGET_MNT" ]; then
+    umount -l "$TARGET_MNT" 2>/dev/null || true
+  fi
+  rm -rf "$TMP" 2>/dev/null || true
+}
+
+set_perm() {
+  chmod "$1" "$2" 2>/dev/null || true
+}
+
+set_owner() {
+  chown "$1:$2" "$3" 2>/dev/null || true
+}
+
+set_con() {
+  chcon -h "u:object_r:$1:s0" "$2" 2>/dev/null || true
+  chcon "u:object_r:$1:s0" "$2" 2>/dev/null || true
+}
+
+get_active_slot() {
+  suffix="$(getprop ro.boot.slot_suffix 2>/dev/null)"
+  case "$suffix" in
+    _a|_b)
+      echo "$suffix"
+      return 0
+      ;;
+  esac
+
+  slot="$(getprop ro.boot.slot 2>/dev/null)"
+  case "$slot" in
+    a|A)
+      echo "_a"
+      return 0
+      ;;
+    b|B)
+      echo "_b"
+      return 0
+      ;;
+  esac
+
+  echo ""
+}
+
+has_candidate() {
+  name="$1"
+  for c in $CANDIDATES; do
+    [ "$c" = "$name" ] && return 0
+  done
+  return 1
+}
+
+choose_target() {
+  CANDIDATES=""
+  [ -d /mnt/system ] && CANDIDATES="$CANDIDATES system"
+  [ -d /mnt/system_a ] && CANDIDATES="$CANDIDATES system_a"
+  [ -d /mnt/system_b ] && CANDIDATES="$CANDIDATES system_b"
+
+  set -- $CANDIDATES
+  count="$#"
+
+  if [ "$count" -eq 0 ]; then
+    fail "No supported system mount points found under /mnt (expected system/system_a/system_b)."
+  fi
+
+  if [ "$count" -eq 1 ]; then
+    TARGET_NAME="$1"
+    return 0
+  fi
+
+  ACTIVE_SLOT="$(get_active_slot)"
+  if [ -z "$ACTIVE_SLOT" ]; then
+    fail "Multiple /mnt/system* targets detected but active slot could not be determined."
+  fi
+
+  case "$ACTIVE_SLOT" in
+    _a)
+      if has_candidate "system_a"; then
+        TARGET_NAME="system_a"
+      else
+        fail "Active slot is _a but /mnt/system_a does not exist."
+      fi
+      ;;
+    _b)
+      if has_candidate "system_b"; then
+        TARGET_NAME="system_b"
+      else
+        fail "Active slot is _b but /mnt/system_b does not exist."
+      fi
+      ;;
+    *)
+      fail "Unsupported active slot value: $ACTIVE_SLOT"
+      ;;
+  esac
+}
+
+resolve_block_device() {
+  name="$1"
+
+  dyn="$(getprop ro.boot.dynamic_partitions 2>/dev/null)"
+  [ "$dyn" = "true" ] && base="/dev/block/mapper" || base="/dev/block/bootdevice/by-name"
+
+  slot="$(get_active_slot)"
+
+  if [ -r /etc/recovery.fstab ]; then
+    fstab_entry="$(grep -v '^#' /etc/recovery.fstab | tr -s '[:space:]' ' ' | grep " /${name} " | head -n1 | cut -d' ' -f1)"
+    if [ -n "$fstab_entry" ] && [ -b "$fstab_entry" ]; then
+      echo "$fstab_entry"
+      return 0
+    fi
+  fi
+
+  dev="${base}/${name}"
+  if [ -b "$dev" ]; then
+    echo "$dev"
+    return 0
+  fi
+
+  if [ "$name" = "system" ] && [ -n "$slot" ]; then
+    dev="${base}/system${slot}"
+    if [ -b "$dev" ]; then
+      echo "$dev"
+      return 0
+    fi
+  fi
+
+  echo ""
+}
+
+mount_target_rw() {
+  TARGET_MNT="/mnt/${TARGET_NAME}"
+
+  if grep -q "[[:space:]]${TARGET_MNT}[[:space:]]" /proc/mounts; then
+    mount -o rw,remount "$TARGET_MNT" 2>/dev/null || mount -o remount,rw "$TARGET_MNT" 2>/dev/null || true
+    return 0
+  fi
+
+  partition_name="$TARGET_NAME"
+  TARGET_BLOCK="$(resolve_block_device "$partition_name")"
+
+  if [ -z "$TARGET_BLOCK" ]; then
+    fail "Unable to resolve block device for ${partition_name}."
+  fi
+
+  blockdev --setrw "$TARGET_BLOCK" 2>/dev/null || true
+
+  if ! mount -o rw "$TARGET_BLOCK" "$TARGET_MNT"; then
+    fail "Failed to mount $TARGET_BLOCK on $TARGET_MNT."
+  fi
+
+  MOUNTED_BY_SCRIPT=1
+}
+
+prepare_addond_script() {
+  payload="$1"
+
+  [ -f "$payload/addon.d/addond_head" ] || return 0
+  [ -f "$payload/addon.d/addond_tail" ] || return 0
+
+  (
+    cd "$payload" || exit 1
+    cat addon.d/addond_head > addon.d/30-apm.sh || exit 1
+    find . -type f ! -path "./addon.d/*" | sed 's#^\./##' | sort >> addon.d/30-apm.sh || exit 1
+    cat addon.d/addond_tail >> addon.d/30-apm.sh || exit 1
+    rm -f addon.d/addond_head addon.d/addond_tail
+  ) || fail "Failed to build addon.d script"
+}
+
+resolve_install_root() {
+  INSTALL_ROOT="$TARGET_MNT"
+
+  # Some Lineage Recovery layouts expose top-level bin/etc as symlinks that can
+  # recurse when copying an entire tree into TARGET_MNT.
+  if [ -L "$TARGET_MNT/bin" ] || [ -L "$TARGET_MNT/etc" ]; then
+    if [ -d "$TARGET_MNT/system" ]; then
+      INSTALL_ROOT="$TARGET_MNT/system"
+      ui_print "Detected symlinked top-level dirs; using ${INSTALL_ROOT}/ as writable root"
+      return 0
+    fi
+    fail "Top-level dirs are symlinked but ${TARGET_MNT}/system was not found."
+  fi
+}
+
+apply_permissions() {
+  root="$1"
+  payload="$2"
+
+  # Ensure ownership/perms are applied only to files shipped by this package.
+  (cd "$payload" && find . -mindepth 1 -print) | while read -r rel; do
+    [ -z "$rel" ] && continue
+    path="${root}/${rel#./}"
+    [ -e "$path" ] || continue
+    set_owner root root "$path"
+    [ -d "$path" ] && set_perm 0755 "$path"
+  done
+
+  for path in \
+    "$root/bin/apm" "$root/bin/apmd" "$root/bin/amsd" \
+    "$root/system/bin/apm" "$root/system/bin/apmd" "$root/system/bin/amsd"
+  do
+    [ -f "$path" ] || continue
+    set_perm 0755 "$path"
+    # Boot-compat mode: keep binaries under stock system_file context.
+    set_con system_file "$path"
+  done
+
+  for path in \
+    "$root/etc/init/init.apmd.rc" "$root/etc/init/init.amsd.rc" \
+    "$root/system/etc/init/init.apmd.rc" "$root/system/etc/init/init.amsd.rc"
+  do
+    [ -f "$path" ] || continue
+    set_perm 0644 "$path"
+    set_con system_file "$path"
+  done
+
+  for path in \
+    "$root/etc/selinux/apm.cil" "$root/etc/selinux/apm_file_contexts" \
+    "$root/etc/selinux/apm_property_contexts" "$root/etc/selinux/apm_service_contexts" \
+    "$root/system/etc/selinux/apm.cil" "$root/system/etc/selinux/apm_file_contexts" \
+    "$root/system/etc/selinux/apm_property_contexts" "$root/system/etc/selinux/apm_service_contexts"
+  do
+    [ -f "$path" ] || continue
+    set_perm 0644 "$path"
+    set_con system_file "$path"
+  done
+
+  for path in \
+    "$root/addon.d/30-apm.sh" "$root/system/addon.d/30-apm.sh"
+  do
+    [ -f "$path" ] || continue
+    set_perm 0755 "$path"
+    set_con system_file "$path"
+  done
+
+  for path in "$root/xbin"/* "$root/system/xbin"/*; do
+    [ -f "$path" ] || continue
+    set_perm 0755 "$path"
+    set_con system_file "$path"
+  done
+}
+
+ui_print "*******************************"
+ui_print "APM LineageOS Recovery Installer"
+ui_print "*******************************"
+ui_print ""
+ui_print "ZIP: $ZIP"
+
+rm -rf "$TMP"
+mkdir -p "$TMP" || fail "Failed to create temp dir"
+
+ui_print "Extracting package"
+unzip -o "$ZIP" -d "$TMP" >/tmp/apm-flashable-new-unzip.log 2>&1 || fail "Failed to unzip package"
+
+if [ -f "$TMP/build.prop" ]; then
+  PKG_ARCH="$(grep -m1 '^arch=' "$TMP/build.prop" | cut -d= -f2)"
+  DEV_ARCH="$(getprop ro.bionic.arch 2>/dev/null)"
+  if [ -n "$PKG_ARCH" ] && [ -n "$DEV_ARCH" ] && [ "$PKG_ARCH" != "$DEV_ARCH" ]; then
+    fail "Package arch ($PKG_ARCH) does not match device arch ($DEV_ARCH)."
+  fi
+fi
+
+[ -d "$TMP/system" ] || fail "Package payload is missing system/ directory."
+
+choose_target
+TARGET_MNT="/mnt/${TARGET_NAME}"
+ui_print "Selected target mount: ${TARGET_MNT}"
+[ -n "$ACTIVE_SLOT" ] && ui_print "Active slot: ${ACTIVE_SLOT}"
+
+mount_target_rw
+
+ui_print "Preparing addon.d payload"
+prepare_addond_script "$TMP/system"
+
+resolve_install_root
+
+ui_print "Installing files into ${INSTALL_ROOT}/"
+cp -R "$TMP/system"/. "$INSTALL_ROOT"/ >/tmp/apm-flashable-new-copy.log 2>&1 || fail "Copy operation failed (see /tmp/apm-flashable-new-copy.log)"
+
+apply_permissions "$INSTALL_ROOT" "$TMP/system"
+
+ui_print "Verifying installed binaries"
+if [ -f "$TARGET_MNT/bin/apm" ] || [ -f "$TARGET_MNT/system/bin/apm" ]; then
+  ui_print "  - apm installed"
+else
+  fail "apm binary not found after install"
+fi
+
+if [ -f "$TARGET_MNT/bin/apmd" ] || [ -f "$TARGET_MNT/system/bin/apmd" ]; then
+  ui_print "  - apmd installed"
+else
+  fail "apmd binary not found after install"
+fi
+
+if [ -f "$TARGET_MNT/bin/amsd" ] || [ -f "$TARGET_MNT/system/bin/amsd" ]; then
+  ui_print "  - amsd installed"
+else
+  fail "amsd binary not found after install"
+fi
+
+cleanup
+
+ui_print ""
+ui_print "APM installation complete"
+ui_print "- Installed to ${INSTALL_ROOT}/"
+ui_print "- Init scripts for early amsd/apmd startup were installed"
+ui_print "- SELinux policy payload installed (CIL + file/service/property contexts)"
+ui_print ""
+ui_print "Reboot system now."
+exit 0

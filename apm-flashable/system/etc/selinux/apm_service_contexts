@@ -1,4 +1,0 @@
-# APM Service Contexts
-# Maps Binder service names to SELinux types
-
-apm.apmd                        u:object_r:apmd_service:s0

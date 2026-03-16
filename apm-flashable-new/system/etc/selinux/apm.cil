@@ -1,0 +1,193 @@
+; APM SELinux policy (fresh baseline for current IPC + AMS architecture)
+; Target: flashable-zip experiments on LineageOS
+; Source basis: current codebase (apmd + amsd + module_manager overlayfs + IPC sockets)
+
+; -----------------------------------------------------------------------------
+; Types
+; -----------------------------------------------------------------------------
+(type apmd)
+(type apmd_exec)
+(type amsd)
+(type amsd_exec)
+
+(type apm_data_file)
+(type ams_data_file)
+
+(type apmd_socket)
+(type amsd_socket)
+
+(type apm_prop)
+
+; Domains
+(typeattribute apmd domain)
+(typeattribute amsd domain)
+
+; Executables
+(typeattribute apmd_exec exec_type)
+(typeattribute apmd_exec file_type)
+(typeattribute amsd_exec exec_type)
+(typeattribute amsd_exec file_type)
+
+; Data files
+(typeattribute apm_data_file data_file_type)
+(typeattribute apm_data_file file_type)
+(typeattribute ams_data_file data_file_type)
+(typeattribute ams_data_file file_type)
+
+; Socket inodes
+(typeattribute apmd_socket file_type)
+(typeattribute amsd_socket file_type)
+
+; Property type used by amsd/apmd init triggers
+(typeattribute apm_prop property_type)
+
+; -----------------------------------------------------------------------------
+; Domain transitions from init
+; -----------------------------------------------------------------------------
+(allow init apmd_exec (file (open read getattr map execute)))
+(allow init amsd_exec (file (open read getattr map execute)))
+
+(allow apmd apmd_exec (file (open read getattr map execute entrypoint)))
+(allow amsd amsd_exec (file (open read getattr map execute entrypoint)))
+
+(allow init apmd (process (transition siginh rlimitinh)))
+(allow init amsd (process (transition siginh rlimitinh)))
+
+(typetransition init apmd_exec process apmd)
+(typetransition init amsd_exec process amsd)
+
+; -----------------------------------------------------------------------------
+; Core self permissions
+; -----------------------------------------------------------------------------
+(allow apmd self (process (fork sigchld signal signull getattr getsched setsched)))
+(allow amsd self (process (fork sigchld signal signull getattr getsched setsched)))
+
+(allow apmd self (capability (dac_override dac_read_search chown fowner fsetid setgid setuid sys_admin)))
+(allow amsd self (capability (dac_override dac_read_search chown fowner fsetid setgid setuid sys_admin)))
+
+(allow apmd self (unix_stream_socket (create bind connect listen accept read write getopt setopt shutdown)))
+(allow amsd self (unix_stream_socket (create bind connect listen accept read write getopt setopt shutdown)))
+
+(allow apmd self (tcp_socket (create connect read write getattr getopt setopt shutdown)))
+(allow apmd self (udp_socket (create connect read write getattr getopt setopt shutdown)))
+
+; Allow outbound network (repo downloads, signatures, metadata)
+(allow apmd port_type (tcp_socket (name_connect)))
+(allow apmd port_type (udp_socket (name_connect)))
+
+; -----------------------------------------------------------------------------
+; Filesystem object association for custom file types
+; -----------------------------------------------------------------------------
+(allow apm_data_file fs_type (filesystem (associate)))
+(allow ams_data_file fs_type (filesystem (associate)))
+(allow apmd_socket fs_type (filesystem (associate)))
+(allow amsd_socket fs_type (filesystem (associate)))
+
+; -----------------------------------------------------------------------------
+; apmd data + socket paths
+; -----------------------------------------------------------------------------
+(allow apmd apm_data_file (dir (create read write add_name remove_name search open getattr setattr rmdir)))
+(allow apmd apm_data_file (file (create read write append open getattr setattr unlink rename lock ioctl)))
+(allow apmd apm_data_file (lnk_file (create read write getattr setattr unlink rename)))
+(allow apmd apm_data_file (sock_file (create unlink write read open getattr setattr)))
+
+(allow apmd apmd_socket (sock_file (create unlink write read open getattr setattr)))
+(typetransition apmd apm_data_file sock_file apmd_socket)
+
+; Auto-label /data/apm tree content when created by apmd
+(typetransition apmd system_data_file dir apm_data_file "apm")
+(typetransition apmd apm_data_file dir apm_data_file)
+(typetransition apmd apm_data_file file apm_data_file)
+(typetransition apmd apm_data_file lnk_file apm_data_file)
+
+; -----------------------------------------------------------------------------
+; AMS data paths used by both daemons
+; -----------------------------------------------------------------------------
+(allow apmd ams_data_file (dir (create read write add_name remove_name search open getattr setattr rmdir mounton)))
+(allow apmd ams_data_file (file (create read write append open getattr setattr unlink rename lock ioctl)))
+(allow apmd ams_data_file (lnk_file (create read write getattr setattr unlink rename)))
+
+(allow amsd ams_data_file (dir (create read write add_name remove_name search open getattr setattr rmdir mounton)))
+(allow amsd ams_data_file (file (create read write append open getattr setattr unlink rename lock ioctl)))
+(allow amsd ams_data_file (lnk_file (create read write getattr setattr unlink rename)))
+
+; Auto-label /data/ams tree content when created by daemons
+(typetransition apmd system_data_file dir ams_data_file "ams")
+(typetransition amsd system_data_file dir ams_data_file "ams")
+(typetransition amsd ams_data_file dir ams_data_file)
+(typetransition amsd ams_data_file file ams_data_file)
+(typetransition amsd ams_data_file lnk_file ams_data_file)
+
+; -----------------------------------------------------------------------------
+; Access to parent data dirs used for hook/script staging
+; -----------------------------------------------------------------------------
+(allow apmd system_data_file (dir (search open read write getattr add_name remove_name)))
+(allow amsd system_data_file (dir (search open read write getattr add_name remove_name)))
+
+(allow apmd shell_data_file (dir (search open read write getattr add_name remove_name)))
+(allow apmd shell_data_file (file (create read write append open getattr setattr unlink rename lock ioctl)))
+
+; -----------------------------------------------------------------------------
+; Runtime binaries and shared libs (sh, pm, tar, unzip, setprop)
+; -----------------------------------------------------------------------------
+(allow apmd system_file (dir (search open read getattr)))
+(allow apmd system_file (file (open read getattr map execute execute_no_trans)))
+(allow apmd shell_exec (file (open read getattr map execute execute_no_trans)))
+(allow apmd toolbox_exec (file (open read getattr map execute execute_no_trans)))
+
+(allow amsd system_file (dir (search open read getattr)))
+(allow amsd system_file (file (open read getattr map execute execute_no_trans)))
+(allow amsd shell_exec (file (open read getattr map execute execute_no_trans)))
+(allow amsd toolbox_exec (file (open read getattr map execute execute_no_trans)))
+
+; -----------------------------------------------------------------------------
+; proc/sys reads used by mount + process inspection paths
+; -----------------------------------------------------------------------------
+(allow apmd proc (dir (search open read getattr)))
+(allow apmd proc (file (open read getattr)))
+(allow apmd proc_net (dir (search open read getattr)))
+(allow apmd proc_net (file (open read getattr)))
+
+(allow amsd proc (dir (search open read getattr)))
+(allow amsd proc (file (open read getattr)))
+(allow amsd proc_net (dir (search open read getattr)))
+(allow amsd proc_net (file (open read getattr)))
+
+; -----------------------------------------------------------------------------
+; OverlayFS + bind-mount operations in ModuleManager
+; -----------------------------------------------------------------------------
+(allow apmd system_file (dir (search mounton)))
+(allow amsd system_file (dir (search mounton)))
+
+; /vendor and /product mountpoints on modern devices
+(allow apmd vendor_file_type (dir (search mounton)))
+(allow apmd product_file_type (dir (search mounton)))
+(allow amsd vendor_file_type (dir (search mounton)))
+(allow amsd product_file_type (dir (search mounton)))
+
+; mount/remount/unmount needed for overlay apply/rollback
+(allow apmd fs_type (filesystem (mount remount unmount getattr)))
+(allow amsd fs_type (filesystem (mount remount unmount getattr)))
+
+; -----------------------------------------------------------------------------
+; /data/ams/amsd.sock handling (amsd daemon socket)
+; -----------------------------------------------------------------------------
+(allow amsd ams_data_file (sock_file (create unlink write read open getattr setattr)))
+(typetransition amsd ams_data_file sock_file amsd_socket)
+
+; apm CLI runs as shell in most root-shell workflows
+(allow shell apmd_socket (sock_file (open read write getattr)))
+(allow shell apmd (unix_stream_socket (connectto read write getopt setopt shutdown)))
+
+(allow shell amsd_socket (sock_file (open read write getattr)))
+(allow shell amsd (unix_stream_socket (connectto read write getopt setopt shutdown)))
+
+; -----------------------------------------------------------------------------
+; Property service usage (amsd sets amsd.ready=1)
+; -----------------------------------------------------------------------------
+(allow amsd property_socket (sock_file (write open getattr)))
+(allow amsd init (unix_stream_socket (connectto)))
+(allow amsd apm_prop (property_service (set)))
+
+; Optional admin property trigger support (apm.restart=1)
+(allow shell apm_prop (property_service (set)))
