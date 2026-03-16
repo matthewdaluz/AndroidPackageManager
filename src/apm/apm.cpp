@@ -2,12 +2,12 @@
  * APM - Android Package Manager
  *
  * RedHead Industries - Technologies Branch
- * Copyright (C) 2025 RedHead Industries
+ * Copyright (C) 2026 RedHead Industries
  *
  * File: apm.cpp
  * Purpose: Implement the apm CLI, including local commands and IPC-backed
  * operations.
- * Last Modified: January 6th, 2026. - 09:52 AM Eastern Time
+ * Last Modified: March 15th, 2026. - 10:51 PM EDT.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -61,9 +61,9 @@
 namespace {
 
 // Editable CLI metadata.
-static constexpr const char *kApmVersion = "1.8.0b - Closed Beta";
+static constexpr const char *kApmVersion = "2.0.0b - Open Beta";
 static constexpr const char *kApmBuildDate =
-    "December 4th, 2025 - 9:30 AM Eastern Time";
+    "March 15th, 2026. - 10:51 PM EDT";
   
 // -----------------------------------------------------------------------------
 // Progress formatting + helper utilities
