@@ -6,7 +6,7 @@
  *
  * File: config.cpp
  * Purpose: Runtime configuration for emulator mode path management.
- * Last Modified: December 4th, 2025. - 09:07 AM Eastern Time
+ * Last Modified: March 15th, 2026. - 10:51 PM EDT.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -163,6 +163,42 @@ std::string getApmBinDir() {
   if (g_emulatorMode)
     return buildEmulatorPath("bin");
   return "/data/apm/bin";
+}
+
+std::string getSandboxRoot() {
+  if (g_emulatorMode)
+    return buildEmulatorPath("sandbox");
+  return "/data/apm/sandbox";
+}
+
+std::string getSandboxStateDir() {
+  if (g_emulatorMode)
+    return buildEmulatorPath("sandbox/state");
+  return "/data/apm/sandbox/state";
+}
+
+std::string getSandboxEnvDir() {
+  if (g_emulatorMode)
+    return buildEmulatorPath("sandbox/env");
+  return "/data/apm/sandbox/env";
+}
+
+std::string getSandboxMountsDir() {
+  if (g_emulatorMode)
+    return buildEmulatorPath("sandbox/mounts");
+  return "/data/apm/sandbox/mounts";
+}
+
+std::string getCommandIndexFile() {
+  if (g_emulatorMode)
+    return buildEmulatorPath("sandbox/state/command-index.json");
+  return "/data/apm/sandbox/state/command-index.json";
+}
+
+std::string getSandboxPathEnvFile() {
+  if (g_emulatorMode)
+    return buildEmulatorPath("sandbox/env/apm-path.env");
+  return "/data/apm/sandbox/env/apm-path.env";
 }
 
 std::string getTermuxRoot() {

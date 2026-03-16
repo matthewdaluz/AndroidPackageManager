@@ -6,8 +6,8 @@
  *
  * File: install_manager.hpp
  * Purpose: Declare orchestration APIs for installing, removing, and upgrading
- * Debian-style packages. Last Modified: November 22nd, 2025. - 10:30 PM Eastern
- * Time. Author: Matthew DaLuz - RedHead Founder
+ * Debian-style packages. Last Modified: March 15th, 2026. - 10:51 PM EDT.
+ * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -68,6 +68,9 @@ struct InstallResult {
   std::string message;
   std::vector<std::string> installedPackages;
   std::vector<std::string> skippedPackages;
+  std::vector<std::string> activatedCommands;
+  std::vector<std::string> namespacedCommands;
+  std::vector<std::string> collisionWarnings;
 };
 
 bool installWithDeps(const apm::repo::RepoIndexList &repoIndices,
@@ -86,6 +89,9 @@ struct RemoveResult {
   bool ok = false;
   std::string message;
   std::vector<std::string> removedPackages;
+  std::vector<std::string> activatedCommands;
+  std::vector<std::string> namespacedCommands;
+  std::vector<std::string> collisionWarnings;
 };
 
 bool removePackage(const std::string &packageName, const RemoveOptions &opts,

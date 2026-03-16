@@ -5,10 +5,9 @@
  * Copyright (C) 2025 RedHead Industries
  *
  * File: apmd.cpp
- * Purpose: Bootstrap apmd, configure logging, and run the IPC-backed service
- * loop.
- * Last Modified: December 4th, 2025. - 09:07 AM Eastern Time. Author: Matthew
- * DaLuz - RedHead Founder
+ * Purpose: Bootstrap apmd, configure logging, and run the IPC-backed service loop.
+ * Last Modified: March 15th, 2026. - 10:51 PM EDT.
+ * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -34,7 +33,6 @@
 #include "logger.hpp"
 #include "process_lock.hpp"
 
-#include <atomic>
 #include <chrono>
 #include <iostream>
 #include <memory>
@@ -85,22 +83,6 @@ void waitForDataReady() {
 } // namespace
 
 namespace apm::daemon {
-
-// Keep PATH/profile helpers fresh in the background so Termux commands stay
-// reachable even if shells clear ENV. Runs until the daemon shuts down.
-static void startPathMaintenance(std::atomic<bool> &runFlag,
-                                 std::thread &worker) {
-  runFlag.store(true);
-  worker = std::thread([&runFlag]() {
-    using namespace std::chrono_literals;
-    while (runFlag.load()) {
-      apm::daemon::path::refreshPathEnvironment();
-      for (int i = 0; i < 5 && runFlag.load(); ++i) {
-        std::this_thread::sleep_for(1s);
-      }
-    }
-  });
-}
 
 // Configure logging, ensure the PATH/profile helper is loaded, and launch the
 // IPC service loop.
@@ -174,11 +156,12 @@ int runDaemon(bool debugMode, bool emulatorMode,
     return 1;
   }
 
+  apm::daemon::path::CommandHotloadSummary startupHotload;
+  if (!apm::daemon::path::rebuild_command_index_and_shims("daemon-start",
+                                                           &startupHotload)) {
+    apm::logger::warn("apmd: startup hotload rebuild completed with warnings");
+  }
   apm::daemon::path::ensureProfileLoaded();
-
-  std::atomic<bool> pathLoopRun{false};
-  std::thread pathLoopThread;
-  startPathMaintenance(pathLoopRun, pathLoopThread);
 
   apm::ams::ModuleManager moduleManager;
   std::string moduleErr;
@@ -195,17 +178,9 @@ int runDaemon(bool debugMode, bool emulatorMode,
   apm::ipc::IpcServer server(resolvedSocket, moduleManager);
   if (!server.start()) {
     apm::logger::error("apmd: failed to start IPC server");
-    pathLoopRun.store(false);
-    if (pathLoopThread.joinable()) {
-      pathLoopThread.join();
-    }
     return 1;
   }
   server.run();
-  pathLoopRun.store(false);
-  if (pathLoopThread.joinable()) {
-    pathLoopThread.join();
-  }
   apm::logger::info("apmd: IPC server loop exited");
   return 0;
 }

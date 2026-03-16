@@ -6,7 +6,7 @@
  *
  * File: config.hpp
  * Purpose: Declare filesystem layout constants used by both CLI and daemon.
- * Last Modified: December 4th, 2025. - 09:07 AM Eastern Time
+ * Last Modified: March 15th, 2026. - 10:51 PM EDT.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -63,6 +63,12 @@ std::string getPkgsDir();
 std::string getLogsDir();
 std::string getManualPackagesDir();
 std::string getApmBinDir();
+std::string getSandboxRoot();
+std::string getSandboxStateDir();
+std::string getSandboxEnvDir();
+std::string getSandboxMountsDir();
+std::string getCommandIndexFile();
+std::string getSandboxPathEnvFile();
 std::string getTermuxRoot();
 std::string getTermuxPrefix();
 std::string getTermuxEnvFile();
@@ -117,6 +123,14 @@ inline constexpr const char *PKGS_DIR = "/data/apm/pkgs";
 inline constexpr const char *LOGS_DIR = "/data/apm/logs";
 inline constexpr const char *MANUAL_PACKAGES_DIR = "/data/apm/manual-packages";
 inline constexpr const char *APM_BIN_DIR = "/data/apm/bin";
+inline constexpr const char *SANDBOX_ROOT = "/data/apm/sandbox";
+inline constexpr const char *SANDBOX_STATE_DIR = "/data/apm/sandbox/state";
+inline constexpr const char *SANDBOX_ENV_DIR = "/data/apm/sandbox/env";
+inline constexpr const char *SANDBOX_MOUNTS_DIR = "/data/apm/sandbox/mounts";
+inline constexpr const char *COMMAND_INDEX_FILE =
+    "/data/apm/sandbox/state/command-index.json";
+inline constexpr const char *SANDBOX_PATH_ENV_FILE =
+    "/data/apm/sandbox/env/apm-path.env";
 inline constexpr const char *TERMUX_ROOT = "/data/apm/installed/termux";
 inline constexpr const char *TERMUX_PREFIX = "/data/apm/installed/termux/usr";
 inline constexpr const char *TERMUX_ENV_FILE =

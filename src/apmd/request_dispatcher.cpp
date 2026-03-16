@@ -8,7 +8,7 @@
  * Purpose: Implement the reusable request dispatcher used by the IPC server.
  * Legacy Binder wiring (retained in binder_* files) can reuse this entrypoint
  * if re-enabled in the future.
- * Last Modified: November 28th, 2025. - 8:59 AM Eastern Time.
+ * Last Modified: March 15th, 2026. - 10:51 PM EDT.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -30,6 +30,7 @@
 
 #include "config.hpp"
 #include "include/apk_installer.hpp"
+#include "export_path.hpp"
 #include "factory_reset.hpp"
 #include "install_manager.hpp"
 #include "logger.hpp"
@@ -68,6 +69,19 @@ std::string joinPackages(const std::vector<std::string> &pkgs) {
     if (i > 0)
       oss << ' ';
     oss << pkgs[i];
+  }
+  return oss.str();
+}
+
+// Join arbitrary strings with a delimiter for structured response fields.
+std::string joinStrings(const std::vector<std::string> &items,
+                        const std::string &delimiter) {
+  std::ostringstream oss;
+  for (std::size_t i = 0; i < items.size(); ++i) {
+    if (i > 0) {
+      oss << delimiter;
+    }
+    oss << items[i];
   }
   return oss.str();
 }
@@ -392,6 +406,15 @@ void RequestDispatcher::dispatch(const apm::ipc::Request &req,
       resp.rawFields["packages"] = joinPackages(res.installedPackages);
     if (!res.skippedPackages.empty())
       resp.rawFields["skipped"] = joinPackages(res.skippedPackages);
+    if (!res.activatedCommands.empty())
+      resp.rawFields["activated_commands"] =
+          joinPackages(res.activatedCommands);
+    if (!res.namespacedCommands.empty())
+      resp.rawFields["namespaced_commands"] =
+          joinPackages(res.namespacedCommands);
+    if (!res.collisionWarnings.empty())
+      resp.rawFields["collision_warnings"] =
+          joinStrings(res.collisionWarnings, " || ");
     break;
   }
 
@@ -416,6 +439,15 @@ void RequestDispatcher::dispatch(const apm::ipc::Request &req,
 
     resp.success = true;
     resp.message = res.message;
+    if (!res.activatedCommands.empty())
+      resp.rawFields["activated_commands"] =
+          joinPackages(res.activatedCommands);
+    if (!res.namespacedCommands.empty())
+      resp.rawFields["namespaced_commands"] =
+          joinPackages(res.namespacedCommands);
+    if (!res.collisionWarnings.empty())
+      resp.rawFields["collision_warnings"] =
+          joinStrings(res.collisionWarnings, " || ");
     break;
   }
 
@@ -631,6 +663,12 @@ void RequestDispatcher::dispatch(const apm::ipc::Request &req,
       resp.message =
           result.message.empty() ? "Factory reset failed" : result.message;
     } else {
+      apm::daemon::path::CommandHotloadSummary hotloadSummary;
+      if (!apm::daemon::path::rebuild_command_index_and_shims(
+              "factory-reset", &hotloadSummary)) {
+        apm::logger::warn("RequestDispatcher: hotload rebuild reported "
+                          "warnings after factory reset");
+      }
       resp.success = true;
       resp.message = result.message.empty() ? "Factory reset completed."
                                             : result.message;

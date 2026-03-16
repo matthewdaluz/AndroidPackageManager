@@ -6,8 +6,8 @@
  *
  * File: ipc_server.cpp
  * Purpose: Implement the apmd UNIX socket server, request dispatch, and
- * response helpers. Last Modified: November 23rd, 2025. - 12:06 PM Eastern
- * Time. Author: Matthew DaLuz - RedHead Founder
+ * response helpers. Last Modified: March 15th, 2026. - 10:51 PM EDT.
+ * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,6 +27,7 @@
 #include "include/ipc_server.hpp"
 #include "config.hpp"
 #include "include/apk_installer.hpp"
+#include "export_path.hpp"
 #include "factory_reset.hpp"
 #include "install_manager.hpp"
 #include "logger.hpp"
@@ -73,6 +74,19 @@ static std::string joinPackages(const std::vector<std::string> &pkgs) {
     if (i > 0)
       oss << ' ';
     oss << pkgs[i];
+  }
+  return oss.str();
+}
+
+// Join arbitrary strings with a delimiter for structured response fields.
+static std::string joinStrings(const std::vector<std::string> &items,
+                               const std::string &delimiter) {
+  std::ostringstream oss;
+  for (std::size_t i = 0; i < items.size(); ++i) {
+    if (i > 0) {
+      oss << delimiter;
+    }
+    oss << items[i];
   }
   return oss.str();
 }
@@ -564,6 +578,15 @@ void IpcServer::handleClient(int clientFd) {
       resp.rawFields["packages"] = joinPackages(res.installedPackages);
     if (!res.skippedPackages.empty())
       resp.rawFields["skipped"] = joinPackages(res.skippedPackages);
+    if (!res.activatedCommands.empty())
+      resp.rawFields["activated_commands"] =
+          joinPackages(res.activatedCommands);
+    if (!res.namespacedCommands.empty())
+      resp.rawFields["namespaced_commands"] =
+          joinPackages(res.namespacedCommands);
+    if (!res.collisionWarnings.empty())
+      resp.rawFields["collision_warnings"] =
+          joinStrings(res.collisionWarnings, " || ");
     break;
   }
 
@@ -588,6 +611,15 @@ void IpcServer::handleClient(int clientFd) {
 
     resp.success = true;
     resp.message = res.message;
+    if (!res.activatedCommands.empty())
+      resp.rawFields["activated_commands"] =
+          joinPackages(res.activatedCommands);
+    if (!res.namespacedCommands.empty())
+      resp.rawFields["namespaced_commands"] =
+          joinPackages(res.namespacedCommands);
+    if (!res.collisionWarnings.empty())
+      resp.rawFields["collision_warnings"] =
+          joinStrings(res.collisionWarnings, " || ");
     break;
   }
 
@@ -809,6 +841,12 @@ void IpcServer::handleClient(int clientFd) {
       resp.message =
           result.message.empty() ? "Factory reset failed" : result.message;
     } else {
+      apm::daemon::path::CommandHotloadSummary hotloadSummary;
+      if (!apm::daemon::path::rebuild_command_index_and_shims(
+              "factory-reset", &hotloadSummary)) {
+        apm::logger::warn("IpcServer: hotload rebuild reported warnings after "
+                          "factory reset");
+      }
       resp.success = true;
       resp.message =
           result.message.empty() ? "Factory reset completed." : result.message;

@@ -7,7 +7,7 @@
  * File: install_manager.cpp
  * Purpose: Implement package downloading, dependency resolution, and
  * install/remove/upgrade workflows.
- * Last Modified: January 6th, 2026. - 9:55 AM Eastern Time
+ * Last Modified: March 15th, 2026. - 10:51 PM EDT.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -1586,8 +1586,19 @@ bool installWithDeps(const RepoIndexList &repoIndices,
     result.installedPackages.push_back(pkg->packageName);
   }
 
-  apm::daemon::path::refreshPathEnvironment();
-  apm::daemon::path::generateEmulatorEnv();
+  apm::daemon::path::CommandHotloadSummary hotloadSummary;
+  if (!apm::daemon::path::rebuild_command_index_and_shims("install",
+                                                           &hotloadSummary)) {
+    apm::logger::warn("installWithDeps: command hotload rebuild reported "
+                      "warnings after install");
+  }
+  if (!apm::config::isEmulatorMode()) {
+    apm::daemon::path::ensureProfileLoaded();
+  }
+
+  result.activatedCommands = hotloadSummary.activatedCommands;
+  result.namespacedCommands = hotloadSummary.namespacedCommands;
+  result.collisionWarnings = hotloadSummary.collisionWarnings;
 
   std::ostringstream ss;
   ss << "Installed " << result.installedPackages.size() << " package(s)";
@@ -1735,15 +1746,22 @@ bool removePackage(const std::string &packageName, const RemoveOptions &opts,
     // Non-fatal: files are gone, DB just slightly out of sync
   }
 
-  apm::daemon::path::refreshPathEnvironment();
-  apm::daemon::path::generateEmulatorEnv();
+  apm::daemon::path::CommandHotloadSummary hotloadSummary;
+  if (!apm::daemon::path::rebuild_command_index_and_shims("remove",
+                                                           &hotloadSummary)) {
+    apm::logger::warn("removePackage: command hotload rebuild reported "
+                      "warnings after remove");
+  }
+  if (!apm::config::isEmulatorMode()) {
+    apm::daemon::path::ensureProfileLoaded();
+  }
+  result.activatedCommands = hotloadSummary.activatedCommands;
+  result.namespacedCommands = hotloadSummary.namespacedCommands;
+  result.collisionWarnings = hotloadSummary.collisionWarnings;
 
   result.ok = true;
   result.removedPackages.push_back(packageName);
   result.message = "Removed package: " + packageName;
-
-  apm::logger::info("removePackage: " + result.message);
-  return true;
 
   apm::logger::info("removePackage: " + result.message);
   return true;
