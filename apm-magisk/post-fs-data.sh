@@ -3,11 +3,11 @@
 # APM - Android Package Manager
 #
 # RedHead Industries - Technologies Branch
-# Copyright (C) 2025 RedHead Industries
+# Copyright (C) 2026 RedHead Industries
 #
 # File: post-fs-data.sh
 # Purpose: Prepare APM/AMS directory structure for Magisk installs and deploy bundled binaries.
-# Last Modified: December 4th, 2025. - 09:07 AM Eastern Time
+# Last Modified: March 15th, 2026. - 11:15 PM Eastern Time.
 # Author: Matthew DaLuz - RedHead Founder
 #
 # APM is free software: you can redistribute it and/or modify
@@ -32,6 +32,7 @@ mkdir -p /data/apm/installed
 mkdir -p /data/apm/installed/dependencies
 mkdir -p /data/apm/installed/commands
 mkdir -p /data/apm/cache
+mkdir -p /data/apm/sandbox
 mkdir -p /data/apm/lists
 mkdir -p /data/apm/pkgs
 mkdir -p /data/apm/logs

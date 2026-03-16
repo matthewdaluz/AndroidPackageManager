@@ -1,6 +1,6 @@
 id=apm
 name=APM (Android Package Manager)
-version=v1.8.0b
-versionCode=180
+version=v2.0.0b
+versionCode=200
 author=RedHead Industries
-description=Android Package Manager for ARM64 - v1.8.0b [Closed Beta]
+description=Android Package Manager for ARM64 - v2.0.0b [Open-Beta]

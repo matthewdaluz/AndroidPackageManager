@@ -43,6 +43,5 @@ prebuilt/
 apm-systemwide-*.zip
 
 # Some prebuilt stuff.
-apm-flashable/system/bin/
-apm-flashable/system/xbin/
-apm-magisk/files/
+apm-flashable/*
+apm-magisk/*
