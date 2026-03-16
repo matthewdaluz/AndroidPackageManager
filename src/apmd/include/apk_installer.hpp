@@ -46,8 +46,8 @@ struct ApkUninstallResult {
 };
 
 // Install an APK from a local .apk file.
-// If opts.installAsSystem == true, we do the Magisk-overlay system install
-// path.
+// If opts.installAsSystem == true, we stage the APK in the AMS overlay module
+// path under /data/ams/modules.
 bool installApk(const std::string &apkPath, const ApkInstallOptions &opts,
                 ApkInstallResult &result);
 
@@ -55,7 +55,7 @@ bool installApk(const std::string &apkPath, const ApkInstallOptions &opts,
 //
 // For normal apps:    pm uninstall <pkg>
 // For system apps:    fallback to pm uninstall --user 0 <pkg>
-// Additionally: best-effort cleanup of Magisk overlay directories that match.
+// Additionally: best-effort cleanup of AMS/legacy overlay directories that match.
 bool uninstallApk(const std::string &packageName, ApkUninstallResult &result);
 
 } // namespace apm::apk

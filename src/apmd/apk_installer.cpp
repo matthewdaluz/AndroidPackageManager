@@ -5,7 +5,7 @@
  * Copyright (C) 2025 RedHead Industries
  *
  * File: apk_installer.cpp
- * Purpose: Implement APK install/uninstall flows including Magisk overlay handling for system installs.
+ * Purpose: Implement APK install/uninstall flows including AMS overlay handling for system installs.
  * Last Modified: November 18th, 2025. - 3:00 PM Eastern Time.
  * Author: Matthew DaLuz - RedHead Founder
  *
@@ -26,6 +26,8 @@
 
 #include "apk_installer.hpp"
 
+#include "ams/module_info.hpp"
+#include "config.hpp"
 #include "fs.hpp"
 #include "logger.hpp"
 #include "security.hpp"
@@ -116,14 +118,26 @@ int runPmCommand(const std::vector<std::string> &args,
 }
 
 // ---------------------------------------------------------------------
-// Magisk module info for system apps
+// AMS module info for system APK overlays
 // ---------------------------------------------------------------------
 
-static const char *kModuleId = "apm-system-apps";
-static const char *kModuleBaseDir = "/data/adb/modules/apm-system-apps";
-static const char *kModuleSystemAppRoot =
+static const char *kSystemApkModuleName = "apm-system-apps";
+static const char *kLegacyMagiskSystemAppRoot =
     "/data/adb/modules/apm-system-apps/system/app";
 static const char *kUserInstallStagingDir = "/data/local/tmp/apm-apk-staging";
+
+std::string systemApkModuleRoot() {
+  return apm::fs::joinPath(apm::config::getModulesDir(), kSystemApkModuleName);
+}
+
+std::string systemApkOverlayRoot() {
+  return apm::fs::joinPath(systemApkModuleRoot(), "overlay/system/app");
+}
+
+void setRootOwnerPerms(const std::string &path, mode_t mode) {
+  ::chown(path.c_str(), 0, 0);
+  ::chmod(path.c_str(), mode);
+}
 
 bool writeFileSimple(const std::string &path, const std::string &data,
                      std::string *err) {
@@ -171,47 +185,84 @@ bool copyFileSimple(const std::string &src, const std::string &dst,
   return true;
 }
 
-// Ensure the Magisk module skeleton exists so Magisk sees it as a valid module
-bool ensureModuleSkeleton(std::string *err) {
-  if (!apm::fs::pathExists(kModuleBaseDir)) {
-    if (!apm::fs::mkdirs(kModuleBaseDir)) {
-      if (err) {
-        *err =
-            "failed to create module base dir: " + std::string(kModuleBaseDir);
-      }
-      return false;
-    }
-  }
+// Ensure the AMS module skeleton exists so amsd can mount system APK overlays
+// from /data/ams/modules at boot.
+bool ensureAmsModuleSkeleton(std::string *err) {
+  const std::string moduleRoot = systemApkModuleRoot();
+  const std::string overlayRoot = systemApkOverlayRoot();
+  const std::string workdirRoot = apm::fs::joinPath(moduleRoot, "workdir");
+  const std::string infoPath = apm::fs::joinPath(moduleRoot, "module-info.json");
+  const std::string statePath = apm::fs::joinPath(moduleRoot, "state.json");
 
-  if (!apm::fs::mkdirs(kModuleSystemAppRoot)) {
+  if (!apm::fs::createDirs(overlayRoot)) {
     if (err) {
-      *err = "failed to create module system/app dir: " +
-             std::string(kModuleSystemAppRoot);
+      *err = "failed to create module system/app dir: " + overlayRoot;
     }
     return false;
   }
 
-  std::string modulePropPath = std::string(kModuleBaseDir) + "/module.prop";
-  if (!apm::fs::pathExists(modulePropPath)) {
-    std::ostringstream mp;
-    mp << "id=" << kModuleId << "\n"
-       << "name=APM System Apps\n"
-       << "version=1.0\n"
-       << "versionCode=1\n"
-       << "author=APM\n"
-       << "description=System apps installed via Android Package Manager\n";
+  // Keep module layout aligned with normal AMS modules.
+  if (!apm::fs::createDirs(apm::fs::joinPath(workdirRoot, "system")) ||
+      !apm::fs::createDirs(apm::fs::joinPath(workdirRoot, "vendor")) ||
+      !apm::fs::createDirs(apm::fs::joinPath(workdirRoot, "product"))) {
+    if (err) {
+      *err = "failed to create AMS workdir structure for system APK module";
+    }
+    return false;
+  }
+
+  if (!apm::fs::pathExists(infoPath)) {
+    const std::string infoJson =
+        "{\n"
+        "  \"name\": \"apm-system-apps\",\n"
+        "  \"version\": \"1.0\",\n"
+        "  \"author\": \"APM\",\n"
+        "  \"description\": \"System APK overlays staged by APM\",\n"
+        "  \"mount\": true,\n"
+        "  \"post_fs_data\": false,\n"
+        "  \"service\": false\n"
+        "}\n";
 
     std::string werr;
-    if (!writeFileSimple(modulePropPath, mp.str(), &werr)) {
+    if (!writeFileSimple(infoPath, infoJson, &werr)) {
       if (err) {
-        *err = "failed to write module.prop: " + werr;
+        *err = "failed to write module-info.json: " + werr;
       }
       return false;
     }
   }
 
-  ::chmod(kModuleBaseDir, 0755);
-  ::chmod(kModuleSystemAppRoot, 0755);
+  apm::ams::ModuleState state;
+  std::string readErr;
+  if (!apm::ams::readModuleState(statePath, state, &readErr)) {
+    apm::logger::warn("apk_install (system): failed to read module state at " +
+                      statePath + ": " + readErr + "; recreating state file");
+    state = apm::ams::ModuleState{};
+  }
+  if (state.installedAt.empty()) {
+    state.installedAt = apm::ams::makeIsoTimestamp();
+  }
+  state.enabled = true;
+  state.lastError.clear();
+
+  std::string stateErr;
+  if (!apm::ams::writeModuleState(statePath, state, &stateErr)) {
+    if (err) {
+      *err = "failed to write state.json: " + stateErr;
+    }
+    return false;
+  }
+
+  setRootOwnerPerms(moduleRoot, 0755);
+  setRootOwnerPerms(apm::fs::joinPath(moduleRoot, "overlay"), 0755);
+  setRootOwnerPerms(apm::fs::joinPath(moduleRoot, "overlay/system"), 0755);
+  setRootOwnerPerms(overlayRoot, 0755);
+  setRootOwnerPerms(workdirRoot, 0755);
+  setRootOwnerPerms(apm::fs::joinPath(workdirRoot, "system"), 0755);
+  setRootOwnerPerms(apm::fs::joinPath(workdirRoot, "vendor"), 0755);
+  setRootOwnerPerms(apm::fs::joinPath(workdirRoot, "product"), 0755);
+  setRootOwnerPerms(infoPath, 0644);
+  setRootOwnerPerms(statePath, 0644);
 
   return true;
 }
@@ -239,11 +290,15 @@ std::string basenameNoExt(const std::string &path) {
 
 // Best-effort cleanup for system app overlay
 void cleanupSystemOverlay(const std::string &dirName) {
-  std::string cand = std::string(kModuleSystemAppRoot) + "/" + dirName;
-  if (apm::fs::isDirectory(cand)) {
-    apm::logger::info("apk_uninstall: removing overlay dir " + cand);
-    if (!apm::fs::removeDirRecursive(cand)) {
-      apm::logger::warn("apk_uninstall: failed removing overlay dir " + cand);
+  const std::vector<std::string> roots = {systemApkOverlayRoot(),
+                                          kLegacyMagiskSystemAppRoot};
+  for (const auto &root : roots) {
+    std::string cand = apm::fs::joinPath(root, dirName);
+    if (apm::fs::isDirectory(cand)) {
+      apm::logger::info("apk_uninstall: removing overlay dir " + cand);
+      if (!apm::fs::removeDirRecursive(cand)) {
+        apm::logger::warn("apk_uninstall: failed removing overlay dir " + cand);
+      }
     }
   }
 }
@@ -307,7 +362,7 @@ int runCommandCaptureOutput(const std::string &cmd, std::string &output) {
 // Public API
 // ---------------------------------------------------------------------
 
-// Install an APK either via a standard `pm install` or by staging a Magisk
+// Install an APK either via a standard `pm install` or by staging an AMS
 // overlay when opts.installAsSystem is requested.
 bool installApk(const std::string &apkPath, const ApkInstallOptions &opts,
                 ApkInstallResult &result) {
@@ -391,25 +446,25 @@ bool installApk(const std::string &apkPath, const ApkInstallOptions &opts,
   if (!isRoot()) {
     result.ok = false;
     result.message =
-        "System app install requires root (run apmd as root / via Magisk)";
+        "System app install requires root (run apmd as root)";
     apm::logger::error(
         "apk_install (system): requested but process is not root");
     return false;
   }
 
   std::string err;
-  if (!ensureModuleSkeleton(&err)) {
+  if (!ensureAmsModuleSkeleton(&err)) {
     result.ok = false;
-    result.message = "Failed to prepare Magisk module for system apps: " + err;
+    result.message = "Failed to prepare AMS module for system apps: " + err;
     apm::logger::error("apk_install (system): " + result.message);
     return false;
   }
 
   std::string appDirName = basenameNoExt(apkPath);
-  std::string destDir = std::string(kModuleSystemAppRoot) + "/" + appDirName;
+  std::string destDir = apm::fs::joinPath(systemApkOverlayRoot(), appDirName);
   std::string destApk = destDir + "/base.apk";
 
-  if (!apm::fs::mkdirs(destDir)) {
+  if (!apm::fs::createDirs(destDir)) {
     result.ok = false;
     result.message = "Failed to create system app dir: " + destDir;
     apm::logger::error("apk_install (system): " + result.message);
@@ -424,23 +479,21 @@ bool installApk(const std::string &apkPath, const ApkInstallOptions &opts,
     return false;
   }
 
-  ::chmod(destDir.c_str(), 0755);
-  ::chmod(destApk.c_str(), 0644);
-  ::chown(destDir.c_str(), 0, 0);
-  ::chown(destApk.c_str(), 0, 0);
+  setRootOwnerPerms(destDir, 0755);
+  setRootOwnerPerms(destApk, 0644);
 
   apm::logger::info("apk_install (system): staged " + apkPath +
                     " as system app at " + destApk);
 
   result.ok = true;
   result.message =
-      "APK staged as a system app at: " + destApk +
+      "APK staged in AMS system overlay at: " + destApk +
       " (reboot required for Android to recognize it as a system app)";
   return true;
 }
 
 // ---------------------------------------------------------------------
-// Uninstall APK (user apps + system apps + Magisk overlay)
+// Uninstall APK (user apps + system apps + system overlay cleanup)
 // ---------------------------------------------------------------------
 
 // Attempt a normal uninstall, then fall back to system-app removal and overlay

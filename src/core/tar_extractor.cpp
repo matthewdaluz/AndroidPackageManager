@@ -428,13 +428,29 @@ bool extractTar(const std::string &tarPath, const std::string &destDir,
   }
 
   for (size_t i = 0; i < entries.size(); ++i) {
-    const std::string &entry = entries[i];
+    const TarEntryInfo &info = entryInfo[i];
+    std::string entry = entries[i];
+
+    // Some tar implementations include symbolic-link suffixes in -tf output:
+    //   path/to/link -> ../target
+    // Strip these metadata suffixes so path validation only sees the entry path.
+    if (info.type == 'l' || info.type == 'h') {
+      size_t arrow = entry.find(" -> ");
+      if (arrow != std::string::npos) {
+        entry = entry.substr(0, arrow);
+      } else {
+        size_t linkTo = entry.find(" link to ");
+        if (linkTo != std::string::npos) {
+          entry = entry.substr(0, linkTo);
+        }
+      }
+    }
+
     if (!validateEntryPath(entry, errorMsg)) {
       apm::logger::error("extractTar: unsafe tar entry path: " + entry);
       return false;
     }
 
-    const TarEntryInfo &info = entryInfo[i];
     if (info.type != '-' && info.type != 'd' && info.type != 'l' &&
         info.type != 'h') {
       if (errorMsg) {

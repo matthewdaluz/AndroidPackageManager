@@ -203,7 +203,7 @@ Most commands hit the daemon; `list`, `info`, and `search` operate offline.
 | `apm package-install <file>` | Local-only install of `.deb` or tarballs (`.tar`, `.tar.gz`, `.tgz`, `.tar.xz`, `.txz`, `.gz`, `.xz`). |
 | `apm key-add <key.asc|.gpg>` | Import a trusted GPG key into `/data/apm/keys` for Release/.deb verification. |
 | `apm sig-cache show|clear` | Inspect or clear the cached `.deb` signature verification results. |
-| `apm apk-install <apk> [--install-as-system]` | Ask the daemon to install an APK via `pm install -r` or stage it as a system app overlay under `/data/adb/modules/apm-system-apps`. |
+| `apm apk-install <apk> [--install-as-system]` | Ask the daemon to install an APK via `pm install -r` or stage it as a system app overlay module under `/data/ams/modules/apm-system-apps`. |
 | `apm apk-uninstall <pkg>` | Uninstall via `pm uninstall`, fall back to `--user 0`, then clean any system overlay. |
 | `apm module-list` | List AMS modules and status. |
 | `apm module-install <zip>` | Install an AMS module ZIP. |
@@ -247,7 +247,7 @@ APM records manual manifests under `/data/apm/manual-packages/<pkg>.json`. `apm 
 ## APK workflows
 
 - User apps: the daemon runs `pm install -r <apk>`.
-- System apps: `--install-as-system` stages the APK as `system/app/<name>/base.apk` inside the Magisk module `/data/adb/modules/apm-system-apps`, fixes ownership/permissions, and requires a reboot for Android to register the system app.
+- System apps: `--install-as-system` stages the APK as `overlay/system/app/<name>/base.apk` inside the AMS module `/data/ams/modules/apm-system-apps`, fixes ownership/permissions, and requires a reboot for Android to register the system app.
 - Uninstall: try `pm uninstall`, then `pm uninstall --user 0`, then scrub any staged overlay directory.
 
 
@@ -297,7 +297,7 @@ AMS is a Magisk-style overlay framework baked into `apmd` and executed by `amsd`
 - `Packages.xz` indices are ignored on Android builds.
 - `apm install` is interactive; non-interactive flags (`--yes`, `--reinstall`, CLI `--simulate`) are not implemented yet.
 - `apm remove` has no `--force`/purge flags yet.
-- System APK install assumes Magisk-owned `/data/adb/modules`.
+- System APK install now uses AMS modules under `/data/ams/modules`; legacy cleanup still checks old Magisk paths.
 - AMS requires a clean base mount snapshot; if `/system` is already overlay-mounted, capture will fail until the device reboots cleanly.
 - Secrets are protected in software with a locally stored master key; there is no hardware keystore binding or revocation for imported signing keys.
 
