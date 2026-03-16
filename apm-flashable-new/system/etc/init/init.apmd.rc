@@ -27,6 +27,15 @@ on post-fs-data
     mkdir /data/apm/sandbox/mounts 0775 root shell
     mkdir /data/apm/.security 0700 root root
 
+    # Avoid stale binaries/scripts in /data/apm/bin shadowing /system/bin/apm*
+    # for shell sessions with PATH hooks enabled.
+    rm /data/apm/bin/apm
+    rm /data/apm/bin/apmd
+    rm /data/apm/bin/amsd
+    symlink /system/bin/apm /data/apm/bin/apm
+    symlink /system/bin/apmd /data/apm/bin/apmd
+    symlink /system/bin/amsd /data/apm/bin/amsd
+
 service apmd /system/bin/apmd
     class core
     user root
