@@ -33,9 +33,11 @@
 #include "request_dispatcher.hpp"
 #include "security_manager.hpp"
 
+#include <atomic>
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
+#include <cstdio>
 #include <iostream>
 #include <string>
 #include <sys/stat.h>
@@ -73,6 +75,46 @@ std::string buildLogFilePath() {
       apm::fs::joinPath(apm::config::getModuleLogsDir(), "..");
   apm::fs::createDirs(logDir);
   return apm::fs::joinPath(logDir, "amsd.log");
+}
+
+std::string trimAsciiWhitespace(std::string value) {
+  while (!value.empty() &&
+         (value.back() == '\n' || value.back() == '\r' || value.back() == ' ' ||
+          value.back() == '\t')) {
+    value.pop_back();
+  }
+  std::size_t start = 0;
+  while (start < value.size() &&
+         (value[start] == ' ' || value[start] == '\t' ||
+          value[start] == '\n' || value[start] == '\r')) {
+    ++start;
+  }
+  if (start > 0)
+    value.erase(0, start);
+  return value;
+}
+
+bool readSystemProperty(const std::string &name, std::string *valueOut) {
+  if (name.empty() || !valueOut)
+    return false;
+
+  std::string cmd = "getprop " + name;
+  FILE *pipe = ::popen(cmd.c_str(), "r");
+  if (!pipe)
+    return false;
+
+  std::string output;
+  char buf[128];
+  while (::fgets(buf, sizeof(buf), pipe) != nullptr) {
+    output += buf;
+  }
+
+  const int rc = ::pclose(pipe);
+  if (rc != 0)
+    return false;
+
+  *valueOut = trimAsciiWhitespace(output);
+  return true;
 }
 
 } // namespace
@@ -149,8 +191,9 @@ int main(int argc, char **argv) {
       apm::ams::ModuleManager::getBootThreshold(thresholdPath, 3);
   std::uint64_t bootCount =
       apm::ams::ModuleManager::getBootCounter(counterPath);
-  bool safeMode = (bootCount >= threshold) ||
-                  apm::ams::ModuleManager::isSafeModeActive(safeModeFlag);
+    bool safeModeFlagActive =
+      apm::ams::ModuleManager::isSafeModeActive(safeModeFlag);
+    bool safeMode = (bootCount >= threshold) || safeModeFlagActive;
 
   apm::ams::ModuleManager::incrementBootCounter(counterPath, &bootCount);
 
@@ -169,7 +212,12 @@ int main(int argc, char **argv) {
       apm::logger::error("amsd: failed to apply overlays: " + overlayErr);
     }
 
-    moduleManager.startPartitionMonitor();
+    if (!overlaysOk) {
+      moduleManager.startPartitionMonitor();
+    } else {
+      apm::logger::info(
+          "amsd: overlays applied at startup; skipping partition monitor");
+    }
 
     if (overlaysOk) {
       moduleManager.startEnabledModules();
@@ -190,14 +238,49 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  if (overlaysOk && !safeMode) {
-    apm::ams::ModuleManager::resetBootCounter(counterPath);
-    apm::ams::ModuleManager::clearSafeMode(safeModeFlag);
+  auto markBootSuccess = [&]() {
+    if (!apm::ams::ModuleManager::resetBootCounter(counterPath)) {
+      apm::logger::warn("amsd: failed to reset boot counter");
+    }
+
+    if (safeMode) {
+      if (!apm::ams::ModuleManager::clearSafeMode(safeModeFlag)) {
+        apm::logger::warn("amsd: failed to clear safe mode flag");
+      } else {
+        apm::logger::info(
+            "amsd: cleared safe mode flag; modules will retry next boot");
+      }
+    } else if (overlaysOk) {
+      apm::ams::ModuleManager::clearSafeMode(safeModeFlag);
+    }
+  };
+
+  std::atomic<bool> bootWatcherStop{false};
+  std::thread bootWatcher;
+  if (emulatorMode) {
+    markBootSuccess();
+  } else {
+    bootWatcher = std::thread([&]() {
+      while (!bootWatcherStop.load()) {
+        std::string bootCompleted;
+        if (readSystemProperty("sys.boot_completed", &bootCompleted) &&
+            bootCompleted == "1") {
+          apm::logger::info(
+              "amsd: observed sys.boot_completed=1; marking boot as successful");
+          markBootSuccess();
+          return;
+        }
+        std::this_thread::sleep_for(std::chrono::seconds(5));
+      }
+    });
   }
 
   ::system("setprop amsd.ready 1");
 
   server.run();
+  bootWatcherStop.store(true);
+  if (bootWatcher.joinable())
+    bootWatcher.join();
   moduleManager.stopPartitionMonitor();
   g_server = nullptr;
 

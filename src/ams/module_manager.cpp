@@ -31,8 +31,10 @@
 #include "fs.hpp"
 #include "logger.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
+#include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -77,6 +79,11 @@ constexpr OverlayTarget kOverlayTargets[] = {
 std::string baseMirrorPath(const OverlayTarget &target) {
   return apm::fs::joinPath(apm::config::getModuleRuntimeBaseDir(),
                            target.name);
+}
+
+std::string baseMirrorSourcePath(const OverlayTarget &target) {
+  return apm::fs::joinPath(apm::config::getModuleRuntimeDir(),
+                           std::string("base-source-") + target.name);
 }
 
 std::string normalizeMountPath(const std::string &p) {
@@ -177,33 +184,145 @@ bool readMountType(const std::string &path, std::string &type) {
   return true;
 }
 
+std::vector<std::string> mountCandidatesForTarget(const OverlayTarget &target) {
+  std::vector<std::string> out;
+  auto addCandidate = [&](const std::string &candidate) {
+    if (candidate.empty() || !apm::fs::isDirectory(candidate))
+      return;
+    std::string fsType;
+    if (!readMountType(candidate, fsType))
+      return;
+    std::string resolved = resolveForMount(candidate);
+    if (resolved.empty())
+      return;
+    if (std::find(out.begin(), out.end(), resolved) == out.end())
+      out.push_back(resolved);
+  };
+
+  if (std::strcmp(target.name, "system") == 0) {
+    // Ordered SAR/system-as-root candidates (AOSP-like preference).
+    addCandidate("/system_root/system");
+    addCandidate("/system");
+    addCandidate("/");
+  } else {
+    addCandidate(target.mountPoint);
+  }
+
+  if (out.empty()) {
+    out.push_back(resolveForMount(target.mountPoint));
+  }
+  return out;
+}
+
 std::string effectiveMountPoint(const OverlayTarget &target) {
-  if (std::strcmp(target.name, "system") != 0) {
-    return resolveForMount(target.mountPoint);
-  }
-
-  // Try multiple system mount aliases dynamically and normalize symlinks (for
-  // example /system -> / on some SAR devices).
-  static const std::array<const char *, 3> kSystemCandidates = {
-      "/system_root/system", "/system", "/"};
-  std::string fsType;
-  for (const char *candidate : kSystemCandidates) {
-    if (!apm::fs::isDirectory(candidate)) {
-      continue;
-    }
-    if (readMountType(candidate, fsType)) {
-      return resolveForMount(candidate);
-    }
-  }
-
+  auto candidates = mountCandidatesForTarget(target);
+  if (!candidates.empty())
+    return candidates.front();
   return resolveForMount(target.mountPoint);
 }
 
-bool isOverlayMounted(const OverlayTarget &target) {
-  std::string type;
-  if (!readMountType(effectiveMountPoint(target), type))
+struct MountInfoEntry {
+  std::string mountPoint;
+  bool shared = false;
+};
+
+std::string decodeMountInfoToken(const std::string &token) {
+  std::string out;
+  out.reserve(token.size());
+  for (size_t i = 0; i < token.size(); ++i) {
+    if (token[i] == '\\' && i + 3 < token.size() &&
+        std::isdigit(static_cast<unsigned char>(token[i + 1])) &&
+        std::isdigit(static_cast<unsigned char>(token[i + 2])) &&
+        std::isdigit(static_cast<unsigned char>(token[i + 3]))) {
+      int value = (token[i + 1] - '0') * 64 + (token[i + 2] - '0') * 8 +
+                  (token[i + 3] - '0');
+      out.push_back(static_cast<char>(value));
+      i += 3;
+      continue;
+    }
+    out.push_back(token[i]);
+  }
+  return out;
+}
+
+bool readMountInfo(std::vector<MountInfoEntry> &entries) {
+  std::ifstream in("/proc/self/mountinfo");
+  if (!in.is_open())
     return false;
-  return type == "overlay";
+
+  entries.clear();
+  std::string line;
+  while (std::getline(in, line)) {
+    std::istringstream iss(line);
+    std::vector<std::string> tokens;
+    std::string token;
+    while (iss >> token) {
+      tokens.push_back(token);
+    }
+    if (tokens.size() < 7)
+      continue;
+
+    size_t sep = 0;
+    while (sep < tokens.size() && tokens[sep] != "-")
+      ++sep;
+    if (sep == tokens.size() || sep < 6)
+      continue;
+
+    MountInfoEntry entry;
+    entry.mountPoint = resolveForMount(decodeMountInfoToken(tokens[4]));
+    for (size_t i = 6; i < sep; ++i) {
+      if (tokens[i].rfind("shared:", 0) == 0) {
+        entry.shared = true;
+      }
+    }
+    entries.push_back(std::move(entry));
+  }
+
+  return true;
+}
+
+std::string parentPath(const std::string &path) {
+  if (path.empty() || path == "/")
+    return {};
+  size_t slash = path.find_last_of('/');
+  if (slash == std::string::npos)
+    return {};
+  if (slash == 0)
+    return "/";
+  return path.substr(0, slash);
+}
+
+std::vector<std::string> immediateSubmounts(const std::string &target) {
+  std::vector<MountInfoEntry> entries;
+  std::vector<std::string> out;
+  if (!readMountInfo(entries))
+    return out;
+
+  const std::string normalized = resolveForMount(target);
+  for (const auto &entry : entries) {
+    if (entry.mountPoint == normalized)
+      continue;
+    if (parentPath(entry.mountPoint) == normalized) {
+      out.push_back(entry.mountPoint);
+    }
+  }
+
+  std::sort(out.begin(), out.end());
+  out.erase(std::unique(out.begin(), out.end()), out.end());
+  return out;
+}
+
+bool isMountShared(const std::string &path) {
+  std::vector<MountInfoEntry> entries;
+  if (!readMountInfo(entries))
+    return false;
+  const std::string normalized = resolveForMount(path);
+  for (const auto &entry : entries) {
+    if (entry.mountPoint == normalized) {
+      return entry.shared;
+    }
+  }
+  return false;
 }
 
 bool isPathMounted(const std::string &path) {
@@ -226,10 +345,27 @@ bool isPathMounted(const std::string &path) {
   return false;
 }
 
+bool isOverlayCandidateReady(const OverlayTarget &target,
+                             const std::string &mountPoint) {
+  if (std::strcmp(target.name, "system") == 0) {
+    std::string fsType;
+    return readMountType(mountPoint, fsType);
+  }
+  return isPathMounted(mountPoint);
+}
+
+bool isOverlayMounted(const OverlayTarget &target) {
+  std::string type;
+  if (!readMountType(effectiveMountPoint(target), type))
+    return false;
+  return type == "overlay";
+}
+
 bool ensureBaseMirrorForTarget(const OverlayTarget &target,
+                               const std::string &mountPoint,
                                std::string *errorMsg) {
   std::string baseDir = baseMirrorPath(target);
-  std::string mountPoint = effectiveMountPoint(target);
+  std::string sourcePath = baseMirrorSourcePath(target);
   if (!ensureDir(baseDir)) {
     if (errorMsg)
       *errorMsg = "Failed to create base mirror directory for " +
@@ -237,8 +373,25 @@ bool ensureBaseMirrorForTarget(const OverlayTarget &target,
     return false;
   }
 
-  if (isPathMounted(baseDir))
-    return true;
+  if (isPathMounted(baseDir)) {
+    std::string previous;
+    apm::fs::readFile(sourcePath, previous);
+    while (!previous.empty() &&
+           (previous.back() == '\n' || previous.back() == '\r' ||
+            previous.back() == ' ' || previous.back() == '\t')) {
+      previous.pop_back();
+    }
+    previous = normalizeMountPath(previous);
+    if (previous == mountPoint)
+      return true;
+    std::string unmountErr;
+    if (!unmountPath(baseDir, &unmountErr)) {
+      if (errorMsg)
+        *errorMsg =
+            "Failed to refresh base mirror for " + mountPoint + ": " + unmountErr;
+      return false;
+    }
+  }
 
   std::string currentType;
   if (!readMountType(mountPoint, currentType)) {
@@ -269,21 +422,31 @@ bool ensureBaseMirrorForTarget(const OverlayTarget &target,
                       " read-only: " + std::strerror(errno));
   }
 
+  apm::fs::writeFile(sourcePath, mountPoint, true);
+  ::chmod(sourcePath.c_str(), 0644);
   apm::logger::info("AMS captured base mount for " + mountPoint);
   return true;
 }
 
 bool ensureBaseMirrors(std::string *errorMsg) {
   for (const auto &target : kOverlayTargets) {
-    if (!ensureBaseMirrorForTarget(target, errorMsg))
+    if (!ensureBaseMirrorForTarget(target, effectiveMountPoint(target),
+                                   errorMsg))
       return false;
   }
   return true;
 }
 
-bool mountBaseOnly(const OverlayTarget &target, std::string *errorMsg) {
+bool mountBaseOnly(const OverlayTarget &target, const std::string &mountPoint,
+                   std::string *errorMsg) {
+  if (mountPoint == "/") {
+    apm::logger::warn(
+        "AMS overlay: skipping base restore bind on '/' for safety");
+    if (errorMsg)
+      errorMsg->clear();
+    return true;
+  }
   std::string baseDir = baseMirrorPath(target);
-  std::string mountPoint = effectiveMountPoint(target);
   if (!isPathMounted(baseDir)) {
     if (errorMsg)
       *errorMsg = "Missing base mirror for " + std::string(target.name);
@@ -309,6 +472,102 @@ bool mountBaseOnly(const OverlayTarget &target, std::string *errorMsg) {
   return true;
 }
 
+bool setMountPropagation(const std::string &path, unsigned long flags,
+                         std::string *errorMsg, int *errorCode = nullptr) {
+  if (::mount(nullptr, path.c_str(), nullptr, flags | MS_REC, nullptr) == 0) {
+    return true;
+  }
+  if (errorCode)
+    *errorCode = errno;
+  if (errorMsg) {
+    *errorMsg = "Failed to change mount propagation for " + path + ": " +
+                std::strerror(errno);
+  }
+  return false;
+}
+
+std::string sanitizeForPath(const std::string &in) {
+  std::string out;
+  out.reserve(in.size() + 8);
+  for (char c : in) {
+    if (std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_') {
+      out.push_back(c);
+    } else {
+      out.push_back('_');
+    }
+  }
+  if (out.empty())
+    out = "root";
+  return out;
+}
+
+struct MovedSubmount {
+  std::string from;
+  std::string to;
+};
+
+bool restoreMovedSubmounts(std::vector<MovedSubmount> &moved,
+                           std::string *errorMsg);
+
+bool moveImmediateSubmounts(const std::string &targetMountPoint,
+                            const std::string &stagingRoot,
+                            std::vector<MovedSubmount> &moved,
+                            std::string *errorMsg) {
+  moved.clear();
+  auto rollback = [&]() {
+    std::string ignored;
+    restoreMovedSubmounts(moved, &ignored);
+  };
+  if (!ensureDir(stagingRoot)) {
+    if (errorMsg)
+      *errorMsg = "Failed to create submount staging dir: " + stagingRoot;
+    return false;
+  }
+
+  std::vector<std::string> submounts = immediateSubmounts(targetMountPoint);
+  for (size_t i = 0; i < submounts.size(); ++i) {
+    const std::string &from = submounts[i];
+    std::string to = apm::fs::joinPath(
+        stagingRoot, sanitizeForPath(std::to_string(i) + "-" + from));
+    if (!ensureDir(to)) {
+      if (errorMsg)
+        *errorMsg = "Failed to create submount staging target: " + to;
+      rollback();
+      return false;
+    }
+    if (::mount(from.c_str(), to.c_str(), nullptr, MS_MOVE, nullptr) != 0) {
+      if (errorMsg)
+        *errorMsg = "Failed to move submount " + from + " to " + to + ": " +
+                    std::strerror(errno);
+      rollback();
+      return false;
+    }
+    moved.push_back({from, to});
+  }
+  return true;
+}
+
+bool restoreMovedSubmounts(std::vector<MovedSubmount> &moved,
+                           std::string *errorMsg) {
+  bool ok = true;
+  std::string firstErr;
+  for (auto it = moved.rbegin(); it != moved.rend(); ++it) {
+    if (::mount(it->to.c_str(), it->from.c_str(), nullptr, MS_MOVE, nullptr) !=
+        0) {
+      ok = false;
+      if (firstErr.empty()) {
+        firstErr = "Failed to restore submount " + it->to + " -> " + it->from +
+                   ": " + std::strerror(errno);
+      }
+    }
+  }
+  moved.clear();
+  if (!ok && errorMsg) {
+    *errorMsg = firstErr;
+  }
+  return ok;
+}
+
 bool resetOverlayScratchDir(const std::string &path, std::string *errorMsg) {
   if (!apm::fs::removeDirRecursive(path)) {
     if (errorMsg)
@@ -325,21 +584,54 @@ bool resetOverlayScratchDir(const std::string &path, std::string *errorMsg) {
   return true;
 }
 
-bool mountOverlayCompat(const OverlayTarget &target, const std::string &lowerDir,
-                        const std::string &upperDir, const std::string &workDir,
-                        std::string *errorMsg) {
-  std::string mountPoint = effectiveMountPoint(target);
-  const std::array<const char *, 5> extraOpts = {
-      "", ",index=off", ",index=off,xino=off", ",redirect_dir=off,index=off",
+bool kernelParamEnabled(const std::string &name) {
+  std::string path = "/sys/module/overlay/parameters/" + name;
+  std::string value;
+  if (!apm::fs::readFile(path, value))
+    return false;
+  for (char c : value) {
+    if (c == 'Y' || c == 'y' || c == '1' || c == 'T' || c == 't')
+      return true;
+  }
+  return false;
+}
+
+std::vector<std::string> buildOverlayOptionSuffixes(bool readOnly) {
+  std::vector<std::string> suffixes = {
+      "",
+      ",override_creds=off",
+      ",index=off",
+      ",index=off,override_creds=off",
+      ",index=off,xino=off",
+      ",redirect_dir=off,index=off",
+      ",redirect_dir=off,index=off,xino=off",
       ",redirect_dir=off,index=off,xino=off,metacopy=off"};
 
-  std::string firstErr;
+  if (readOnly) {
+    suffixes.push_back(",redirect_dir=off");
+    suffixes.push_back(",metacopy=off");
+  }
 
-  for (const char *suffix : extraOpts) {
+  if (kernelParamEnabled("userxattr")) {
+    const size_t existing = suffixes.size();
+    for (size_t i = 0; i < existing; ++i) {
+      suffixes.push_back(suffixes[i] + ",userxattr");
+    }
+  }
+
+  return suffixes;
+}
+
+bool mountOverlayCompat(const std::string &mountPoint,
+                        const std::string &lowerDir,
+                        const std::string &upperDir,
+                        const std::string &workDir, std::string *errorMsg) {
+  std::string firstErr;
+  const auto suffixes = buildOverlayOptionSuffixes(false);
+  for (const auto &suffix : suffixes) {
     std::ostringstream opts;
     opts << "lowerdir=" << lowerDir << ",upperdir=" << upperDir
          << ",workdir=" << workDir << suffix;
-
     if (::mount("overlay", mountPoint.c_str(), "overlay", 0,
                 opts.str().c_str()) == 0) {
       apm::logger::debug("AMS overlay: mounted " + mountPoint + " with opts: " +
@@ -354,7 +646,6 @@ bool mountOverlayCompat(const OverlayTarget &target, const std::string &lowerDir
       firstErr = std::string("Overlay mount failed for ") + mountPoint + ": " +
                  attemptErr;
     }
-
     apm::logger::warn("AMS overlay: mount attempt failed for " + mountPoint +
                       " with opts '" + opts.str() + "': " + attemptErr);
   }
@@ -367,37 +658,46 @@ bool mountOverlayCompat(const OverlayTarget &target, const std::string &lowerDir
   return false;
 }
 
-bool mountOverlayReadOnlyCompat(const OverlayTarget &target,
+bool mountOverlayReadOnlyCompat(const std::string &mountPoint,
                                 const std::string &lowerDir,
+                                const std::string &mountContext,
                                 std::string *errorMsg) {
-  std::string mountPoint = effectiveMountPoint(target);
-  const std::array<const char *, 4> extraOpts = {
-      "", ",index=off", ",redirect_dir=off", ",redirect_dir=off,index=off"};
-
+  const std::array<unsigned long, 2> mountFlags = {MS_RDONLY, 0};
+  const auto suffixes = buildOverlayOptionSuffixes(true);
+  std::vector<std::string> contextSuffixes;
+  if (!mountContext.empty()) {
+    contextSuffixes.push_back(",context=" + mountContext);
+  }
+  contextSuffixes.push_back("");
   std::string firstErr;
+  for (unsigned long flags : mountFlags) {
+    for (const auto &suffix : suffixes) {
+      for (const auto &contextSuffix : contextSuffixes) {
+        std::ostringstream opts;
+        opts << "lowerdir=" << lowerDir << suffix << contextSuffix;
+        if (::mount("overlay", mountPoint.c_str(), "overlay", flags,
+                    opts.str().c_str()) == 0) {
+          apm::logger::debug(
+              "AMS overlay: mounted " + mountPoint +
+              " in read-only mode with flags=" + std::to_string(flags) +
+              " opts: " + opts.str());
+          if (errorMsg)
+            errorMsg->clear();
+          return true;
+        }
 
-  for (const char *suffix : extraOpts) {
-    std::ostringstream opts;
-    opts << "lowerdir=" << lowerDir << suffix;
+        std::string attemptErr = std::strerror(errno);
+        if (firstErr.empty()) {
+          firstErr = std::string("Read-only overlay mount failed for ") +
+                     mountPoint + ": " + attemptErr;
+        }
 
-    if (::mount("overlay", mountPoint.c_str(), "overlay", MS_RDONLY,
-                opts.str().c_str()) == 0) {
-      apm::logger::debug("AMS overlay: mounted " + mountPoint +
-                         " in read-only mode with opts: " + opts.str());
-      if (errorMsg)
-        errorMsg->clear();
-      return true;
+        apm::logger::warn("AMS overlay: read-only mount attempt failed for " +
+                          mountPoint + " with flags=" +
+                          std::to_string(flags) + " opts '" + opts.str() +
+                          "': " + attemptErr);
+      }
     }
-
-    std::string attemptErr = std::strerror(errno);
-    if (firstErr.empty()) {
-      firstErr = std::string("Read-only overlay mount failed for ") +
-                 mountPoint + ": " + attemptErr;
-    }
-
-    apm::logger::warn("AMS overlay: read-only mount attempt failed for " +
-                      mountPoint + " with opts '" + opts.str() + "': " +
-                      attemptErr);
   }
 
   if (errorMsg) {
@@ -407,6 +707,12 @@ bool mountOverlayReadOnlyCompat(const OverlayTarget &target,
                     : firstErr;
   }
   return false;
+}
+
+bool mountOverlayReadOnlyCompat(const std::string &mountPoint,
+                                const std::string &lowerDir,
+                                std::string *errorMsg) {
+  return mountOverlayReadOnlyCompat(mountPoint, lowerDir, "", errorMsg);
 }
 
 bool copyLayerIntoUpper(const std::string &layerPath, const std::string &upperDir,
@@ -428,7 +734,26 @@ bool copyLayerIntoUpper(const std::string &layerPath, const std::string &upperDi
   return true;
 }
 
-bool mountOverlayWithUpperComposition(const OverlayTarget &target,
+bool relabelTreeForTarget(const std::string &path, const std::string &context) {
+  if (context.empty() || path.empty())
+    return true;
+  if (!apm::fs::isDirectory(path) && !apm::fs::isFile(path))
+    return true;
+
+  std::ostringstream cmd;
+  cmd << "chcon -hR '" << shellEscapeSingleQuotes(context) << "' '"
+      << shellEscapeSingleQuotes(path) << "'";
+
+  std::string err;
+  if (runCommand(cmd.str(), &err))
+    return true;
+
+  apm::logger::warn("AMS overlay: failed to relabel staged path " + path +
+                    " to " + context + ": " + err);
+  return false;
+}
+
+bool mountOverlayWithUpperComposition(const std::string &mountPoint,
                                       const std::vector<std::string> &layers,
                                       const std::string &baseLowerDir,
                                       const std::string &upperDir,
@@ -457,7 +782,401 @@ bool mountOverlayWithUpperComposition(const OverlayTarget &target,
     }
   }
 
-  return mountOverlayCompat(target, baseLowerDir, upperDir, workDir, errorMsg);
+  return mountOverlayCompat(mountPoint, baseLowerDir, upperDir, workDir,
+                            errorMsg);
+}
+
+std::string selinuxContextForTarget(const OverlayTarget &target) {
+  if (std::strcmp(target.name, "system") == 0)
+    return "u:object_r:system_file:s0";
+  if (std::strcmp(target.name, "vendor") == 0)
+    return "u:object_r:vendor_file:s0";
+  if (std::strcmp(target.name, "product") == 0)
+    return "u:object_r:product_file:s0";
+  return {};
+}
+
+bool ensureTmpfsOverlayStagingRoot(const std::string &root,
+                                   const std::string &selinuxContext,
+                                   std::string *errorMsg) {
+  if (!ensureDir(root)) {
+    if (errorMsg)
+      *errorMsg = "Failed to create tmpfs overlay staging root: " + root;
+    return false;
+  }
+
+  // Always ensure a dedicated tmpfs mount at this exact path so SELinux
+  // mount options can take effect. Inherited parent tmpfs mounts are not
+  // sufficient for labeled system content.
+  if (isPathMounted(root)) {
+    std::string unmountErr;
+    if (!unmountPath(root, &unmountErr)) {
+      if (errorMsg)
+        *errorMsg = "Failed to reset tmpfs staging root " + root + ": " +
+                    unmountErr;
+      return false;
+    }
+  }
+
+  std::vector<std::string> options;
+  if (!selinuxContext.empty()) {
+    options.push_back("mode=0755,context=" + selinuxContext);
+  }
+  options.push_back("mode=0755");
+
+  bool mountSucceeded = false;
+  std::string firstErr;
+  for (const auto &opt : options) {
+    if (::mount("tmpfs", root.c_str(), "tmpfs", MS_NOSUID | MS_NODEV,
+                opt.c_str()) == 0) {
+      mountSucceeded = true;
+      break;
+    }
+    int err = errno;
+    if (firstErr.empty()) {
+      firstErr = "Failed to mount tmpfs staging root " + root + " with opts '" +
+                 opt + "': " + std::strerror(err);
+    }
+  }
+
+  if (!mountSucceeded) {
+    if (errorMsg)
+      *errorMsg = firstErr.empty()
+                      ? ("Failed to mount tmpfs staging root " + root)
+                      : firstErr;
+    return false;
+  }
+
+  std::string fsType;
+  fsType.clear();
+  if (!readMountType(root, fsType) || fsType != "tmpfs") {
+    if (errorMsg)
+      *errorMsg = "Overlay staging root " + root +
+                  " is not tmpfs (detected " +
+                  (fsType.empty() ? std::string("unknown") : fsType) + ")";
+    return false;
+  }
+  return true;
+}
+
+bool mountOverlayWithTmpfsStagedLower(const OverlayTarget &target,
+                                      const std::string &mountPoint,
+                                      const std::vector<std::string> &layers,
+                                      std::string *errorMsg) {
+  if (layers.empty()) {
+    if (errorMsg)
+      *errorMsg = "No overlay layers to stage into tmpfs";
+    return false;
+  }
+
+  std::string localErr;
+  const std::string stagingRoot =
+      "/mnt/ams-overlay-" + std::string(target.name);
+  if (!ensureTmpfsOverlayStagingRoot(stagingRoot,
+                                     selinuxContextForTarget(target),
+                                     &localErr)) {
+    if (errorMsg)
+      *errorMsg = localErr;
+    return false;
+  }
+
+  const std::string targetRoot = apm::fs::joinPath(stagingRoot, target.name);
+  const std::string stagedLayer = apm::fs::joinPath(targetRoot, "layer");
+  if (!resetOverlayScratchDir(stagedLayer, &localErr)) {
+    if (errorMsg)
+      *errorMsg = localErr;
+    return false;
+  }
+
+  for (const auto &layer : layers) {
+    if (!copyLayerIntoUpper(layer, stagedLayer, &localErr)) {
+      if (errorMsg) {
+        *errorMsg = "Failed to stage module layer into tmpfs for " +
+                    std::string(target.name) + ": " + localErr;
+      }
+      return false;
+    }
+  }
+
+  relabelTreeForTarget(stagedLayer, selinuxContextForTarget(target));
+
+  const std::string lowerDir = stagedLayer + ":" + baseMirrorPath(target);
+  if (!mountOverlayReadOnlyCompat(mountPoint, lowerDir,
+                                  selinuxContextForTarget(target), &localErr)) {
+    if (errorMsg)
+      *errorMsg = "tmpfs staged lowerdir fallback failed for " +
+                  std::string(target.name) + ": " + localErr;
+    return false;
+  }
+
+  apm::logger::info("AMS overlay: mounted " + mountPoint +
+                    " using tmpfs-staged read-only lowerdir fallback");
+  if (errorMsg)
+    errorMsg->clear();
+  return true;
+}
+
+std::string bindMountStatePath(const OverlayTarget &target) {
+  return apm::fs::joinPath(apm::config::getModuleRuntimeDir(),
+                           std::string("bind-mounts-") + target.name + ".txt");
+}
+
+bool saveBindMountState(const OverlayTarget &target,
+                        const std::vector<std::string> &mountedTargets,
+                        std::string *errorMsg) {
+  std::ostringstream out;
+  for (const auto &path : mountedTargets) {
+    out << path << "\n";
+  }
+
+  const std::string statePath = bindMountStatePath(target);
+  if (!apm::fs::writeFile(statePath, out.str(), true)) {
+    if (errorMsg)
+      *errorMsg = "Failed to persist bind mount state at " + statePath;
+    return false;
+  }
+  ::chmod(statePath.c_str(), 0600);
+  return true;
+}
+
+bool loadBindMountState(const OverlayTarget &target,
+                        std::vector<std::string> &mountedTargets) {
+  mountedTargets.clear();
+  std::string raw;
+  if (!apm::fs::readFile(bindMountStatePath(target), raw))
+    return true;
+
+  std::istringstream in(raw);
+  std::string line;
+  while (std::getline(in, line)) {
+    while (!line.empty() &&
+           (line.back() == '\n' || line.back() == '\r' || line.back() == ' ' ||
+            line.back() == '\t')) {
+      line.pop_back();
+    }
+    if (!line.empty())
+      mountedTargets.push_back(line);
+  }
+
+  std::sort(mountedTargets.begin(), mountedTargets.end());
+  mountedTargets.erase(std::unique(mountedTargets.begin(), mountedTargets.end()),
+                       mountedTargets.end());
+  return true;
+}
+
+bool hasTrackedBindMounts(const OverlayTarget &target) {
+  std::vector<std::string> mountedTargets;
+  if (!loadBindMountState(target, mountedTargets))
+    return false;
+  return !mountedTargets.empty();
+}
+
+bool unmountTrackedBindMounts(const OverlayTarget &target, std::string *errorMsg) {
+  std::vector<std::string> mountedTargets;
+  if (!loadBindMountState(target, mountedTargets)) {
+    if (errorMsg)
+      *errorMsg = "Failed to load bind mount state for " + std::string(target.name);
+    return false;
+  }
+
+  for (auto it = mountedTargets.rbegin(); it != mountedTargets.rend(); ++it) {
+    std::string unmountErr;
+    if (!unmountPath(*it, &unmountErr)) {
+      if (errorMsg)
+        *errorMsg = "Failed to unmount tracked bind mount " + *it + ": " +
+                    unmountErr;
+      return false;
+    }
+  }
+
+  if (!saveBindMountState(target, {}, errorMsg))
+    return false;
+  return true;
+}
+
+bool copyDirectoryContents(const std::string &srcDir, const std::string &dstDir,
+                           std::string *errorMsg) {
+  if (!apm::fs::isDirectory(srcDir))
+    return true;
+  if (!ensureDir(dstDir)) {
+    if (errorMsg)
+      *errorMsg = "Failed to create directory " + dstDir;
+    return false;
+  }
+
+  std::ostringstream cmd;
+  cmd << "cp -a '" << shellEscapeSingleQuotes(srcDir) << "/.' '"
+      << shellEscapeSingleQuotes(dstDir) << "'";
+  if (!runCommand(cmd.str(), errorMsg)) {
+    if (errorMsg && !errorMsg->empty()) {
+      *errorMsg = "Failed to copy directory contents from " + srcDir + " to " +
+                  dstDir + ": " + *errorMsg;
+    }
+    return false;
+  }
+  return true;
+}
+
+bool bindMountReadOnly(const std::string &source, const std::string &target,
+                       std::string *errorMsg) {
+  if (::mount(source.c_str(), target.c_str(), nullptr, MS_BIND, nullptr) != 0) {
+    if (errorMsg) {
+      *errorMsg = "Failed to bind mount " + source + " -> " + target + ": " +
+                  std::strerror(errno);
+    }
+    return false;
+  }
+
+  if (::mount(nullptr, target.c_str(), nullptr,
+              MS_REMOUNT | MS_BIND | MS_RDONLY, nullptr) != 0) {
+    apm::logger::warn("Failed to remount bind target read-only " + target +
+                      ": " + std::strerror(errno));
+  }
+  return true;
+}
+
+bool applyBindMountBackendForTarget(const OverlayTarget &target,
+                                    const std::string &mountPoint,
+                                    const std::vector<std::string> &layers,
+                                    std::string *errorMsg) {
+  std::string localErr;
+  if (!unmountTrackedBindMounts(target, &localErr)) {
+    if (errorMsg)
+      *errorMsg = localErr;
+    return false;
+  }
+
+  if (layers.empty()) {
+    if (errorMsg)
+      errorMsg->clear();
+    return true;
+  }
+
+  const std::string stagingRoot =
+      "/mnt/ams-overlay-" + std::string(target.name);
+  if (!ensureTmpfsOverlayStagingRoot(stagingRoot,
+                                     selinuxContextForTarget(target),
+                                     &localErr)) {
+    if (errorMsg)
+      *errorMsg = localErr;
+    return false;
+  }
+
+  const std::string targetRoot = apm::fs::joinPath(stagingRoot, target.name);
+  const std::string stagedLayer = apm::fs::joinPath(targetRoot, "bind-layer");
+  if (!resetOverlayScratchDir(stagedLayer, &localErr)) {
+    if (errorMsg)
+      *errorMsg = localErr;
+    return false;
+  }
+
+  for (const auto &layer : layers) {
+    if (!copyLayerIntoUpper(layer, stagedLayer, &localErr)) {
+      if (errorMsg)
+        *errorMsg = "Failed to stage bind layer for " +
+                    std::string(target.name) + ": " + localErr;
+      return false;
+    }
+  }
+
+  relabelTreeForTarget(stagedLayer, selinuxContextForTarget(target));
+
+  std::vector<std::string> entries = apm::fs::listDir(stagedLayer, false);
+  std::vector<std::string> mountedNow;
+  const std::string baseTargetRoot = baseMirrorPath(target);
+  auto rollback = [&]() {
+    for (auto it = mountedNow.rbegin(); it != mountedNow.rend(); ++it) {
+      std::string ignored;
+      unmountPath(*it, &ignored);
+    }
+  };
+
+  for (const auto &entry : entries) {
+    const std::string stagedEntry = apm::fs::joinPath(stagedLayer, entry);
+    const std::string targetEntry = apm::fs::joinPath(mountPoint, entry);
+
+    struct stat stagedStat {};
+    if (::lstat(stagedEntry.c_str(), &stagedStat) != 0) {
+      localErr = "Failed to stat staged entry " + stagedEntry + ": " +
+                 std::strerror(errno);
+      rollback();
+      if (errorMsg)
+        *errorMsg = localErr;
+      return false;
+    }
+
+    if (S_ISDIR(stagedStat.st_mode)) {
+      if (!apm::fs::isDirectory(targetEntry)) {
+        localErr =
+            "Bind backend requires existing top-level directory at " + targetEntry;
+        rollback();
+        if (errorMsg)
+          *errorMsg = localErr;
+        return false;
+      }
+
+      const std::string baseEntry = apm::fs::joinPath(baseTargetRoot, entry);
+      if (!apm::fs::isDirectory(baseEntry)) {
+        localErr = "Missing base mirror directory for bind backend at " + baseEntry;
+        rollback();
+        if (errorMsg)
+          *errorMsg = localErr;
+        return false;
+      }
+
+      // Keep base lower first so the overlay root inode tracks system labeling,
+      // while still allowing additive entries from the staged layer.
+      const std::string lowerDir = baseEntry + ":" + stagedEntry;
+      if (!mountOverlayReadOnlyCompat(targetEntry, lowerDir,
+                                      selinuxContextForTarget(target),
+                                      &localErr)) {
+        rollback();
+        if (errorMsg)
+          *errorMsg = "Failed to mount read-only overlay for " + targetEntry + ": " +
+                      localErr;
+        return false;
+      }
+      mountedNow.push_back(targetEntry);
+      continue;
+    }
+
+    if (S_ISREG(stagedStat.st_mode)) {
+      if (!apm::fs::isFile(targetEntry)) {
+        localErr = "Bind backend requires existing top-level file at " + targetEntry;
+        rollback();
+        if (errorMsg)
+          *errorMsg = localErr;
+        return false;
+      }
+      if (!bindMountReadOnly(stagedEntry, targetEntry, &localErr)) {
+        rollback();
+        if (errorMsg)
+          *errorMsg = localErr;
+        return false;
+      }
+      mountedNow.push_back(targetEntry);
+      continue;
+    }
+
+    localErr = "Unsupported staged entry type for bind backend: " + stagedEntry;
+    rollback();
+    if (errorMsg)
+      *errorMsg = localErr;
+    return false;
+  }
+
+  if (!saveBindMountState(target, mountedNow, &localErr)) {
+    rollback();
+    if (errorMsg)
+      *errorMsg = localErr;
+    return false;
+  }
+
+  apm::logger::info("AMS overlay: mounted " + mountPoint +
+                    " using bind backend");
+  if (errorMsg)
+    errorMsg->clear();
+  return true;
 }
 
 } // namespace
@@ -853,7 +1572,6 @@ bool ModuleManager::applyOverlayForTarget(std::size_t targetIndex,
   }
 
   const auto &target = kOverlayTargets[targetIndex];
-  const std::string mountPoint = effectiveMountPoint(target);
   std::string localErr;
 
   if (!ensureRuntimeDirs(&localErr)) {
@@ -863,95 +1581,189 @@ bool ModuleManager::applyOverlayForTarget(std::size_t targetIndex,
     return false;
   }
 
-  if (!ensureBaseMirrorForTarget(target, &localErr)) {
-    apm::logger::error("AMS overlay: " + localErr);
+  const auto candidates = mountCandidatesForTarget(target);
+  std::string firstErr;
+  bool triedAnyMountedCandidate = false;
+
+  for (const auto &mountPoint : candidates) {
+    if (!isOverlayCandidateReady(target, mountPoint)) {
+      apm::logger::info("AMS overlay: deferring " + mountPoint +
+                        " until partition is mounted");
+      continue;
+    }
+    triedAnyMountedCandidate = true;
+    apm::logger::info("AMS overlay: trying target '" + mountPoint +
+                      "' for " + std::string(target.name));
+
+    auto failCandidate = [&](const std::string &stage,
+                             const std::string &detail) {
+      std::string msg = stage + ": " + detail;
+      if (firstErr.empty())
+        firstErr = msg;
+      apm::logger::warn("AMS overlay: candidate " + mountPoint + " failed at " +
+                        stage + ": " + detail);
+    };
+
+    if (!ensureBaseMirrorForTarget(target, mountPoint, &localErr)) {
+      failCandidate("pre-base", localErr);
+      continue;
+    }
+
+    std::string mountType;
+    const bool overlayActive =
+        readMountType(mountPoint, mountType) && mountType == "overlay";
+
+    if (overlayActive) {
+      if (!mountBaseOnly(target, mountPoint, &localErr)) {
+        failCandidate("pre-restore-base", localErr);
+        continue;
+      }
+    }
+
+    if (!applyBindMountBackendForTarget(target, mountPoint, layers, &localErr)) {
+      failCandidate("bind-backend", localErr);
+      continue;
+    }
+    apm::logger::info("AMS overlay updated for " + mountPoint);
     if (errorMsg)
-      *errorMsg = localErr;
-    return false;
-  }
-
-  bool overlayActive = isOverlayMounted(target);
-
-  if (layers.empty() && !overlayActive)
+      errorMsg->clear();
     return true;
 
-  if (!unmountPath(mountPoint, &localErr)) {
-    apm::logger::error("AMS overlay: " + localErr);
-    if (errorMsg)
-      *errorMsg = localErr;
-    return false;
+    std::string propagationPath = mountPoint;
+    bool wasShared = isMountShared(propagationPath);
+    bool propagationChanged = false;
+    int propErrno = 0;
+    if (!setMountPropagation(propagationPath, MS_PRIVATE, &localErr,
+                             &propErrno)) {
+      if (mountPoint == "/system" && propErrno == EINVAL) {
+        propagationPath = "/";
+        wasShared = isMountShared(propagationPath);
+        if (!setMountPropagation(propagationPath, MS_PRIVATE, &localErr,
+                                 &propErrno)) {
+          failCandidate("pre-private", localErr);
+          continue;
+        }
+      } else {
+        failCandidate("pre-private", localErr);
+        continue;
+      }
+    }
+    propagationChanged = true;
+
+    std::vector<MovedSubmount> moved;
+    const std::string moveRoot = apm::fs::joinPath(
+        apm::config::getModuleRuntimeDir(),
+        "move-" + std::string(target.name) + "-" + sanitizeForPath(mountPoint));
+    if (mountPoint == "/") {
+      apm::logger::info(
+          "AMS overlay: skipping submount move path for '/' candidate");
+    } else if (!moveImmediateSubmounts(mountPoint, moveRoot, moved, &localErr)) {
+      failCandidate("move-submount", localErr);
+      if (propagationChanged && wasShared) {
+        setMountPropagation(propagationPath, MS_SHARED, nullptr);
+      }
+      continue;
+    }
+
+    if (mountPoint != "/" && !unmountPath(mountPoint, &localErr)) {
+      failCandidate("pre-unmount", localErr);
+      std::string restoreErr;
+      restoreMovedSubmounts(moved, &restoreErr);
+      if (propagationChanged && wasShared) {
+        setMountPropagation(propagationPath, MS_SHARED, nullptr);
+      }
+      continue;
+    }
+
+    bool mounted = false;
+    if (layers.empty()) {
+      mounted = mountBaseOnly(target, mountPoint, &localErr);
+    } else {
+      if (std::strcmp(target.name, "system") == 0 &&
+          mountPoint == "/system") {
+        if (mountOverlayWithTmpfsStagedLower(target, mountPoint, layers,
+                                             &localErr)) {
+          mounted = true;
+        } else {
+          apm::logger::warn("AMS overlay: tmpfs staged fallback precheck failed "
+                            "for /system, continuing with compatibility "
+                            "strategy chain: " +
+                            localErr);
+        }
+      }
+
+      std::ostringstream lower;
+      for (size_t i = 0; i < layers.size(); ++i) {
+        if (i > 0)
+          lower << ':';
+        lower << layers[i];
+      }
+      lower << ':' << baseMirrorPath(target);
+
+      std::string upperDir =
+          apm::fs::joinPath(apm::config::getModuleRuntimeUpperDir(), target.name);
+      std::string workDir =
+          apm::fs::joinPath(apm::config::getModuleRuntimeWorkDir(), target.name);
+
+      if (!mounted) {
+        if (!resetOverlayScratchDir(upperDir, &localErr) ||
+            !resetOverlayScratchDir(workDir, &localErr)) {
+          mounted = false;
+        } else if (mountOverlayCompat(mountPoint, lower.str(), upperDir, workDir,
+                                      &localErr)) {
+          mounted = true;
+        } else if (mountOverlayReadOnlyCompat(
+                       mountPoint, lower.str(), selinuxContextForTarget(target),
+                       &localErr)) {
+          mounted = true;
+        } else if (mountOverlayWithTmpfsStagedLower(target, mountPoint, layers,
+                                                    &localErr)) {
+          mounted = true;
+        } else {
+          const std::string baseOnlyLower = baseMirrorPath(target);
+          mounted = mountOverlayWithUpperComposition(mountPoint, layers,
+                                                     baseOnlyLower, upperDir,
+                                                     workDir, &localErr);
+        }
+      }
+    }
+
+    std::string restoreErr;
+    if (!restoreMovedSubmounts(moved, &restoreErr)) {
+      failCandidate("restore-submount", restoreErr);
+      mounted = false;
+    }
+
+    if (propagationChanged && wasShared) {
+      std::string propRestoreErr;
+      if (!setMountPropagation(propagationPath, MS_SHARED, &propRestoreErr)) {
+        failCandidate("restore-propagation", propRestoreErr);
+      }
+    }
+
+    if (mounted) {
+      apm::logger::info("AMS overlay updated for " + mountPoint);
+      if (errorMsg)
+        errorMsg->clear();
+      return true;
+    }
+
+    failCandidate("overlay-mount", localErr);
+    mountBaseOnly(target, mountPoint, nullptr);
   }
 
-  if (layers.empty()) {
-    if (!mountBaseOnly(target, &localErr)) {
-      apm::logger::error("AMS overlay: " + localErr);
-      if (errorMsg)
-        *errorMsg = localErr;
-      return false;
-    }
-    apm::logger::info("AMS restored stock " + mountPoint + " mount");
+  if (!triedAnyMountedCandidate) {
     if (errorMsg)
       errorMsg->clear();
     return true;
   }
 
-  std::ostringstream lower;
-  for (size_t i = 0; i < layers.size(); ++i) {
-    if (i > 0)
-      lower << ':';
-    lower << layers[i];
+  if (errorMsg) {
+    *errorMsg = firstErr.empty() ? "Overlay mount failed for target " +
+                                       std::string(target.name)
+                                 : firstErr;
   }
-  lower << ':' << baseMirrorPath(target);
-
-  std::string upperDir = apm::fs::joinPath(
-      apm::config::getModuleRuntimeUpperDir(), target.name);
-  std::string workDir = apm::fs::joinPath(apm::config::getModuleRuntimeWorkDir(),
-                                          target.name);
-
-  if (!resetOverlayScratchDir(upperDir, &localErr)) {
-    apm::logger::error("AMS overlay: " + localErr);
-    mountBaseOnly(target, nullptr);
-    if (errorMsg)
-      *errorMsg = localErr;
-    return false;
-  }
-
-  if (!resetOverlayScratchDir(workDir, &localErr)) {
-    apm::logger::error("AMS overlay: " + localErr);
-    mountBaseOnly(target, nullptr);
-    if (errorMsg)
-      *errorMsg = localErr;
-    return false;
-  }
-
-  if (!mountOverlayCompat(target, lower.str(), upperDir, workDir, &localErr)) {
-    apm::logger::warn(
-        "AMS overlay: writable stacked lowerdir mount failed for " +
-        mountPoint +
-        ", retrying with read-only stacked lowerdir mode");
-
-    if (!mountOverlayReadOnlyCompat(target, lower.str(), &localErr)) {
-      apm::logger::warn(
-          "AMS overlay: read-only stacked lowerdir mount failed for " +
-          mountPoint +
-          ", retrying with upperdir composition fallback");
-
-      const std::string baseOnlyLower = baseMirrorPath(target);
-      if (!mountOverlayWithUpperComposition(target, layers, baseOnlyLower, upperDir,
-                                            workDir, &localErr)) {
-        mountBaseOnly(target, nullptr);
-        apm::logger::error("AMS overlay: " + localErr);
-        if (errorMsg)
-          *errorMsg = localErr;
-        return false;
-      }
-    }
-  }
-
-  apm::logger::info("AMS overlay updated for " + mountPoint);
-  if (errorMsg)
-    errorMsg->clear();
-  return true;
+  return false;
 }
 
 bool ModuleManager::rebuildOverlays(std::string *errorMsg) {
@@ -1109,8 +1921,26 @@ void ModuleManager::monitorPartitions() {
     for (std::size_t idx = 0; idx < std::size(kOverlayTargets); ++idx) {
       if (observed.count(idx))
         continue;
-      const std::string mountPoint = effectiveMountPoint(kOverlayTargets[idx]);
-      if (!isPartitionMounted(mountPoint))
+      if (hasTrackedBindMounts(kOverlayTargets[idx])) {
+        observed.insert(idx);
+        continue;
+      }
+      if (isOverlayMounted(kOverlayTargets[idx])) {
+        observed.insert(idx);
+        continue;
+      }
+      const auto candidates = mountCandidatesForTarget(kOverlayTargets[idx]);
+      std::string mountPoint =
+          candidates.empty() ? kOverlayTargets[idx].mountPoint : candidates[0];
+      bool candidateMounted = false;
+      for (const auto &candidate : candidates) {
+        if (isOverlayCandidateReady(kOverlayTargets[idx], candidate)) {
+          mountPoint = candidate;
+          candidateMounted = true;
+          break;
+        }
+      }
+      if (!candidateMounted)
         continue;
 
       std::vector<std::string> layers;
