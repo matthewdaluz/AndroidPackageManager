@@ -290,6 +290,159 @@ bool mountBaseOnly(const OverlayTarget &target, std::string *errorMsg) {
   return true;
 }
 
+bool resetOverlayScratchDir(const std::string &path, std::string *errorMsg) {
+  if (!apm::fs::removeDirRecursive(path)) {
+    if (errorMsg)
+      *errorMsg = "Failed to clear overlay scratch dir: " + path;
+    return false;
+  }
+
+  if (!ensureDir(path)) {
+    if (errorMsg)
+      *errorMsg = "Failed to recreate overlay scratch dir: " + path;
+    return false;
+  }
+
+  return true;
+}
+
+bool mountOverlayCompat(const OverlayTarget &target, const std::string &lowerDir,
+                        const std::string &upperDir, const std::string &workDir,
+                        std::string *errorMsg) {
+  const std::array<const char *, 5> extraOpts = {
+      "", ",index=off", ",index=off,xino=off", ",redirect_dir=off,index=off",
+      ",redirect_dir=off,index=off,xino=off,metacopy=off"};
+
+  std::string firstErr;
+
+  for (const char *suffix : extraOpts) {
+    std::ostringstream opts;
+    opts << "lowerdir=" << lowerDir << ",upperdir=" << upperDir
+         << ",workdir=" << workDir << suffix;
+
+    if (::mount("overlay", target.mountPoint, "overlay", 0,
+                opts.str().c_str()) == 0) {
+      apm::logger::debug("AMS overlay: mounted " +
+                         std::string(target.mountPoint) + " with opts: " +
+                         opts.str());
+      if (errorMsg)
+        errorMsg->clear();
+      return true;
+    }
+
+    std::string attemptErr = std::strerror(errno);
+    if (firstErr.empty()) {
+      firstErr = std::string("Overlay mount failed for ") + target.mountPoint +
+                 ": " + attemptErr;
+    }
+
+    apm::logger::warn("AMS overlay: mount attempt failed for " +
+                      std::string(target.mountPoint) + " with opts '" +
+                      opts.str() + "': " + attemptErr);
+  }
+
+  if (errorMsg) {
+    *errorMsg = firstErr.empty()
+                    ? std::string("Overlay mount failed for ") +
+                          target.mountPoint
+                    : firstErr;
+  }
+  return false;
+}
+
+bool mountOverlayReadOnlyCompat(const OverlayTarget &target,
+                                const std::string &lowerDir,
+                                std::string *errorMsg) {
+  const std::array<const char *, 4> extraOpts = {
+      "", ",index=off", ",redirect_dir=off", ",redirect_dir=off,index=off"};
+
+  std::string firstErr;
+
+  for (const char *suffix : extraOpts) {
+    std::ostringstream opts;
+    opts << "lowerdir=" << lowerDir << suffix;
+
+    if (::mount("overlay", target.mountPoint, "overlay", MS_RDONLY,
+                opts.str().c_str()) == 0) {
+      apm::logger::debug("AMS overlay: mounted " +
+                         std::string(target.mountPoint) +
+                         " in read-only mode with opts: " + opts.str());
+      if (errorMsg)
+        errorMsg->clear();
+      return true;
+    }
+
+    std::string attemptErr = std::strerror(errno);
+    if (firstErr.empty()) {
+      firstErr = std::string("Read-only overlay mount failed for ") +
+                 target.mountPoint + ": " + attemptErr;
+    }
+
+    apm::logger::warn("AMS overlay: read-only mount attempt failed for " +
+                      std::string(target.mountPoint) + " with opts '" +
+                      opts.str() + "': " + attemptErr);
+  }
+
+  if (errorMsg) {
+    *errorMsg = firstErr.empty()
+                    ? std::string("Read-only overlay mount failed for ") +
+                          target.mountPoint
+                    : firstErr;
+  }
+  return false;
+}
+
+bool copyLayerIntoUpper(const std::string &layerPath, const std::string &upperDir,
+                        std::string *errorMsg) {
+  if (!apm::fs::isDirectory(layerPath)) {
+    return true;
+  }
+
+  std::ostringstream cmd;
+  cmd << "cp -a '" << shellEscapeSingleQuotes(layerPath) << "/.' '"
+      << shellEscapeSingleQuotes(upperDir) << "'";
+  if (!runCommand(cmd.str(), errorMsg)) {
+    if (errorMsg && !errorMsg->empty()) {
+      *errorMsg = "Failed to compose module overlay layer " + layerPath +
+                  " into upperdir: " + *errorMsg;
+    }
+    return false;
+  }
+  return true;
+}
+
+bool mountOverlayWithUpperComposition(const OverlayTarget &target,
+                                      const std::vector<std::string> &layers,
+                                      const std::string &baseLowerDir,
+                                      const std::string &upperDir,
+                                      const std::string &workDir,
+                                      std::string *errorMsg) {
+  std::string localErr;
+
+  if (!resetOverlayScratchDir(upperDir, &localErr)) {
+    if (errorMsg)
+      *errorMsg = localErr;
+    return false;
+  }
+  if (!resetOverlayScratchDir(workDir, &localErr)) {
+    if (errorMsg)
+      *errorMsg = localErr;
+    return false;
+  }
+
+  // Compose enabled module payloads into upperdir so we can mount overlayfs
+  // with a single lowerdir (more compatible on older Android kernels).
+  for (const auto &layer : layers) {
+    if (!copyLayerIntoUpper(layer, upperDir, &localErr)) {
+      if (errorMsg)
+        *errorMsg = localErr;
+      return false;
+    }
+  }
+
+  return mountOverlayCompat(target, baseLowerDir, upperDir, workDir, errorMsg);
+}
+
 } // namespace
 
 namespace apm::ams {
@@ -738,19 +891,44 @@ bool ModuleManager::applyOverlayForTarget(std::size_t targetIndex,
   std::string workDir = apm::fs::joinPath(apm::config::getModuleRuntimeWorkDir(),
                                           target.name);
 
-  std::ostringstream opts;
-  opts << "lowerdir=" << lower.str() << ",upperdir=" << upperDir
-       << ",workdir=" << workDir;
-
-  if (::mount("overlay", target.mountPoint, "overlay", 0,
-              opts.str().c_str()) != 0) {
-    localErr = std::string("Overlay mount failed for ") +
-               target.mountPoint + ": " + std::strerror(errno);
-    mountBaseOnly(target, nullptr);
+  if (!resetOverlayScratchDir(upperDir, &localErr)) {
     apm::logger::error("AMS overlay: " + localErr);
+    mountBaseOnly(target, nullptr);
     if (errorMsg)
       *errorMsg = localErr;
     return false;
+  }
+
+  if (!resetOverlayScratchDir(workDir, &localErr)) {
+    apm::logger::error("AMS overlay: " + localErr);
+    mountBaseOnly(target, nullptr);
+    if (errorMsg)
+      *errorMsg = localErr;
+    return false;
+  }
+
+  if (!mountOverlayCompat(target, lower.str(), upperDir, workDir, &localErr)) {
+    apm::logger::warn(
+        "AMS overlay: writable stacked lowerdir mount failed for " +
+        std::string(target.mountPoint) +
+        ", retrying with read-only stacked lowerdir mode");
+
+    if (!mountOverlayReadOnlyCompat(target, lower.str(), &localErr)) {
+      apm::logger::warn(
+          "AMS overlay: read-only stacked lowerdir mount failed for " +
+          std::string(target.mountPoint) +
+          ", retrying with upperdir composition fallback");
+
+      const std::string baseOnlyLower = baseMirrorPath(target);
+      if (!mountOverlayWithUpperComposition(target, layers, baseOnlyLower, upperDir,
+                                            workDir, &localErr)) {
+        mountBaseOnly(target, nullptr);
+        apm::logger::error("AMS overlay: " + localErr);
+        if (errorMsg)
+          *errorMsg = localErr;
+        return false;
+      }
+    }
   }
 
   apm::logger::info("AMS overlay updated for " +
