@@ -177,9 +177,31 @@ bool readMountType(const std::string &path, std::string &type) {
   return true;
 }
 
+std::string effectiveMountPoint(const OverlayTarget &target) {
+  if (std::strcmp(target.name, "system") != 0) {
+    return resolveForMount(target.mountPoint);
+  }
+
+  // Try multiple system mount aliases dynamically and normalize symlinks (for
+  // example /system -> / on some SAR devices).
+  static const std::array<const char *, 3> kSystemCandidates = {
+      "/system_root/system", "/system", "/"};
+  std::string fsType;
+  for (const char *candidate : kSystemCandidates) {
+    if (!apm::fs::isDirectory(candidate)) {
+      continue;
+    }
+    if (readMountType(candidate, fsType)) {
+      return resolveForMount(candidate);
+    }
+  }
+
+  return resolveForMount(target.mountPoint);
+}
+
 bool isOverlayMounted(const OverlayTarget &target) {
   std::string type;
-  if (!readMountType(target.mountPoint, type))
+  if (!readMountType(effectiveMountPoint(target), type))
     return false;
   return type == "overlay";
 }
@@ -207,6 +229,7 @@ bool isPathMounted(const std::string &path) {
 bool ensureBaseMirrorForTarget(const OverlayTarget &target,
                                std::string *errorMsg) {
   std::string baseDir = baseMirrorPath(target);
+  std::string mountPoint = effectiveMountPoint(target);
   if (!ensureDir(baseDir)) {
     if (errorMsg)
       *errorMsg = "Failed to create base mirror directory for " +
@@ -218,27 +241,25 @@ bool ensureBaseMirrorForTarget(const OverlayTarget &target,
     return true;
 
   std::string currentType;
-  if (!readMountType(target.mountPoint, currentType)) {
+  if (!readMountType(mountPoint, currentType)) {
     if (errorMsg)
       *errorMsg = "Unable to determine mount type for " +
-                  std::string(target.mountPoint);
+                  mountPoint;
     return false;
   }
 
   if (currentType == "overlay") {
     if (errorMsg)
-      *errorMsg =
-          std::string("Cannot snapshot base for ") + target.mountPoint +
+      *errorMsg = std::string("Cannot snapshot base for ") + mountPoint +
           " because it is already overlay-mounted. Reboot into a clean state "
           "before enabling AMS modules.";
     return false;
   }
 
-  if (::mount(target.mountPoint, baseDir.c_str(), nullptr,
+  if (::mount(mountPoint.c_str(), baseDir.c_str(), nullptr,
               MS_BIND | MS_REC, nullptr) != 0) {
     if (errorMsg)
-      *errorMsg = "Failed to mirror " + std::string(target.mountPoint) + ": " +
-                  std::strerror(errno);
+      *errorMsg = "Failed to mirror " + mountPoint + ": " + std::strerror(errno);
     return false;
   }
 
@@ -248,8 +269,7 @@ bool ensureBaseMirrorForTarget(const OverlayTarget &target,
                       " read-only: " + std::strerror(errno));
   }
 
-  apm::logger::info("AMS captured base mount for " +
-                    std::string(target.mountPoint));
+  apm::logger::info("AMS captured base mount for " + mountPoint);
   return true;
 }
 
@@ -263,30 +283,29 @@ bool ensureBaseMirrors(std::string *errorMsg) {
 
 bool mountBaseOnly(const OverlayTarget &target, std::string *errorMsg) {
   std::string baseDir = baseMirrorPath(target);
+  std::string mountPoint = effectiveMountPoint(target);
   if (!isPathMounted(baseDir)) {
     if (errorMsg)
       *errorMsg = "Missing base mirror for " + std::string(target.name);
     return false;
   }
 
-  if (::mount(baseDir.c_str(), target.mountPoint, nullptr,
+  if (::mount(baseDir.c_str(), mountPoint.c_str(), nullptr,
               MS_BIND | MS_REC, nullptr) != 0) {
     if (errorMsg)
       *errorMsg = "Failed to restore base mount for " +
-                  std::string(target.mountPoint) + ": " +
-                  std::strerror(errno);
+                  mountPoint + ": " + std::strerror(errno);
     return false;
   }
 
-  if (::mount(nullptr, target.mountPoint, nullptr,
+  if (::mount(nullptr, mountPoint.c_str(), nullptr,
               MS_REMOUNT | MS_BIND | MS_RDONLY, nullptr) != 0) {
-    apm::logger::warn("Failed to remount " + std::string(target.mountPoint) +
+    apm::logger::warn("Failed to remount " + mountPoint +
                       " read-only after restoring base: " +
                       std::strerror(errno));
   }
 
-  apm::logger::info("AMS restored stock " +
-                    std::string(target.mountPoint) + " mount");
+  apm::logger::info("AMS restored stock " + mountPoint + " mount");
   return true;
 }
 
@@ -309,6 +328,7 @@ bool resetOverlayScratchDir(const std::string &path, std::string *errorMsg) {
 bool mountOverlayCompat(const OverlayTarget &target, const std::string &lowerDir,
                         const std::string &upperDir, const std::string &workDir,
                         std::string *errorMsg) {
+  std::string mountPoint = effectiveMountPoint(target);
   const std::array<const char *, 5> extraOpts = {
       "", ",index=off", ",index=off,xino=off", ",redirect_dir=off,index=off",
       ",redirect_dir=off,index=off,xino=off,metacopy=off"};
@@ -320,10 +340,9 @@ bool mountOverlayCompat(const OverlayTarget &target, const std::string &lowerDir
     opts << "lowerdir=" << lowerDir << ",upperdir=" << upperDir
          << ",workdir=" << workDir << suffix;
 
-    if (::mount("overlay", target.mountPoint, "overlay", 0,
+    if (::mount("overlay", mountPoint.c_str(), "overlay", 0,
                 opts.str().c_str()) == 0) {
-      apm::logger::debug("AMS overlay: mounted " +
-                         std::string(target.mountPoint) + " with opts: " +
+      apm::logger::debug("AMS overlay: mounted " + mountPoint + " with opts: " +
                          opts.str());
       if (errorMsg)
         errorMsg->clear();
@@ -332,20 +351,18 @@ bool mountOverlayCompat(const OverlayTarget &target, const std::string &lowerDir
 
     std::string attemptErr = std::strerror(errno);
     if (firstErr.empty()) {
-      firstErr = std::string("Overlay mount failed for ") + target.mountPoint +
-                 ": " + attemptErr;
+      firstErr = std::string("Overlay mount failed for ") + mountPoint + ": " +
+                 attemptErr;
     }
 
-    apm::logger::warn("AMS overlay: mount attempt failed for " +
-                      std::string(target.mountPoint) + " with opts '" +
-                      opts.str() + "': " + attemptErr);
+    apm::logger::warn("AMS overlay: mount attempt failed for " + mountPoint +
+                      " with opts '" + opts.str() + "': " + attemptErr);
   }
 
   if (errorMsg) {
-    *errorMsg = firstErr.empty()
-                    ? std::string("Overlay mount failed for ") +
-                          target.mountPoint
-                    : firstErr;
+    *errorMsg = firstErr.empty() ? std::string("Overlay mount failed for ") +
+                                       mountPoint
+                                 : firstErr;
   }
   return false;
 }
@@ -353,6 +370,7 @@ bool mountOverlayCompat(const OverlayTarget &target, const std::string &lowerDir
 bool mountOverlayReadOnlyCompat(const OverlayTarget &target,
                                 const std::string &lowerDir,
                                 std::string *errorMsg) {
+  std::string mountPoint = effectiveMountPoint(target);
   const std::array<const char *, 4> extraOpts = {
       "", ",index=off", ",redirect_dir=off", ",redirect_dir=off,index=off"};
 
@@ -362,10 +380,9 @@ bool mountOverlayReadOnlyCompat(const OverlayTarget &target,
     std::ostringstream opts;
     opts << "lowerdir=" << lowerDir << suffix;
 
-    if (::mount("overlay", target.mountPoint, "overlay", MS_RDONLY,
+    if (::mount("overlay", mountPoint.c_str(), "overlay", MS_RDONLY,
                 opts.str().c_str()) == 0) {
-      apm::logger::debug("AMS overlay: mounted " +
-                         std::string(target.mountPoint) +
+      apm::logger::debug("AMS overlay: mounted " + mountPoint +
                          " in read-only mode with opts: " + opts.str());
       if (errorMsg)
         errorMsg->clear();
@@ -375,18 +392,18 @@ bool mountOverlayReadOnlyCompat(const OverlayTarget &target,
     std::string attemptErr = std::strerror(errno);
     if (firstErr.empty()) {
       firstErr = std::string("Read-only overlay mount failed for ") +
-                 target.mountPoint + ": " + attemptErr;
+                 mountPoint + ": " + attemptErr;
     }
 
     apm::logger::warn("AMS overlay: read-only mount attempt failed for " +
-                      std::string(target.mountPoint) + " with opts '" +
-                      opts.str() + "': " + attemptErr);
+                      mountPoint + " with opts '" + opts.str() + "': " +
+                      attemptErr);
   }
 
   if (errorMsg) {
     *errorMsg = firstErr.empty()
                     ? std::string("Read-only overlay mount failed for ") +
-                          target.mountPoint
+                          mountPoint
                     : firstErr;
   }
   return false;
@@ -836,6 +853,7 @@ bool ModuleManager::applyOverlayForTarget(std::size_t targetIndex,
   }
 
   const auto &target = kOverlayTargets[targetIndex];
+  const std::string mountPoint = effectiveMountPoint(target);
   std::string localErr;
 
   if (!ensureRuntimeDirs(&localErr)) {
@@ -857,7 +875,7 @@ bool ModuleManager::applyOverlayForTarget(std::size_t targetIndex,
   if (layers.empty() && !overlayActive)
     return true;
 
-  if (!unmountPath(target.mountPoint, &localErr)) {
+  if (!unmountPath(mountPoint, &localErr)) {
     apm::logger::error("AMS overlay: " + localErr);
     if (errorMsg)
       *errorMsg = localErr;
@@ -871,8 +889,7 @@ bool ModuleManager::applyOverlayForTarget(std::size_t targetIndex,
         *errorMsg = localErr;
       return false;
     }
-    apm::logger::info("AMS restored stock " +
-                      std::string(target.mountPoint) + " mount");
+    apm::logger::info("AMS restored stock " + mountPoint + " mount");
     if (errorMsg)
       errorMsg->clear();
     return true;
@@ -910,13 +927,13 @@ bool ModuleManager::applyOverlayForTarget(std::size_t targetIndex,
   if (!mountOverlayCompat(target, lower.str(), upperDir, workDir, &localErr)) {
     apm::logger::warn(
         "AMS overlay: writable stacked lowerdir mount failed for " +
-        std::string(target.mountPoint) +
+        mountPoint +
         ", retrying with read-only stacked lowerdir mode");
 
     if (!mountOverlayReadOnlyCompat(target, lower.str(), &localErr)) {
       apm::logger::warn(
           "AMS overlay: read-only stacked lowerdir mount failed for " +
-          std::string(target.mountPoint) +
+          mountPoint +
           ", retrying with upperdir composition fallback");
 
       const std::string baseOnlyLower = baseMirrorPath(target);
@@ -931,8 +948,7 @@ bool ModuleManager::applyOverlayForTarget(std::size_t targetIndex,
     }
   }
 
-  apm::logger::info("AMS overlay updated for " +
-                    std::string(target.mountPoint));
+  apm::logger::info("AMS overlay updated for " + mountPoint);
   if (errorMsg)
     errorMsg->clear();
   return true;
@@ -959,7 +975,7 @@ bool ModuleManager::rebuildOverlays(std::string *errorMsg) {
         firstErr = perErr;
       else if (perErr.empty() && firstErr.empty())
         firstErr = "Overlay apply failed for " +
-                   std::string(kOverlayTargets[idx].mountPoint);
+                   effectiveMountPoint(kOverlayTargets[idx]);
     }
   }
 
@@ -1093,7 +1109,8 @@ void ModuleManager::monitorPartitions() {
     for (std::size_t idx = 0; idx < std::size(kOverlayTargets); ++idx) {
       if (observed.count(idx))
         continue;
-      if (!isPartitionMounted(kOverlayTargets[idx].mountPoint))
+      const std::string mountPoint = effectiveMountPoint(kOverlayTargets[idx]);
+      if (!isPartitionMounted(mountPoint))
         continue;
 
       std::vector<std::string> layers;
@@ -1105,7 +1122,7 @@ void ModuleManager::monitorPartitions() {
       if (!applyOverlayForTarget(idx, layers, &err)) {
         apm::logger::error(
             "Partition monitor: failed to apply overlay for " +
-            std::string(kOverlayTargets[idx].mountPoint) +
+            mountPoint +
             (err.empty() ? "" : (": " + err)));
       }
       observed.insert(idx);
