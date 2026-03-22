@@ -96,7 +96,8 @@ private:
   bool runLifecycleScripts(const ModuleInfo &info, const std::string &moduleDir,
                            bool isStartup) const;
   bool runScript(const std::string &path, const std::string &moduleName,
-                 bool background) const;
+                 bool background, bool requireExists = false,
+                 std::string *errorMsg = nullptr) const;
   void logModuleEvent(const std::string &name, const std::string &message) const;
 
   bool extractZip(const std::string &zipPath, const std::string &dest,

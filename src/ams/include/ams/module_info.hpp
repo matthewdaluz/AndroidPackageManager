@@ -38,6 +38,7 @@ struct ModuleInfo {
   bool mount = true;
   bool runPostFsData = false;
   bool runService = false;
+  bool runInstallSh = false;
 };
 
 struct ModuleState {
@@ -60,4 +61,3 @@ bool writeModuleState(const std::string &path, const ModuleState &state,
 std::string makeIsoTimestamp();
 
 } // namespace apm::ams
-

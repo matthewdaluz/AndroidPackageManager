@@ -15,6 +15,8 @@ Check:
 - zip contains `module-info.json`
 - zip contains `overlay/`
 - module name contains only allowed chars (`[A-Za-z0-9._-]`)
+- if `module-info.json` sets `install-sh: true`, zip includes `install.sh`
+- verify `install.sh` exits with code `0`
 - `unzip` is available on device
 
 Logs:

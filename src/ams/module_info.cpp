@@ -307,6 +307,7 @@ bool parseModuleInfo(const std::string &json, ModuleInfo &info,
   info.mount = getBool("mount", true);
   info.runPostFsData = getBool("post_fs_data", false);
   info.runService = getBool("service", false);
+  info.runInstallSh = getBool("install-sh", false);
 
   if (info.name.empty()) {
     if (errorMsg)
