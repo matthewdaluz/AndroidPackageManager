@@ -22,6 +22,29 @@ Logs:
 - `/data/ams/logs/<module>.log`
 - `/data/ams/amsd.log`
 
+## Installed command not found in shell
+
+If a package installs successfully but `command -v <name>` fails in a new shell:
+
+- confirm shim exists under `/data/apm/bin`:
+  - `ls -l /data/apm/bin/<name>`
+- open a fresh shell session (or `su` session) after install/remove actions
+- verify hotload profile file exists:
+  - `/data/local/tmp/.apm_profile`
+- verify hook line exists exactly once in managed startup files that are present:
+  - required targets:
+    - `/data/local/userinit.sh`
+    - `/data/local/tmp/.profile`
+    - `/data/local/tmp/.mkshrc`
+  - best-effort targets (may be absent on some devices):
+    - `/data/.profile`
+    - `/data/.mkshrc`
+    - `/root/.profile`
+    - `/root/.mkshrc`
+- check `/data/apm/logs/apmd.log` for `export_path` hook install warnings
+
+You can force a hotload rebuild by installing/removing any package, then opening a fresh shell.
+
 ## Overlays not applied at boot
 
 Check:

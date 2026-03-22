@@ -616,17 +616,36 @@ bool writeCommandIndexManifest(const std::vector<ShimDecision> &decisions,
   return true;
 }
 
-bool appendLineIfMissing(const std::string &path, const std::string &line,
-                         bool executable = false) {
+enum class AppendLineResult { Added, AlreadyPresent, Failed };
+
+std::string getParentDir(const std::string &path) {
+  auto pos = path.find_last_of('/');
+  if (pos == std::string::npos) {
+    return {};
+  }
+  return path.substr(0, pos);
+}
+
+AppendLineResult appendLineIfMissing(const std::string &path,
+                                     const std::string &line,
+                                     bool executable = false,
+                                     bool ensureParents = true) {
   std::string content;
   if (apm::fs::readFile(path, content)) {
     if (content.find(line) != std::string::npos) {
-      return true;
+      return AppendLineResult::AlreadyPresent;
     }
   }
 
-  if (!ensureParentDir(path)) {
-    return false;
+  if (ensureParents) {
+    if (!ensureParentDir(path)) {
+      return AppendLineResult::Failed;
+    }
+  } else {
+    const std::string parent = getParentDir(path);
+    if (!parent.empty() && !apm::fs::isDirectory(parent)) {
+      return AppendLineResult::Failed;
+    }
   }
 
   if (!content.empty() && content.back() != '\n') {
@@ -636,12 +655,12 @@ bool appendLineIfMissing(const std::string &path, const std::string &line,
   content.push_back('\n');
 
   if (!writeAtomicFile(path, content, executable ? 0755 : 0644, true)) {
-    return false;
+    return AppendLineResult::Failed;
   }
   if (!executable) {
     ::chmod(path.c_str(), 0644);
   }
-  return true;
+  return AppendLineResult::Added;
 }
 
 bool writePathHelperScripts(std::vector<std::string> &warnings) {
@@ -749,15 +768,61 @@ bool installShellHooks(std::vector<std::string> &warnings) {
   const std::string hookLine =
       "[ -f \"" + profileFile + "\" ] && . \"" + profileFile + "\"";
 
-  static const char *kHookTargets[] = {"/data/local/userinit.sh",
-                                        "/data/local/tmp/.profile",
-                                        "/data/local/tmp/.mkshrc"};
+  struct HookTarget {
+    const char *path;
+    bool required;
+    bool ensureParents;
+  };
 
-  for (const auto *target : kHookTargets) {
-    if (!appendLineIfMissing(target, hookLine)) {
-      warnings.push_back(std::string("Failed to install profile hook into ") +
-                         target);
+  static const HookTarget kHookTargets[] = {
+      {"/data/local/userinit.sh", true, true},
+      {"/data/local/tmp/.profile", true, true},
+      {"/data/local/tmp/.mkshrc", true, true},
+      {"/data/.profile", false, false},
+      {"/data/.mkshrc", false, false},
+      {"/root/.profile", false, false},
+      {"/root/.mkshrc", false, false},
+  };
+
+  std::size_t installed = 0;
+  std::size_t alreadyPresent = 0;
+  std::size_t skipped = 0;
+  std::size_t failed = 0;
+
+  for (const auto &target : kHookTargets) {
+    const std::string targetPath = target.path;
+    const std::string parent = getParentDir(targetPath);
+
+    if (!target.ensureParents && !parent.empty() &&
+        !apm::fs::isDirectory(parent)) {
+      ++skipped;
+      apm::logger::info("export_path: shell hook skipped (parent missing): " +
+                        targetPath);
+      continue;
     }
+
+    AppendLineResult result =
+        appendLineIfMissing(targetPath, hookLine, false, target.ensureParents);
+    if (result == AppendLineResult::Added) {
+      ++installed;
+      apm::logger::info("export_path: shell hook installed: " + targetPath);
+      continue;
+    }
+
+    if (result == AppendLineResult::AlreadyPresent) {
+      ++alreadyPresent;
+      apm::logger::debug("export_path: shell hook already present: " +
+                         targetPath);
+      continue;
+    }
+
+    ++failed;
+    std::string reason =
+        std::string("Failed to install profile hook into ") + targetPath;
+    if (!target.required) {
+      reason += " (optional target)";
+    }
+    warnings.push_back(reason);
   }
 
   const std::string serviceDir = "/data/adb/service.d";
@@ -771,6 +836,12 @@ bool installShellHooks(std::vector<std::string> &warnings) {
       warnings.push_back("Failed to install service.d hook: " + serviceHook);
     }
   }
+
+  std::ostringstream summary;
+  summary << "export_path: shell hook targets installed=" << installed
+          << ", already-present=" << alreadyPresent << ", skipped=" << skipped
+          << ", failed=" << failed;
+  apm::logger::info(summary.str());
 
   return true;
 }

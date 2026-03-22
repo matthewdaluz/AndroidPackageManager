@@ -50,6 +50,7 @@ namespace apm::ipc {
 namespace {
 
 constexpr std::size_t kMaxRequestBytes = 64 * 1024;
+constexpr const char *kLogFileTag = "ipc_server.cpp";
 
 // Convert a repo update stage enum into a compact logging-friendly string.
 std::string stageToString(apm::repo::RepoUpdateStage stage) {
@@ -128,6 +129,12 @@ static bool writeAll(int fd, const char *data, std::size_t len,
 void sendResponseMessage(int clientFd, Response resp) {
   if (resp.status == ResponseStatus::Unknown) {
     resp.status = resp.success ? ResponseStatus::Ok : ResponseStatus::Error;
+  }
+  if (apm::logger::isDebugEnabled()) {
+    apm::logger::debug(std::string(kLogFileTag) +
+                       ": sendResponseMessage status=" +
+                       (resp.success ? "ok" : "error") + " id='" + resp.id +
+                       "' msg='" + resp.message + "'");
   }
   std::string wire = serializeResponse(resp);
   std::string err;
@@ -243,7 +250,9 @@ void IpcServer::stop() { m_running = false; }
 // Read, parse, and dispatch a single client request. Each request is served
 // synchronously; expensive operations report progress over the socket.
 void IpcServer::handleClient(int clientFd) {
-  apm::logger::debug("IpcServer::handleClient: new client");
+  apm::logger::debug(std::string(kLogFileTag) +
+                     ": IpcServer::handleClient new client fd=" +
+                     std::to_string(clientFd));
 
   // Read until blank line
   std::string buffer;
@@ -296,6 +305,10 @@ void IpcServer::handleClient(int clientFd) {
   }
 
   apm::logger::info("IpcServer::handleClient: received request");
+  if (apm::logger::isDebugEnabled()) {
+    apm::logger::debug(std::string(kLogFileTag) + ": parsed request id='" +
+                       req.id + "' type=" + typeToString(req.type));
+  }
 
   Response resp;
   resp.id = req.id;
@@ -861,6 +874,12 @@ void IpcServer::handleClient(int clientFd) {
   }
   }
 
+  if (apm::logger::isDebugEnabled()) {
+    apm::logger::debug(std::string(kLogFileTag) +
+                       ": completed request id='" + req.id +
+                       "' success=" + (resp.success ? "true" : "false") +
+                       " message='" + resp.message + "'");
+  }
   sendResponseMessage(clientFd, resp);
   apm::logger::debug("IpcServer::handleClient: response sent");
 }

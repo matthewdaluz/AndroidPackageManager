@@ -49,6 +49,8 @@ namespace apm::apk {
 
 namespace {
 
+constexpr const char *kLogFileTag = "apk_installer.cpp";
+
 std::string shellEscapeSingleQuotes(const std::string &in) {
   std::string out;
   out.reserve(in.size() + 8);
@@ -343,8 +345,17 @@ bool stageApkForUserInstall(const std::string &srcPath, std::string &dstPath,
 
 // Run a shell command while capturing stdout/stderr.
 int runCommandCaptureOutput(const std::string &cmd, std::string &output) {
+  if (apm::logger::isDebugEnabled()) {
+    apm::logger::debug(std::string(kLogFileTag) +
+                       ": runCommandCaptureOutput exec='" + cmd + "'");
+  }
+
   FILE *pipe = ::popen(cmd.c_str(), "r");
   if (!pipe) {
+    if (apm::logger::isDebugEnabled()) {
+      apm::logger::debug(std::string(kLogFileTag) +
+                         ": runCommandCaptureOutput popen failed");
+    }
     return -1;
   }
 
@@ -353,7 +364,18 @@ int runCommandCaptureOutput(const std::string &cmd, std::string &output) {
     output.append(buf);
   }
 
-  return ::pclose(pipe);
+  const int rc = ::pclose(pipe);
+  if (apm::logger::isDebugEnabled()) {
+    std::string debugOutput = output;
+    if (debugOutput.size() > 512) {
+      debugOutput = debugOutput.substr(0, 512) + "...(truncated)";
+    }
+    apm::logger::debug(std::string(kLogFileTag) +
+                       ": runCommandCaptureOutput rc=" + std::to_string(rc) +
+                       " output='" + debugOutput + "'");
+  }
+
+  return rc;
 }
 
 } // namespace

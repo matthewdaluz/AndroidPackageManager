@@ -37,9 +37,15 @@ enum class Level { Debug = 0, Info, Warn, Error };
 // Can be overridden at startup (e.g., for debugging on a PC).
 void setLogFile(const std::string &path);
 
+// Configure the file that controls global debug logging (true/false).
+void setDebugControlFile(const std::string &path);
+
 // Set minimum level to actually write.
 // Messages below this level will be discarded.
 void setMinLogLevel(Level level);
+
+// Return whether global debug mode is currently enabled.
+bool isDebugEnabled();
 
 // Enable or disable mirroring logs to stderr as well as the log file.
 void enableStderr(bool enable);

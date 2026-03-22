@@ -46,6 +46,8 @@
 
 namespace {
 
+constexpr const char *kLogFileTag = "amsd.cpp";
+
 apm::amsd::IpcServer *g_server = nullptr;
 
 bool isDataAccessible() {
@@ -99,6 +101,10 @@ bool readSystemProperty(const std::string &name, std::string *valueOut) {
     return false;
 
   std::string cmd = "getprop " + name;
+  if (apm::logger::isDebugEnabled()) {
+    apm::logger::debug(std::string(kLogFileTag) +
+                       ": readSystemProperty exec='" + cmd + "'");
+  }
   FILE *pipe = ::popen(cmd.c_str(), "r");
   if (!pipe)
     return false;
@@ -110,6 +116,12 @@ bool readSystemProperty(const std::string &name, std::string *valueOut) {
   }
 
   const int rc = ::pclose(pipe);
+  if (apm::logger::isDebugEnabled()) {
+    apm::logger::debug(std::string(kLogFileTag) +
+                       ": readSystemProperty result name='" + name +
+                       "' rc=" + std::to_string(rc) + " raw='" + output + "'");
+  }
+
   if (rc != 0)
     return false;
 
@@ -171,10 +183,13 @@ int main(int argc, char **argv) {
     waitForDataReady();
 
   apm::logger::setLogFile(buildLogFilePath());
+  apm::logger::setDebugControlFile(apm::config::getDebugFlagFile());
   apm::logger::setMinLogLevel(debugMode ? apm::logger::Level::Debug
                                         : apm::logger::Level::Info);
 
   apm::logger::info("amsd starting");
+  apm::logger::info("amsd: debug control file = " +
+                    apm::config::getDebugFlagFile());
   if (debugMode)
     apm::logger::info("amsd: DEBUG mode enabled");
   if (emulatorMode)
@@ -275,7 +290,17 @@ int main(int argc, char **argv) {
     });
   }
 
-  ::system("setprop amsd.ready 1");
+  const std::string setPropCmd = "setprop amsd.ready 1";
+  if (apm::logger::isDebugEnabled()) {
+    apm::logger::debug(std::string(kLogFileTag) +
+                       ": exec startup command='" + setPropCmd + "'");
+  }
+  int setPropRc = ::system(setPropCmd.c_str());
+  if (apm::logger::isDebugEnabled()) {
+    apm::logger::debug(std::string(kLogFileTag) +
+                       ": startup command result rc=" +
+                       std::to_string(setPropRc));
+  }
 
   server.run();
   bootWatcherStop.store(true);

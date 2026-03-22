@@ -25,14 +25,18 @@
  */
 
 #include "logger.hpp"
+#include "config.hpp"
 #include "fs.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <ctime>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <mutex>
 #include <sstream>
+#include <sys/stat.h>
 
 namespace apm::logger {
 
@@ -42,6 +46,12 @@ namespace apm::logger {
 
 static std::string g_logFile = "/data/apm/logs/apm.log";
 static Level g_minLevel = Level::Info;
+static std::string g_debugControlFile;
+static bool g_debugControlFileResolved = false;
+static bool g_debugEnabled = false;
+static bool g_debugFileKnown = false;
+static std::time_t g_debugMTime = 0;
+static off_t g_debugFileSize = -1;
 static bool g_stderrEnabled = true;
 static std::mutex g_mutex;
 
@@ -79,6 +89,111 @@ static std::string currentTimestamp() {
   return ss.str();
 }
 
+static std::string trimAsciiWhitespace(std::string value) {
+  while (!value.empty() &&
+         (value.back() == '\n' || value.back() == '\r' || value.back() == ' ' ||
+          value.back() == '\t')) {
+    value.pop_back();
+  }
+
+  std::size_t start = 0;
+  while (start < value.size() &&
+         (value[start] == ' ' || value[start] == '\t' || value[start] == '\n' ||
+          value[start] == '\r')) {
+    ++start;
+  }
+  if (start > 0)
+    value.erase(0, start);
+
+  return value;
+}
+
+static void ensureDebugControlPathResolvedLocked() {
+  if (g_debugControlFileResolved && !g_debugControlFile.empty())
+    return;
+
+  g_debugControlFile = apm::config::getDebugFlagFile();
+  g_debugControlFileResolved = true;
+}
+
+static void ensureDebugControlFileExistsLocked() {
+  ensureDebugControlPathResolvedLocked();
+  if (g_debugControlFile.empty())
+    return;
+
+  if (apm::fs::pathExists(g_debugControlFile))
+    return;
+
+  const auto slash = g_debugControlFile.find_last_of('/');
+  if (slash != std::string::npos) {
+    const std::string parent = g_debugControlFile.substr(0, slash);
+    if (!parent.empty()) {
+      apm::fs::createDirs(parent);
+    }
+  }
+
+  std::ofstream out(g_debugControlFile, std::ios::out | std::ios::trunc | std::ios::binary);
+  if (!out.is_open())
+    return;
+
+  out << "false\n";
+  out.flush();
+}
+
+static bool parseDebugEnabledString(std::string value) {
+  value = trimAsciiWhitespace(std::move(value));
+  std::transform(value.begin(), value.end(), value.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  return value == "true";
+}
+
+static void refreshDebugModeFromFileLocked() {
+  ensureDebugControlPathResolvedLocked();
+  ensureDebugControlFileExistsLocked();
+
+  if (g_debugControlFile.empty()) {
+    g_debugEnabled = false;
+    g_debugFileKnown = true;
+    return;
+  }
+
+  struct stat st {};
+  if (::stat(g_debugControlFile.c_str(), &st) != 0) {
+    g_debugEnabled = false;
+    g_debugFileKnown = true;
+    g_debugMTime = 0;
+    g_debugFileSize = -1;
+    return;
+  }
+
+  if (g_debugFileKnown && st.st_mtime == g_debugMTime && st.st_size == g_debugFileSize) {
+    return;
+  }
+
+  std::ifstream in(g_debugControlFile, std::ios::in | std::ios::binary);
+  std::string content;
+  if (in.is_open()) {
+    std::getline(in, content);
+  }
+
+  g_debugEnabled = parseDebugEnabledString(content);
+  g_debugFileKnown = true;
+  g_debugMTime = st.st_mtime;
+  g_debugFileSize = st.st_size;
+}
+
+static Level effectiveMinLevelLocked() {
+  if (g_debugEnabled) {
+    return Level::Debug;
+  }
+
+  if (g_minLevel == Level::Debug) {
+    return Level::Info;
+  }
+
+  return g_minLevel;
+}
+
 static void ensureLogDirExists() {
   // Extract parent directory
   auto pos = g_logFile.find_last_of('/');
@@ -104,10 +219,32 @@ void setLogFile(const std::string &path) {
   }
 }
 
+void setDebugControlFile(const std::string &path) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (!path.empty()) {
+    g_debugControlFile = path;
+    g_debugControlFileResolved = true;
+  } else {
+    g_debugControlFile.clear();
+    g_debugControlFileResolved = false;
+  }
+
+  g_debugFileKnown = false;
+  g_debugMTime = 0;
+  g_debugFileSize = -1;
+  refreshDebugModeFromFileLocked();
+}
+
 // Control which severity and above should be persisted.
 void setMinLogLevel(Level level) {
   std::lock_guard<std::mutex> lock(g_mutex);
   g_minLevel = level;
+}
+
+bool isDebugEnabled() {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  refreshDebugModeFromFileLocked();
+  return g_debugEnabled;
 }
 
 // Mirror logs to stderr in addition to the log file when desired.
@@ -121,7 +258,10 @@ void enableStderr(bool enable) {
 void log(Level level, const std::string &message) {
   std::lock_guard<std::mutex> lock(g_mutex);
 
-  if (static_cast<int>(level) < static_cast<int>(g_minLevel)) {
+  refreshDebugModeFromFileLocked();
+  const Level effectiveMin = effectiveMinLevelLocked();
+
+  if (static_cast<int>(level) < static_cast<int>(effectiveMin)) {
     return;
   }
 

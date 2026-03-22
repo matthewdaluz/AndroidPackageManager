@@ -93,6 +93,7 @@ struct Response {
 bool parseRequest(const std::string &raw, Request &out,
                   std::string *errorMsg = nullptr);
 std::string serializeRequest(const Request &req);
+std::string typeToString(RequestType t);
 
 bool parseResponse(const std::string &raw, Response &out,
                    std::string *errorMsg = nullptr);

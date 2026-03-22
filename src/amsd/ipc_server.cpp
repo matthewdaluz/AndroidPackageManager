@@ -44,6 +44,7 @@ namespace apm::amsd {
 namespace {
 
 constexpr std::size_t kMaxRequestBytes = 64 * 1024;
+constexpr const char *kLogFileTag = "ipc_server.cpp";
 
 bool writeAll(int fd, const char *data, std::size_t len,
               std::string *errorMsg) {
@@ -71,6 +72,12 @@ void sendResponseMessage(int clientFd, apm::ipc::Response resp) {
   if (resp.status == apm::ipc::ResponseStatus::Unknown) {
     resp.status = resp.success ? apm::ipc::ResponseStatus::Ok
                                : apm::ipc::ResponseStatus::Error;
+  }
+  if (apm::logger::isDebugEnabled()) {
+    apm::logger::debug(std::string(kLogFileTag) +
+                       ": sendResponseMessage status=" +
+                       (resp.success ? "ok" : "error") + " id='" + resp.id +
+                       "' msg='" + resp.message + "'");
   }
   std::string wire = apm::ipc::serializeResponse(resp);
   std::string err;
@@ -180,6 +187,12 @@ void IpcServer::stop() {
 }
 
 void IpcServer::handleClient(int clientFd) {
+  if (apm::logger::isDebugEnabled()) {
+    apm::logger::debug(std::string(kLogFileTag) +
+                       ": IpcServer::handleClient new client fd=" +
+                       std::to_string(clientFd));
+  }
+
   std::string buffer;
   char temp[512];
 
@@ -222,9 +235,22 @@ void IpcServer::handleClient(int clientFd) {
     return;
   }
 
+  if (apm::logger::isDebugEnabled()) {
+    apm::logger::debug(std::string(kLogFileTag) + ": parsed request id='" +
+                       req.id + "' type=" + apm::ipc::typeToString(req.type));
+  }
+
   apm::ipc::Response resp;
   resp.id = req.id;
   dispatcher_.dispatch(req, resp);
+
+  if (apm::logger::isDebugEnabled()) {
+    apm::logger::debug(std::string(kLogFileTag) +
+                       ": completed request id='" + req.id +
+                       "' success=" + (resp.success ? "true" : "false") +
+                       " message='" + resp.message + "'");
+  }
+
   sendResponseMessage(clientFd, resp);
 }
 

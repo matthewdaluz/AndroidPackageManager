@@ -83,6 +83,15 @@
 (allow apmd_socket fs_type (filesystem (associate)))
 (allow amsd_socket fs_type (filesystem (associate)))
 
+; Overlay mount context=... requires filesystem associate permission between
+; the source mount label and the requested context label.
+; Without these, AMS bind-backend per-subdir overlays (e.g. /vendor/lib)
+; can fail with AVC denials like:
+;   tclass=filesystem { associate } scontext=u:object_r:vendor_file:s0
+(allow system_file system_file (filesystem (associate)))
+(allow vendor_file vendor_file (filesystem (associate)))
+(allow product_file product_file (filesystem (associate)))
+
 ; -----------------------------------------------------------------------------
 ; apmd data + socket paths
 ; -----------------------------------------------------------------------------

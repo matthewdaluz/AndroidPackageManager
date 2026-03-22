@@ -40,12 +40,21 @@
 
 namespace apm::amsd {
 
+namespace {
+constexpr const char *kLogFileTag = "request_dispatcher.cpp";
+}
+
 RequestDispatcher::RequestDispatcher(apm::ams::ModuleManager &moduleManager,
                                      SecurityManager &securityManager)
     : moduleManager_(moduleManager), securityManager_(securityManager) {}
 
 void RequestDispatcher::dispatch(const apm::ipc::Request &req,
                                  apm::ipc::Response &resp) const {
+  if (apm::logger::isDebugEnabled()) {
+    apm::logger::debug(std::string(kLogFileTag) + ": dispatch id='" + req.id +
+                       "' type=" + apm::ipc::typeToString(req.type));
+  }
+
   resp = apm::ipc::Response{};
   resp.id = req.id;
 
@@ -180,6 +189,15 @@ void RequestDispatcher::dispatch(const apm::ipc::Request &req,
   }
 
   finalizeStatus(resp);
+
+  if (apm::logger::isDebugEnabled()) {
+    apm::logger::debug(std::string(kLogFileTag) +
+                       ": dispatch complete id='" + req.id +
+                       "' success=" + (resp.success ? "true" : "false") +
+                       " status=" +
+                       std::to_string(static_cast<int>(resp.status)) +
+                       " message='" + resp.message + "'");
+  }
 }
 
 } // namespace apm::amsd

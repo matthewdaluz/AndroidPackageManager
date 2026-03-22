@@ -77,6 +77,10 @@ Session behavior:
   - `/data/local/userinit.sh`
   - `/data/local/tmp/.profile`
   - `/data/local/tmp/.mkshrc`
+  - `/data/.profile` (best effort)
+  - `/data/.mkshrc` (best effort)
+  - `/root/.profile` (best effort)
+  - `/root/.mkshrc` (best effort)
 - Installs Magisk service hook if `/data/adb/service.d` exists
 
 ## Versioning Note

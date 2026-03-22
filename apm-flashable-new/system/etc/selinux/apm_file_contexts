@@ -23,4 +23,8 @@
 /data/local/tmp/\.apm_profile\.sourced          u:object_r:system_data_file:s0
 /data/local/tmp/\.profile                       u:object_r:system_data_file:s0
 /data/local/tmp/\.mkshrc                        u:object_r:system_data_file:s0
+/data/\.profile                                 u:object_r:system_data_file:s0
+/data/\.mkshrc                                  u:object_r:system_data_file:s0
+/root/\.profile                                 u:object_r:system_data_file:s0
+/root/\.mkshrc                                  u:object_r:system_data_file:s0
 /data/local/tmp/apm-apk-staging(/.*)?           u:object_r:system_data_file:s0

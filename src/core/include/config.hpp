@@ -61,6 +61,7 @@ std::string getCacheDir();
 std::string getListsDir();
 std::string getPkgsDir();
 std::string getLogsDir();
+std::string getDebugFlagFile();
 std::string getManualPackagesDir();
 std::string getApmBinDir();
 std::string getSandboxRoot();

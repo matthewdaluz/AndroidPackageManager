@@ -1859,11 +1859,6 @@ int cmdSigCacheClear() {
 
 // Entry point that parses global options and dispatches to subcommands.
 int main(int argc, char **argv) {
-  // Quiet CLI: write only errors to a local log file, no stderr mirroring.
-  apm::logger::setLogFile("apm-cli.log");
-  apm::logger::setMinLogLevel(apm::logger::Level::Error);
-  apm::logger::enableStderr(false);
-
   int i = 1;
   while (i < argc) {
     std::string a = argv[i];
@@ -1887,6 +1882,14 @@ int main(int argc, char **argv) {
 
   // Set emulator mode so path getters work correctly
   apm::config::setEmulatorMode(emulatorMode);
+
+  // Quiet CLI: write only errors by default, no stderr mirroring.
+  apm::logger::setLogFile("apm-cli.log");
+  apm::logger::setDebugControlFile(apm::config::getDebugFlagFile());
+  apm::logger::setMinLogLevel(apm::logger::Level::Error);
+  apm::logger::enableStderr(false);
+  apm::logger::info("apm: debug control file = " +
+                    apm::config::getDebugFlagFile());
 
   // Log chosen transport mode (IPC-only).
   apm::ipc::detectTransportMode();

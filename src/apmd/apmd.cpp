@@ -133,10 +133,13 @@ int runDaemon(bool debugMode, bool emulatorMode,
                             ? apm::config::getLogsDir() + "/apmd-emulator.log"
                             : "/data/apm/logs/apmd.log";
   apm::logger::setLogFile(logFile);
+  apm::logger::setDebugControlFile(apm::config::getDebugFlagFile());
   apm::logger::setMinLogLevel(debugMode ? apm::logger::Level::Debug
                                         : apm::logger::Level::Info);
 
   apm::logger::info("apmd starting (IPC transport)");
+  apm::logger::info("apmd: debug control file = " +
+                    apm::config::getDebugFlagFile());
   if (debugMode) {
     apm::logger::info("apmd: DEBUG mode enabled");
   }
