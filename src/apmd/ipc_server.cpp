@@ -827,6 +827,7 @@ void IpcServer::handleClient(int clientFd) {
         body << "  Mount: " << yesNo(entry.info.mount) << "\n";
         body << "  post-fs-data: " << yesNo(entry.info.runPostFsData) << "\n";
         body << "  service: " << yesNo(entry.info.runService) << "\n";
+        body << "  install-sh: " << yesNo(entry.info.runInstallSh) << "\n";
         if (!entry.state.installedAt.empty())
           body << "  Installed: " << entry.state.installedAt << "\n";
         if (!entry.state.updatedAt.empty())

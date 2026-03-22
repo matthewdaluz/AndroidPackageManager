@@ -53,8 +53,9 @@ Install flow (`module-install`):
 4. require `overlay/`
 5. move module to `/data/ams/modules/<name>`
 6. create/update `state.json` and workdirs
-7. rebuild overlays
-8. run lifecycle scripts when configured
+7. run `install.sh` once when `install-sh: true`
+8. rebuild overlays
+9. run lifecycle scripts when configured
 
 Enable/disable/remove:
 
@@ -68,8 +69,12 @@ Based on `module-info.json` booleans:
 
 - `post_fs_data: true` -> execute `post-fs-data.sh` in foreground
 - `service: true` -> execute `service.sh` in background
+- `install-sh: true` -> execute `install.sh` once during install
 
 Scripts run via `/system/bin/sh` and append to module log.
+
+If `install-sh` is enabled and `install.sh` is missing or fails, module install
+fails, module state is persisted as disabled, and `last_error` is updated.
 
 ## Safe Mode
 

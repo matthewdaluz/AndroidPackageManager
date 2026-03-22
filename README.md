@@ -203,6 +203,7 @@ Expected module files:
 - `module-info.json` (required)
 - `overlay/` (required)
 - `overlay/system`, `overlay/vendor`, `overlay/product` (optional subtrees)
+- `install.sh` (optional, required when `install-sh` is `true`)
 - `post-fs-data.sh` (optional)
 - `service.sh` (optional)
 
@@ -215,6 +216,7 @@ Expected module files:
 - `mount` (default `true`)
 - `post_fs_data` (default `false`)
 - `service` (default `false`)
+- `install-sh` (default `false`)
 
 `state.json` fields:
 
@@ -228,6 +230,10 @@ Install expectations:
 - ZIP extraction uses `unzip -oq`.
 - Either flat module root or single nested top directory is accepted.
 - `overlay/` directory must exist.
+- If `install-sh` is `true`, `install.sh` is required and runs once during
+  `module-install`.
+- If `install.sh` fails, `module-install` fails and module state is set to
+  disabled with `last_error`.
 
 Overlay targets:
 

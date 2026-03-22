@@ -17,6 +17,7 @@ Optional subtrees and scripts:
 overlay/system/
 overlay/vendor/
 overlay/product/
+install.sh
 post-fs-data.sh
 service.sh
 ```
@@ -34,6 +35,7 @@ Recognized fields:
 - `mount` (bool, default `true`)
 - `post_fs_data` (bool, default `false`)
 - `service` (bool, default `false`)
+- `install-sh` (bool, default `false`)
 
 Name validation:
 
@@ -51,7 +53,8 @@ Name validation:
   "description": "Example AMS module",
   "mount": true,
   "post_fs_data": false,
-  "service": false
+  "service": false,
+  "install-sh": false
 }
 ```
 
@@ -96,6 +99,10 @@ apm module-remove example-fonts
 
 ## Script Behavior
 
+- `install.sh` runs once during `module-install` when `install-sh` is true.
+- If `install-sh` is true, `install.sh` must exist and exit with status `0`.
+- On `install.sh` failure, install fails and AMS keeps the module disabled with
+  `last_error` set in `state.json`.
 - `post-fs-data.sh` runs synchronously when `post_fs_data` is true.
 - `service.sh` runs in background when `service` is true.
 - Script output is appended to `/data/ams/logs/<module>.log`.

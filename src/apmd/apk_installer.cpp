@@ -222,7 +222,8 @@ bool ensureAmsModuleSkeleton(std::string *err) {
         "  \"description\": \"System APK overlays staged by APM\",\n"
         "  \"mount\": true,\n"
         "  \"post_fs_data\": false,\n"
-        "  \"service\": false\n"
+        "  \"service\": false,\n"
+        "  \"install-sh\": false\n"
         "}\n";
 
     std::string werr;

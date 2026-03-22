@@ -1611,6 +1611,33 @@ bool ModuleManager::installFromZip(const std::string &zipPath,
 
   logModuleEvent(info.name, "Installed module from " + zipPath);
 
+  if (info.runInstallSh) {
+    const std::string installScript = apm::fs::joinPath(finalPath, "install.sh");
+    std::string installErr;
+    if (!runScript(installScript, info.name, false, true, &installErr)) {
+      state.enabled = false;
+      state.lastError =
+          installErr.empty() ? "install.sh failed during module install"
+                             : installErr;
+
+      if (!writeState(finalPath, state, &err)) {
+        out.message = state.lastError +
+                      "; failed to persist disabled state: " + err;
+        return false;
+      }
+
+      std::string rollbackErr;
+      if (!applyEnabledModules(&rollbackErr) && !rollbackErr.empty()) {
+        logModuleEvent(info.name,
+                       "Failed to rebuild overlays after install.sh failure: " +
+                           rollbackErr);
+      }
+
+      out.message = state.lastError;
+      return false;
+    }
+  }
+
   if (!applyEnabledModules(&err)) {
     state.lastError = err;
     writeState(finalPath, state, nullptr);
@@ -2088,9 +2115,18 @@ bool ModuleManager::rebuildOverlays(std::string *errorMsg) {
 
 bool ModuleManager::runScript(const std::string &path,
                               const std::string &moduleName,
-                              bool background) const {
-  if (!isRegularFile(path))
+                              bool background, bool requireExists,
+                              std::string *errorMsg) const {
+  if (!isRegularFile(path)) {
+    if (requireExists) {
+      std::string msg = "Required script missing: " + path;
+      logModuleEvent(moduleName, msg);
+      if (errorMsg)
+        *errorMsg = msg;
+      return false;
+    }
     return true;
+  }
 
   std::string logPath = moduleLogPath(moduleName);
   std::ostringstream cmd;
@@ -2111,13 +2147,17 @@ bool ModuleManager::runScript(const std::string &path,
                        "' rc=" + std::to_string(rc));
   }
   if (rc != 0) {
-    logModuleEvent(moduleName, "Script failed: " + path +
-                                   " (rc=" + std::to_string(rc) + ")");
+    std::string msg = "Script failed: " + path + " (rc=" + std::to_string(rc) + ")";
+    logModuleEvent(moduleName, msg);
+    if (errorMsg)
+      *errorMsg = msg;
     return false;
   }
 
   logModuleEvent(moduleName, std::string("Executed script: ") + path +
                                  (background ? " (background)" : ""));
+  if (errorMsg)
+    errorMsg->clear();
   return true;
 }
 
