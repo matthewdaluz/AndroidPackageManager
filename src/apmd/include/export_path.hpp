@@ -51,17 +51,16 @@ resolve_command_collision(const std::string &packageName,
                           const std::string &commandName,
                           std::string &resolvedShimName);
 
-// Rebuild command index + shim set and refresh PATH env file/hooks.
+// Rebuild command index + shim set and refresh PATH source files/hooks.
 // Trigger should be a short reason string such as "install", "remove", etc.
 bool rebuild_command_index_and_shims(const std::string &triggerReason,
                                      CommandHotloadSummary *summary = nullptr);
 
-// Ensure helper scripts exist and run the export script so new commands from
+// Ensure path source files + hooks exist so new commands from
 // /data/apm/installed/commands are immediately available on PATH.
 void refreshPathEnvironment();
 
-// Ensure the global /data/local/tmp/.apm_profile script has been sourced at
-// least once since boot so that shells inheriting ENV see the updated PATH.
+// Ensure canonical /data/apm/path path source files are present.
 void ensureProfileLoaded();
 
 // Generate apm-env.sh for emulator mode with atomic write.

@@ -47,6 +47,7 @@ APM root:
 - `/data/apm/sources` and `/data/apm/sources/sources.list.d`
 - `/data/apm/manual-packages`
 - `/data/apm/keys`
+- `/data/apm/path`
 - `/data/apm/.security`
 - `/data/apm/logs`
 - `/data/apm/apmd.sock`

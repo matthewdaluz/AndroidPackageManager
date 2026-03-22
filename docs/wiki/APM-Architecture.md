@@ -72,15 +72,23 @@ Session behavior:
 `apmd` rebuilds command index and shims through `src/apmd/export_path.cpp`:
 
 - Generates shims in `/data/apm/bin`
-- Writes env/profile material under `/data/apm/sandbox/*`
+- Generates canonical PATH source files under `/data/apm/path`:
+  - `/data/apm/path/sh-path.sh` (sh/mksh source file)
+  - `/data/apm/path/bash-path.sh` (bash source file)
 - Installs shell hooks into:
   - `/data/local/userinit.sh`
   - `/data/local/tmp/.profile`
   - `/data/local/tmp/.mkshrc`
+  - `/data/local/tmp/.bashrc`
+  - `/data/local/tmp/.bash_profile`
   - `/data/.profile` (best effort)
   - `/data/.mkshrc` (best effort)
+  - `/data/.bashrc` (best effort)
+  - `/data/.bash_profile` (best effort)
   - `/root/.profile` (best effort)
   - `/root/.mkshrc` (best effort)
+  - `/root/.bashrc` (best effort)
+  - `/root/.bash_profile` (best effort)
 - Installs Magisk service hook if `/data/adb/service.d` exists
 
 ## Versioning Note

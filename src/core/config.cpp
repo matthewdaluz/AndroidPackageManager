@@ -171,6 +171,24 @@ std::string getApmBinDir() {
   return "/data/apm/bin";
 }
 
+std::string getPathDir() {
+  if (g_emulatorMode)
+    return buildEmulatorPath("path");
+  return "/data/apm/path";
+}
+
+std::string getShPathFile() {
+  if (g_emulatorMode)
+    return buildEmulatorPath("path/sh-path.sh");
+  return "/data/apm/path/sh-path.sh";
+}
+
+std::string getBashPathFile() {
+  if (g_emulatorMode)
+    return buildEmulatorPath("path/bash-path.sh");
+  return "/data/apm/path/bash-path.sh";
+}
+
 std::string getSandboxRoot() {
   if (g_emulatorMode)
     return buildEmulatorPath("sandbox");

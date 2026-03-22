@@ -19,12 +19,17 @@
 
 # apmd-managed shell/profile integration targets
 /data/local/userinit\.sh                        u:object_r:system_data_file:s0
-/data/local/tmp/\.apm_profile                   u:object_r:system_data_file:s0
-/data/local/tmp/\.apm_profile\.sourced          u:object_r:system_data_file:s0
+/data/apm/path(/.*)?                            u:object_r:system_data_file:s0
 /data/local/tmp/\.profile                       u:object_r:system_data_file:s0
 /data/local/tmp/\.mkshrc                        u:object_r:system_data_file:s0
+/data/local/tmp/\.bashrc                        u:object_r:system_data_file:s0
+/data/local/tmp/\.bash_profile                  u:object_r:system_data_file:s0
 /data/\.profile                                 u:object_r:system_data_file:s0
 /data/\.mkshrc                                  u:object_r:system_data_file:s0
+/data/\.bashrc                                  u:object_r:system_data_file:s0
+/data/\.bash_profile                            u:object_r:system_data_file:s0
 /root/\.profile                                 u:object_r:system_data_file:s0
 /root/\.mkshrc                                  u:object_r:system_data_file:s0
+/root/\.bashrc                                  u:object_r:system_data_file:s0
+/root/\.bash_profile                            u:object_r:system_data_file:s0
 /data/local/tmp/apm-apk-staging(/.*)?           u:object_r:system_data_file:s0
