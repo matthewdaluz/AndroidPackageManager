@@ -7,7 +7,7 @@
  * File: factory_reset.hpp
  * Purpose: Declare daemon-side factory reset helpers that wipe APM data,
  * installed content, and system app overlays.
- * Last Modified: November 27th, 2025. - 11:30 AM Eastern Time.
+ * Last Modified: 2026-03-15 11:56:16.537055051 -0400.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify

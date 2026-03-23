@@ -6,7 +6,7 @@
  *
  * File: apmd.cpp
  * Purpose: Bootstrap apmd, configure logging, and run the IPC-backed service loop.
- * Last Modified: March 15th, 2026. - 10:51 PM EDT.
+ * Last Modified: 2026-03-18 10:55:01.568628991 -0400.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify

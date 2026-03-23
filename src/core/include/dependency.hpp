@@ -6,7 +6,7 @@
  *
  * File: dependency.hpp
  * Purpose: Declare dependency resolver interfaces and result structures.
- * Last Modified: November 18th, 2025. - 3:00 PM Eastern Time.
+ * Last Modified: 2026-03-15 11:56:16.537911560 -0400.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify

@@ -6,7 +6,7 @@
  *
  * File: config.cpp
  * Purpose: Runtime configuration for emulator mode path management.
- * Last Modified: March 15th, 2026. - 10:51 PM EDT.
+ * Last Modified: 2026-03-22 13:03:10.296767976 -0400.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify

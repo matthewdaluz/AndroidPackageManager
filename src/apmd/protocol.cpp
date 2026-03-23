@@ -6,7 +6,7 @@
  *
  * File: protocol.cpp
  * Purpose: Implement IPC request/response parsing plus serialization utilities.
- * Last Modified: November 23rd, 2025. - 12:06 PM Eastern Time.
+ * Last Modified: 2026-03-15 12:19:43.769027823 -0400.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify

@@ -6,7 +6,7 @@
  *
  * File: release_parser.hpp
  * Purpose: Declare helpers for parsing Release files and looking up checksum
- * entries. Last Modified: November 18th, 2025. - 3:00 PM Eastern Time. Author:
+ * entries. Last Modified: 2026-03-15 11:56:16.537911560 -0400. Author:
  * Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify

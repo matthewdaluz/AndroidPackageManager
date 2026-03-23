@@ -7,7 +7,7 @@
  * File: factory_reset.cpp
  * Purpose: Implement daemon-side factory reset handling that wipes installed
  * content, credentials, modules, and system app overlays.
- * Last Modified: November 27th, 2025. - 11:30 AM Eastern Time.
+ * Last Modified: 2026-03-15 11:56:16.536679330 -0400.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify

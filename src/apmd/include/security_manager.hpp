@@ -6,7 +6,7 @@
  *
  * File: security_manager.hpp
  * Purpose: Declare daemon-side helpers for password/PIN validation and session
- * issuance. Last Modified: November 23rd, 2025. - 12:06 PM Eastern Time.
+ * issuance. Last Modified: 2026-03-15 13:01:53.782213440 -0400.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify

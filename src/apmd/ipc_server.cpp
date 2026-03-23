@@ -6,7 +6,7 @@
  *
  * File: ipc_server.cpp
  * Purpose: Implement the apmd UNIX socket server, request dispatch, and
- * response helpers. Last Modified: March 15th, 2026. - 10:51 PM EDT.
+ * response helpers. Last Modified: 2026-03-22 12:40:07.402606623 -0400.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify

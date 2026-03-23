@@ -7,7 +7,7 @@
  * File: binder_service.hpp
  * Purpose: Declare the Binder-based service endpoint for apmd, allowing the
  * daemon to run as a native Android system service.
- * Last Modified: November 28th, 2025. - 8:59 AM Eastern Time.
+ * Last Modified: 2026-03-15 11:56:16.536679330 -0400.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify

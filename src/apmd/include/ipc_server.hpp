@@ -6,7 +6,7 @@
  *
  * File: ipc_server.hpp
  * Purpose: Declare the UNIX domain socket server that accepts CLI connections for apmd.
- * Last Modified: November 23rd, 2025. - 12:06 PM Eastern Time.
+ * Last Modified: 2026-03-15 11:56:16.537055051 -0400.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify

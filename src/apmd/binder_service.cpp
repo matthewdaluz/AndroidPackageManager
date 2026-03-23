@@ -7,7 +7,7 @@
  * File: binder_service.cpp
  * Purpose: Implement the Binder endpoint that exposes apmd operations to
  * Android clients, replacing the legacy UNIX socket transport.
- * Last Modified: November 28th, 2025. - 8:59 AM Eastern Time.
+ * Last Modified: 2026-03-15 11:56:16.536679330 -0400.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify

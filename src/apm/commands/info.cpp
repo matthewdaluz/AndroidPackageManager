@@ -6,7 +6,7 @@
  *
  * File: info.cpp
  * Purpose: Implement the local info command summarizing installed/candidate metadata.
- * Last Modified: November 18th, 2025. - 3:00 PM Eastern Time.
+ * Last Modified: 2026-03-15 11:56:16.536347864 -0400.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify

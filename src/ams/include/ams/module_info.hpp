@@ -6,7 +6,7 @@
  *
  * File: module_info.hpp
  * Purpose: Declare AMS module metadata/state structures and JSON helpers.
- * Last Modified: November 18th, 2025. - 3:00 PM Eastern Time.
+ * Last Modified: 2026-03-22 12:40:07.402606623 -0400.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify

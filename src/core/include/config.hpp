@@ -6,7 +6,7 @@
  *
  * File: config.hpp
  * Purpose: Declare filesystem layout constants used by both CLI and daemon.
- * Last Modified: March 15th, 2026. - 10:51 PM EDT.
+ * Last Modified: 2026-03-22 13:03:04.992683537 -0400.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify

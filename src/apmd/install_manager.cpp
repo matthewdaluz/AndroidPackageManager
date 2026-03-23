@@ -7,7 +7,7 @@
  * File: install_manager.cpp
  * Purpose: Implement package downloading, dependency resolution, and
  * install/remove/upgrade workflows.
- * Last Modified: March 15th, 2026. - 10:51 PM EDT.
+ * Last Modified: 2026-03-15 22:51:49.341528351 -0400.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify

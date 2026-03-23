@@ -8,7 +8,7 @@
  * Purpose: Declare a reusable request dispatcher that executes apmd commands
  * using a supplied progress callback. Binder shims (kept in binder_* files)
  * can reuse this if that transport is ever re-enabled.
- * Last Modified: November 28th, 2025. - 8:59 AM Eastern Time.
+ * Last Modified: 2026-03-15 11:56:16.537055051 -0400.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify

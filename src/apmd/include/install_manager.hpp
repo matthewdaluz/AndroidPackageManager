@@ -6,7 +6,7 @@
  *
  * File: install_manager.hpp
  * Purpose: Declare orchestration APIs for installing, removing, and upgrading
- * Debian-style packages. Last Modified: March 15th, 2026. - 10:51 PM EDT.
+ * Debian-style packages. Last Modified: 2026-03-15 22:51:46.933495332 -0400.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify

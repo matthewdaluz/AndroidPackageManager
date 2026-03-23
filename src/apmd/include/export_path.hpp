@@ -6,8 +6,8 @@
  *
  * File: export_path.hpp
  * Purpose: Declare helper APIs for generating PATH export scripts and sourcing
- * them for newly installed commands. Last Modified: March 15th, 2026. - 10:51
- * PM EDT. Author: Matthew DaLuz - RedHead Founder
+ * them for newly installed commands. Last Modified: 2026-03-22 13:03:16.912873246 -0400.
+ * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by

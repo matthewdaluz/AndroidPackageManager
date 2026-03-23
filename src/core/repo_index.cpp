@@ -6,8 +6,8 @@
  *
  * File: repo_index.cpp
  * Purpose: Implement sources.list parsing, repository index downloads, and
- * Packages parsing. Last Modified: November 22nd, 2025. - 10:30 PM Eastern
- * Time. Author: Matthew DaLuz - RedHead Founder
+ * Packages parsing. Last Modified: 2026-03-15 11:56:16.537911560 -0400.
+ * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by

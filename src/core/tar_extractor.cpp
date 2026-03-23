@@ -6,7 +6,7 @@
  *
  * File: tar_extractor.cpp
  * Purpose: Implement tar extraction by shelling out to the system tar binary.
- * Last Modified: January 3rd, 2026. - 8:35 AM Eastern Time.
+ * Last Modified: 2026-03-16 16:13:42.658749739 -0400.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify

@@ -7,7 +7,7 @@
  * File: export_path.cpp
  * Purpose: Event-driven command hotload support (command index + shim
  * generation + PATH environment integration).
- * Last Modified: March 15th, 2026. - 10:51 PM EDT.
+ * Last Modified: 2026-03-22 14:16:11.884971344 -0400.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify

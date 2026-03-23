@@ -6,7 +6,7 @@
  *
  * File: logger.hpp
  * Purpose: Declare the logging facade used across the project.
- * Last Modified: November 18th, 2025. - 3:00 PM Eastern Time.
+ * Last Modified: 2026-03-18 10:55:01.568628991 -0400.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify

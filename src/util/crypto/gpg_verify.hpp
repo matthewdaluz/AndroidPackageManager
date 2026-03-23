@@ -6,8 +6,8 @@
  *
  * File: gpg_verify.hpp
  * Purpose: Declare helpers for verifying detached OpenPGP signatures and
- * importing trusted keys. Last Modified: November 23rd, 2025. - 2:52 PM Eastern
- * Time. Author: Matthew DaLuz - RedHead Founder
+ * importing trusted keys. Last Modified: 2026-03-15 11:56:16.542846254 -0400.
+ * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by

@@ -14,7 +14,7 @@
  * File: security_manager.hpp
  * Purpose: Declare the AMSD security helper that validates shared session
  *          tokens issued by apmd.
- * Last Modified: December 4th, 2025. - 09:07 AM Eastern Time
+ * Last Modified: 2026-03-15 11:56:16.535858305 -0400.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify

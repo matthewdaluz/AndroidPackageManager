@@ -6,7 +6,7 @@
  *
  * File: deb_extractor.cpp
  * Purpose: Implement .deb archive parsing and control/data extraction.
- * Last Modified: November 25th, 2025. - 11:35 AM Eastern Time.
+ * Last Modified: 2026-03-15 11:56:16.537647032 -0400.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify

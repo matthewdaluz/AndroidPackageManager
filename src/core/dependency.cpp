@@ -6,7 +6,7 @@
  *
  * File: dependency.cpp
  * Purpose: Implement dependency resolution and cycle/missing detection for packages.
- * Last Modified: November 22nd, 2025. - 10:30 PM Eastern Time.
+ * Last Modified: 2026-03-15 11:56:16.537647032 -0400.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify

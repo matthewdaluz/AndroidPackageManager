@@ -6,7 +6,7 @@
  *
  * File: protocol.hpp
  * Purpose: Define request/response data structures and serialization helpers shared by the CLI and daemon.
- * Last Modified: November 23rd, 2025. - 12:06 PM Eastern Time.
+ * Last Modified: 2026-03-18 10:55:01.572244347 -0400.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify

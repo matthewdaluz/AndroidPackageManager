@@ -6,7 +6,7 @@
  *
  * File: status_db.cpp
  * Purpose: Implement reading/writing of the dpkg-style status database.
- * Last Modified: November 22nd, 2025. - 10:30 PM Eastern Time.
+ * Last Modified: 2026-03-15 11:56:16.537911560 -0400.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify

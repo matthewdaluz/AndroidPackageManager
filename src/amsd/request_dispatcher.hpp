@@ -13,7 +13,7 @@
  * File: request_dispatcher.hpp
  * Purpose: Declare the AMSD IPC dispatcher that validates sessions and routes
  *          module commands to ModuleManager.
- * Last Modified: December 4th, 2025. - 09:07 AM Eastern Time
+ * Last Modified: 2026-03-15 11:56:16.535858305 -0400.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify

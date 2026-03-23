@@ -6,7 +6,7 @@
  *
  * File: control_parser.cpp
  * Purpose: Implement Debian control file parsing from disk or memory.
- * Last Modified: November 18th, 2025. - 3:00 PM Eastern Time.
+ * Last Modified: 2026-03-15 11:56:16.537647032 -0400.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify

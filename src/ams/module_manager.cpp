@@ -7,7 +7,7 @@
  * File: module_manager.cpp
  * Purpose: Implement AMS module lifecycle management plus OverlayFS
  * orchestration.
- * Last Modified: December 4th, 2025. - 09:07 AM Eastern Time
+ * Last Modified: 2026-03-23 09:42:24.170603439 -0400.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify

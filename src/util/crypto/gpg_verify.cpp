@@ -7,7 +7,7 @@
  * File: gpg_verify.cpp
  * Purpose: Implement OpenPGP RSA/SHA256 detached signature verification and key
  * import helpers using BoringSSL primitives.
- * Last Modified: November 28th, 2025. - 10:37 AM Eastern Time.
+ * Last Modified: 2026-03-15 11:56:16.542760031 -0400.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify

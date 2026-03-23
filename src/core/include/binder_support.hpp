@@ -7,7 +7,7 @@
  * File: binder_support.hpp
  * Purpose: Provide lightweight helpers for loading Binder runtime symbols
  * safely at runtime so builds can fall back when Binder is unavailable.
- * Last Modified: November 28th, 2025. - 8:59 AM Eastern Time.
+ * Last Modified: 2026-03-15 11:56:16.537911560 -0400.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
