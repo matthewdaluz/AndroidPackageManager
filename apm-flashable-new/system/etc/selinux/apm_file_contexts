@@ -28,8 +28,4 @@
 /data/\.mkshrc                                  u:object_r:system_data_file:s0
 /data/\.bashrc                                  u:object_r:system_data_file:s0
 /data/\.bash_profile                            u:object_r:system_data_file:s0
-/root/\.profile                                 u:object_r:system_data_file:s0
-/root/\.mkshrc                                  u:object_r:system_data_file:s0
-/root/\.bashrc                                  u:object_r:system_data_file:s0
-/root/\.bash_profile                            u:object_r:system_data_file:s0
 /data/local/tmp/apm-apk-staging(/.*)?           u:object_r:system_data_file:s0

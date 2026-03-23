@@ -85,10 +85,6 @@ Session behavior:
   - `/data/.mkshrc` (best effort)
   - `/data/.bashrc` (best effort)
   - `/data/.bash_profile` (best effort)
-  - `/root/.profile` (best effort)
-  - `/root/.mkshrc` (best effort)
-  - `/root/.bashrc` (best effort)
-  - `/root/.bash_profile` (best effort)
 - Installs Magisk service hook if `/data/adb/service.d` exists
 
 ## Versioning Note

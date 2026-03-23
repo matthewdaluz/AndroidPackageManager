@@ -35,6 +35,8 @@ If a package installs successfully but `command -v <name>` fails in a new shell:
   - `/data/apm/path/sh-path.sh`
   - `/data/apm/path/bash-path.sh`
 - verify hook line exists exactly once in managed startup files that are present:
+  - each managed file should include the APM block that sets `APM_SHIM_DIR`
+    to `/data/apm/bin`, updates `PATH`, and sources the APM path script
   - required targets:
     - `/data/local/userinit.sh`
     - `/data/local/tmp/.profile`
@@ -46,10 +48,6 @@ If a package installs successfully but `command -v <name>` fails in a new shell:
     - `/data/.mkshrc`
     - `/data/.bashrc`
     - `/data/.bash_profile`
-    - `/root/.profile`
-    - `/root/.mkshrc`
-    - `/root/.bashrc`
-    - `/root/.bash_profile`
 - check `/data/apm/logs/apmd.log` for `export_path` hook install warnings
 
 You can force a hotload rebuild by installing/removing any package, then opening a fresh shell.

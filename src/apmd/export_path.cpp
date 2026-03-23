@@ -764,8 +764,17 @@ bool installShellHooks(std::vector<std::string> &warnings) {
     return true;
   }
 
+  const std::string shimDir = apm::config::getApmBinDir();
   const std::string shPath = apm::config::getShPathFile();
   const std::string bashPath = apm::config::getBashPathFile();
+  const std::string shimCommentLine =
+      "# APM command shims: " + shimDir +
+      "/<command> (example: " + shimDir + "/fastfetch)";
+  const std::string shimExportLine = "export APM_SHIM_DIR=\"" + shimDir + "\"";
+  const std::string shimPathLine =
+      "case \":${PATH:-}:\" in *:\"$APM_SHIM_DIR\":*) ;; "
+      "*) PATH=\"$APM_SHIM_DIR${PATH:+:$PATH}\" ;; esac";
+  const std::string pathExportLine = "export PATH";
   const std::string shHookLine =
       "[ -f \"" + shPath + "\" ] && . \"" + shPath + "\"";
   const std::string bashHookLine =
@@ -783,16 +792,12 @@ bool installShellHooks(std::vector<std::string> &warnings) {
       {"/data/local/tmp/.mkshrc", true, true},
       {"/data/.profile", false, false},
       {"/data/.mkshrc", false, false},
-      {"/root/.profile", false, false},
-      {"/root/.mkshrc", false, false},
   };
   static const HookTarget kBashTargets[] = {
       {"/data/local/tmp/.bashrc", true, true},
       {"/data/local/tmp/.bash_profile", true, true},
       {"/data/.bashrc", false, false},
       {"/data/.bash_profile", false, false},
-      {"/root/.bashrc", false, false},
-      {"/root/.bash_profile", false, false},
   };
 
   std::size_t installed = 0;
@@ -816,29 +821,43 @@ bool installShellHooks(std::vector<std::string> &warnings) {
         continue;
       }
 
-      AppendLineResult result = appendLineIfMissing(targetPath, hookLine, false,
-                                                    target.ensureParents);
-      if (result == AppendLineResult::Added) {
+      bool targetFailed = false;
+      bool targetAdded = false;
+      const std::string lines[] = {
+          shimCommentLine, shimExportLine, shimPathLine, pathExportLine,
+          hookLine};
+      for (const auto &line : lines) {
+        AppendLineResult result =
+            appendLineIfMissing(targetPath, line, false, target.ensureParents);
+        if (result == AppendLineResult::Failed) {
+          targetFailed = true;
+          break;
+        }
+        if (result == AppendLineResult::Added) {
+          targetAdded = true;
+        }
+      }
+
+      if (targetFailed) {
+        ++failed;
+        std::string reason =
+            "Failed to install " + label + " hook block into " + targetPath;
+        if (!target.required) {
+          reason += " (optional target)";
+        }
+        warnings.push_back(reason);
+        continue;
+      }
+
+      if (targetAdded) {
         ++installed;
         apm::logger::info("export_path: " + label +
                           " hook installed: " + targetPath);
         continue;
       }
-
-      if (result == AppendLineResult::AlreadyPresent) {
-        ++alreadyPresent;
-        apm::logger::debug("export_path: " + label +
-                           " hook already present: " + targetPath);
-        continue;
-      }
-
-      ++failed;
-      std::string reason =
-          "Failed to install " + label + " hook into " + targetPath;
-      if (!target.required) {
-        reason += " (optional target)";
-      }
-      warnings.push_back(reason);
+      ++alreadyPresent;
+      apm::logger::debug("export_path: " + label +
+                         " hook already present: " + targetPath);
     }
   };
 
@@ -936,22 +955,12 @@ resolve_command_collision(const std::string &packageName,
     return CommandCollisionResult::Skipped;
   }
 
-  if (!commandExistsInSystemPaths(commandName)) {
-    resolvedShimName = commandName;
-    return CommandCollisionResult::Canonical;
-  }
-
-  std::string namespaced = makeNamespacedCommand(packageName, commandName);
-  if (!isLikelyCommandName(namespaced)) {
+  if (commandExistsInSystemPaths(commandName)) {
     return CommandCollisionResult::Skipped;
   }
 
-  if (commandExistsInSystemPaths(namespaced)) {
-    return CommandCollisionResult::Skipped;
-  }
-
-  resolvedShimName = std::move(namespaced);
-  return CommandCollisionResult::Namespaced;
+  resolvedShimName = commandName;
+  return CommandCollisionResult::Canonical;
 }
 
 bool rebuild_command_index_and_shims(const std::string &triggerReason,
@@ -1009,11 +1018,23 @@ bool rebuild_command_index_and_shims(const std::string &triggerReason,
     const std::string &commandName = it.first;
     const bool systemCollision = commandExistsInSystemPaths(commandName);
     if (systemCollision) {
-      warnings.push_back("System command collision for '" + commandName +
-                         "'; canonical shim disabled");
+      const std::string collisionMsg =
+          "System command collision for '" + commandName +
+          "'; shim creation skipped";
+      warnings.push_back(collisionMsg);
+      for (const auto &provider : providers) {
+        ShimDecision decision;
+        decision.packageName = provider.packageName;
+        decision.commandName = provider.commandName;
+        decision.binaryPath = provider.binaryPath;
+        decision.sourceTermuxEnv = provider.termuxPackage;
+        decision.warning = collisionMsg;
+        decisions.push_back(std::move(decision));
+      }
+      continue;
     }
 
-    bool canonicalConsumed = systemCollision;
+    bool canonicalConsumed = false;
 
     for (const auto &provider : providers) {
       ShimDecision decision;
