@@ -8,6 +8,8 @@
 /system/bin/apm                                 u:object_r:system_file:s0
 /system/bin/apmd                                u:object_r:system_file:s0
 /system/bin/amsd                                u:object_r:system_file:s0
+/system/bin/apm-sh-path                         u:object_r:system_file:s0
+/system/bin/apm-bash-path                       u:object_r:system_file:s0
 
 # Runtime data trees
 /data/apm(/.*)?                                 u:object_r:system_data_file:s0

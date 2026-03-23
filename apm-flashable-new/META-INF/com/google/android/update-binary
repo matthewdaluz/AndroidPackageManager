@@ -223,7 +223,9 @@ apply_permissions() {
 
   for path in \
     "$root/bin/apm" "$root/bin/apmd" "$root/bin/amsd" \
-    "$root/system/bin/apm" "$root/system/bin/apmd" "$root/system/bin/amsd"
+    "$root/bin/apm-sh-path" "$root/bin/apm-bash-path" \
+    "$root/system/bin/apm" "$root/system/bin/apmd" "$root/system/bin/amsd" \
+    "$root/system/bin/apm-sh-path" "$root/system/bin/apm-bash-path"
   do
     [ -f "$path" ] || continue
     set_perm 0755 "$path"
@@ -322,6 +324,18 @@ if [ -f "$TARGET_MNT/bin/amsd" ] || [ -f "$TARGET_MNT/system/bin/amsd" ]; then
   ui_print "  - amsd installed"
 else
   fail "amsd binary not found after install"
+fi
+
+if [ -f "$TARGET_MNT/bin/apm-sh-path" ] || [ -f "$TARGET_MNT/system/bin/apm-sh-path" ]; then
+  ui_print "  - apm-sh-path hook installed"
+else
+  fail "apm-sh-path hook not found after install"
+fi
+
+if [ -f "$TARGET_MNT/bin/apm-bash-path" ] || [ -f "$TARGET_MNT/system/bin/apm-bash-path" ]; then
+  ui_print "  - apm-bash-path hook installed"
+else
+  fail "apm-bash-path hook not found after install"
 fi
 
 cleanup

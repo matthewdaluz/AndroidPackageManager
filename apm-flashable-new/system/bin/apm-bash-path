@@ -1,0 +1,21 @@
+#!/system/bin/sh
+# APM boot PATH hook for bash sessions.
+
+APM_BOOT_SH_HOOK="/system/bin/apm-sh-path"
+APM_BASH_PATH_FILE="/data/apm/path/bash-path.sh"
+
+if [ -f "$APM_BOOT_SH_HOOK" ]; then
+  . "$APM_BOOT_SH_HOOK"
+fi
+
+if [ -f "$APM_BASH_PATH_FILE" ]; then
+  . "$APM_BASH_PATH_FILE"
+fi
+
+hash -r 2>/dev/null || true
+
+export ENV="/system/bin/apm-sh-path"
+export BASH_ENV="/system/bin/apm-bash-path"
+
+unset APM_BOOT_SH_HOOK
+unset APM_BASH_PATH_FILE

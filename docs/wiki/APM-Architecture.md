@@ -75,6 +75,10 @@ Session behavior:
 - Generates canonical PATH source files under `/data/apm/path`:
   - `/data/apm/path/sh-path.sh` (sh/mksh source file)
   - `/data/apm/path/bash-path.sh` (bash source file)
+- Flashable boot fallback exports from init:
+  - `ENV=/system/bin/apm-sh-path`
+  - `BASH_ENV=/system/bin/apm-bash-path`
+  - these scripts keep `/data/apm/bin` on PATH and source `/data/apm/path/*` when present
 - Installs shell hooks into:
   - `/data/local/userinit.sh`
   - `/data/local/tmp/.profile`

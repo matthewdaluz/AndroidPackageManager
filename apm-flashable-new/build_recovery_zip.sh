@@ -23,6 +23,12 @@ require_file() {
   [ -f "$f" ] || { log_error "Missing required file: $f"; exit 1; }
 }
 
+ensure_line_present() {
+  local file="$1"
+  local line="$2"
+  grep -Fqx "$line" "$file" || echo "$line" >> "$file"
+}
+
 # Build policy:
 # - default: rebuild so flashable always matches latest source changes
 # - override: APM_FORCE_REBUILD=0 to reuse existing binaries
@@ -41,6 +47,8 @@ fi
 require_file "${BUILD_DIR}/apm"
 require_file "${BUILD_DIR}/apmd"
 require_file "${BUILD_DIR}/amsd"
+require_file "${FLASHABLE_DIR}/system/bin/apm-sh-path"
+require_file "${FLASHABLE_DIR}/system/bin/apm-bash-path"
 
 mkdir -p "${FLASHABLE_DIR}/system/bin"
 mkdir -p "${FLASHABLE_DIR}/system/etc/selinux"
@@ -50,12 +58,15 @@ cp "${BUILD_DIR}/apm" "${FLASHABLE_DIR}/system/bin/apm"
 cp "${BUILD_DIR}/apmd" "${FLASHABLE_DIR}/system/bin/apmd"
 cp "${BUILD_DIR}/amsd" "${FLASHABLE_DIR}/system/bin/amsd"
 chmod 0755 "${FLASHABLE_DIR}/system/bin/apm" "${FLASHABLE_DIR}/system/bin/apmd" "${FLASHABLE_DIR}/system/bin/amsd"
+chmod 0755 "${FLASHABLE_DIR}/system/bin/apm-sh-path" "${FLASHABLE_DIR}/system/bin/apm-bash-path"
 
 log_info "Syncing SELinux payload from selinux-contexting/"
 cp "${PROJECT_ROOT}/selinux-contexting/apm.cil" "${FLASHABLE_DIR}/system/etc/selinux/apm.cil"
 cp "${PROJECT_ROOT}/selinux-contexting/apm_file_contexts" "${FLASHABLE_DIR}/system/etc/selinux/apm_file_contexts"
 cp "${PROJECT_ROOT}/selinux-contexting/apm_property_contexts" "${FLASHABLE_DIR}/system/etc/selinux/apm_property_contexts"
 cp "${PROJECT_ROOT}/selinux-contexting/apm_service_contexts" "${FLASHABLE_DIR}/system/etc/selinux/apm_service_contexts"
+ensure_line_present "${FLASHABLE_DIR}/system/etc/selinux/apm_file_contexts" "/system/bin/apm-sh-path                         u:object_r:system_file:s0"
+ensure_line_present "${FLASHABLE_DIR}/system/etc/selinux/apm_file_contexts" "/system/bin/apm-bash-path                       u:object_r:system_file:s0"
 
 # Copy xz tools if present
 if [ -d "${PROJECT_ROOT}/prebuilt/xz" ]; then
@@ -91,6 +102,8 @@ log_info "Verifying critical contents"
 unzip -l "${ZIP_PATH}" | grep -q "system/bin/apm" && log_info "  ✓ apm"
 unzip -l "${ZIP_PATH}" | grep -q "system/bin/apmd" && log_info "  ✓ apmd"
 unzip -l "${ZIP_PATH}" | grep -q "system/bin/amsd" && log_info "  ✓ amsd"
+unzip -l "${ZIP_PATH}" | grep -q "system/bin/apm-sh-path" && log_info "  ✓ apm-sh-path"
+unzip -l "${ZIP_PATH}" | grep -q "system/bin/apm-bash-path" && log_info "  ✓ apm-bash-path"
 unzip -l "${ZIP_PATH}" | grep -q "system/etc/init/init.apmd.rc" && log_info "  ✓ init.apmd.rc"
 unzip -l "${ZIP_PATH}" | grep -q "system/etc/init/init.amsd.rc" && log_info "  ✓ init.amsd.rc"
 unzip -l "${ZIP_PATH}" | grep -q "system/etc/selinux/apm.cil" && log_info "  ✓ apm.cil"

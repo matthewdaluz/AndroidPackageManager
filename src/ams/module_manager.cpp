@@ -1615,25 +1615,28 @@ bool ModuleManager::installFromZip(const std::string &zipPath,
     const std::string installScript = apm::fs::joinPath(finalPath, "install.sh");
     std::string installErr;
     if (!runScript(installScript, info.name, false, true, &installErr)) {
-      state.enabled = false;
-      state.lastError =
+      const std::string scriptFailure =
           installErr.empty() ? "install.sh failed during module install"
                              : installErr;
-
-      if (!writeState(finalPath, state, &err)) {
-        out.message = state.lastError +
-                      "; failed to persist disabled state: " + err;
-        return false;
-      }
+      const bool removedModule = apm::fs::removeDirRecursive(finalPath);
+      const bool removedLog = apm::fs::removeFile(moduleLogPath(info.name));
 
       std::string rollbackErr;
       if (!applyEnabledModules(&rollbackErr) && !rollbackErr.empty()) {
-        logModuleEvent(info.name,
-                       "Failed to rebuild overlays after install.sh failure: " +
-                           rollbackErr);
+        apm::logger::warn("AMS rollback: failed to rebuild overlays after "
+                          "install.sh failure for " +
+                          info.name + ": " + rollbackErr);
       }
 
-      out.message = state.lastError;
+      std::ostringstream message;
+      message << scriptFailure << "; module installation rolled back";
+      if (!removedModule)
+        message << "; rollback failed to remove module directory";
+      if (!removedLog)
+        message << "; rollback failed to remove module log";
+      if (!rollbackErr.empty())
+        message << "; overlay rebuild warning: " << rollbackErr;
+      out.message = message.str();
       return false;
     }
   }

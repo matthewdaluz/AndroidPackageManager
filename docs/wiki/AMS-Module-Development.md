@@ -101,8 +101,8 @@ apm module-remove example-fonts
 
 - `install.sh` runs once during `module-install` when `install-sh` is true.
 - If `install-sh` is true, `install.sh` must exist and exit with status `0`.
-- On `install.sh` failure, install fails and AMS keeps the module disabled with
-  `last_error` set in `state.json`.
+- On `install.sh` failure, install fails and AMS automatically rolls back by
+  uninstalling the module.
 - `post-fs-data.sh` runs synchronously when `post_fs_data` is true.
 - `service.sh` runs in background when `service` is true.
 - Script output is appended to `/data/ams/logs/<module>.log`.

@@ -154,12 +154,23 @@ static std::string buildProgressBar(double ratio) {
   return bar;
 }
 
+static bool supportsAnsiTty() {
+  if (::isatty(STDOUT_FILENO) == 0)
+    return false;
+
+  const char *term = std::getenv("TERM");
+  if (!term || !*term)
+    return false;
+
+  return std::strcmp(term, "dumb") != 0;
+}
+
 // Maintain and render multiple in-place progress lines (one per download).
 struct MultiProgressUi {
   std::unordered_map<std::string, std::size_t> index;
   std::vector<std::string> lines;
   std::size_t renderedLines = 0;
-  bool supportsAnsi = (::isatty(STDOUT_FILENO) != 0);
+  bool supportsAnsi = supportsAnsiTty();
 };
 
 static void renderProgressLines(MultiProgressUi &ui) {
@@ -1030,11 +1041,25 @@ int cmdUpdate(const std::string &sessionToken) {
 
   apm::ipc::Response resp;
   std::string err;
-  MultiProgressUi ui;
+  struct UpdateProgressUi {
+    bool supportsAnsi = supportsAnsiTty();
+    bool rendered = false;
+    std::string activeKey;
+    std::chrono::steady_clock::time_point lastRender{};
+  } ui;
+
+  auto finalizeUpdateProgress = [&ui]() {
+    if (!ui.rendered)
+      return;
+    std::cout << "\n";
+    ui.rendered = false;
+  };
 
   auto onProgress = [&](const apm::ipc::Response &chunk) {
     auto eventIt = chunk.rawFields.find("event");
     if (eventIt == chunk.rawFields.end() || eventIt->second != "repo-update")
+      return;
+    if (!ui.supportsAnsi)
       return;
 
     auto getField = [&](const std::string &key) -> std::string {
@@ -1046,16 +1071,6 @@ int cmdUpdate(const std::string &sessionToken) {
     const std::string remote = getField("remote");
     const std::string component = getField("component");
     const std::string key = stage + ":" + remote + ":" + component;
-
-    auto idxIt = ui.index.find(key);
-    std::size_t idx;
-    if (idxIt == ui.index.end()) {
-      idx = ui.lines.size();
-      ui.index.emplace(key, idx);
-      ui.lines.emplace_back();
-    } else {
-      idx = idxIt->second;
-    }
 
     std::string description = getField("description");
     if (description.empty())
@@ -1088,17 +1103,27 @@ int cmdUpdate(const std::string &sessionToken) {
     if (finished)
       line << "  done";
 
-    ui.lines[idx] = line.str();
-    renderProgressLines(ui);
+    const auto now = std::chrono::steady_clock::now();
+    const bool keyChanged = (key != ui.activeKey);
+    constexpr auto kMinRenderInterval = std::chrono::milliseconds(120);
+    if (!finished && ui.rendered && !keyChanged &&
+        (now - ui.lastRender) < kMinRenderInterval) {
+      return;
+    }
+
+    ui.activeKey = key;
+    ui.lastRender = now;
+    std::cout << "\r\033[K" << line.str() << std::flush;
+    ui.rendered = true;
   };
 
   if (!apm::ipc::sendRequestAuto(req, resp, &err, onProgress)) {
-    finalizeProgressLines(ui);
+    finalizeUpdateProgress();
     std::cerr << "Error: " << err << "\n";
     return 1;
   }
 
-  finalizeProgressLines(ui);
+  finalizeUpdateProgress();
 
   std::cout << (resp.success ? "Update succeeded" : "Update failed");
   if (!resp.message.empty())

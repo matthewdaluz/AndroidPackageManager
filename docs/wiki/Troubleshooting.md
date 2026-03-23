@@ -17,6 +17,7 @@ Check:
 - module name contains only allowed chars (`[A-Za-z0-9._-]`)
 - if `module-info.json` sets `install-sh: true`, zip includes `install.sh`
 - verify `install.sh` exits with code `0`
+- note: if `install.sh` fails, AMS rolls back and uninstalls the module
 - `unzip` is available on device
 
 Logs:
@@ -34,6 +35,12 @@ If a package installs successfully but `command -v <name>` fails in a new shell:
 - verify canonical PATH source files exist:
   - `/data/apm/path/sh-path.sh`
   - `/data/apm/path/bash-path.sh`
+- verify boot fallback hook scripts exist and are executable:
+  - `/system/bin/apm-sh-path`
+  - `/system/bin/apm-bash-path`
+- in a fresh shell, verify fallback env vars:
+  - `echo "$ENV"` should be `/system/bin/apm-sh-path`
+  - `echo "$BASH_ENV"` should be `/system/bin/apm-bash-path`
 - verify hook line exists exactly once in managed startup files that are present:
   - each managed file should include the APM block that sets `APM_SHIM_DIR`
     to `/data/apm/bin`, updates `PATH`, and sources the APM path script

@@ -233,8 +233,8 @@ Install expectations:
 - `overlay/` directory must exist.
 - If `install-sh` is `true`, `install.sh` is required and runs once during
   `module-install`.
-- If `install.sh` fails, `module-install` fails and module state is set to
-  disabled with `last_error`.
+- If `install.sh` fails, `module-install` fails and AMS automatically rolls
+  back by uninstalling the module.
 
 Overlay targets:
 

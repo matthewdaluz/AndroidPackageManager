@@ -74,7 +74,7 @@ Based on `module-info.json` booleans:
 Scripts run via `/system/bin/sh` and append to module log.
 
 If `install-sh` is enabled and `install.sh` is missing or fails, module install
-fails, module state is persisted as disabled, and `last_error` is updated.
+fails and AMS rolls back the install by uninstalling the module automatically.
 
 ## Safe Mode
 

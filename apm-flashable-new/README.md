@@ -5,6 +5,9 @@ This folder is a fresh flashable-ZIP template for installing APM directly from *
 ## What It Installs
 
 - `apm`, `apmd`, `amsd` binaries
+- boot PATH fallback hooks:
+  - `system/bin/apm-sh-path`
+  - `system/bin/apm-bash-path`
 - init services:
   - `system/etc/init/init.amsd.rc`
   - `system/etc/init/init.apmd.rc`
@@ -32,6 +35,10 @@ Installer target selection is strictly based on mount points present under `/mnt
 - Both are `class core` services.
 - Current template uses `u:r:su:s0` service labels as a boot-safety fallback.
 - AMSD socket path is `/data/ams/amsd.sock` (not `/dev/socket/amsd`).
+- `init.apmd.rc` exports:
+  - `ENV=/system/bin/apm-sh-path`
+  - `BASH_ENV=/system/bin/apm-bash-path`
+  so new shell sessions can source APM PATH hooks at boot.
 
 ## Access Model
 

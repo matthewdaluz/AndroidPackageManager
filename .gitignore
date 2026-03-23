@@ -47,3 +47,9 @@ apm-flashable/*
 apm-magisk/*
 apm-lineage-recovery-*.zip
 selinux-contexting
+
+# Keep only flashable boot PATH hooks tracked.
+!apm-flashable-new/system/bin/
+apm-flashable-new/system/bin/*
+!apm-flashable-new/system/bin/apm-sh-path
+!apm-flashable-new/system/bin/apm-bash-path

@@ -1,0 +1,32 @@
+#!/system/bin/sh
+# APM boot PATH hook for sh/mksh sessions.
+
+APM_SHIM_DIR="/data/apm/bin"
+APM_SH_PATH_FILE="/data/apm/path/sh-path.sh"
+APM_BOOT_SH_HOOK="/system/bin/apm-sh-path"
+APM_BOOT_BASH_HOOK="/system/bin/apm-bash-path"
+
+case ":${PATH:-}:" in
+  *:"$APM_SHIM_DIR":*) ;;
+  *)
+    if [ -z "${PATH:-}" ]; then
+      PATH="$APM_SHIM_DIR"
+    else
+      PATH="$APM_SHIM_DIR:$PATH"
+    fi
+    ;;
+esac
+
+if [ -f "$APM_SH_PATH_FILE" ]; then
+  . "$APM_SH_PATH_FILE"
+fi
+
+# Keep boot-level fallback hooks pinned for new child shells.
+export PATH
+export ENV="$APM_BOOT_SH_HOOK"
+export BASH_ENV="$APM_BOOT_BASH_HOOK"
+
+unset APM_SHIM_DIR
+unset APM_SH_PATH_FILE
+unset APM_BOOT_SH_HOOK
+unset APM_BOOT_BASH_HOOK
