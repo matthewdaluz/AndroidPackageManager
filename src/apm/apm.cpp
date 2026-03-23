@@ -61,9 +61,9 @@
 namespace {
 
 // Editable CLI metadata.
-static constexpr const char *kApmVersion = "2.0.0b - Open Beta";
+static constexpr const char *kApmVersion = "2.0.0b - Open Beta [Initial Release]";
 static constexpr const char *kApmBuildDate =
-    "March 15th, 2026. - 10:51 PM EDT";
+    "March 23rd, 2026. - 12:00 PM EST";
   
 // -----------------------------------------------------------------------------
 // Progress formatting + helper utilities
