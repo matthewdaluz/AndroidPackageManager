@@ -18,6 +18,7 @@ This wiki documents APM (Android Package Manager), AMS (APM Module System), runt
 - AMS daemon socket: `/data/ams/amsd.sock`.
 - CLI version string in source: `2.0.0b - Open Beta`.
 - Core runtime directories: `/data/apm` and `/data/ams`.
+- Magisk distribution is deprecated and no longer available.
 
 ## Source Map
 

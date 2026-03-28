@@ -2,6 +2,8 @@
 
 This folder is a fresh flashable-ZIP template for installing APM directly from **LineageOS Recovery**.
 
+The Magisk version of APM is deprecated and no longer available; this flashable package is the maintained deployment path.
+
 ## What It Installs
 
 - `apm`, `apmd`, `amsd` binaries

@@ -89,7 +89,7 @@ Session behavior:
   - `/data/.mkshrc` (best effort)
   - `/data/.bashrc` (best effort)
   - `/data/.bash_profile` (best effort)
-- Installs Magisk service hook if `/data/adb/service.d` exists
+- May install a legacy `service.d` hook if `/data/adb/service.d` exists (compatibility path only; official Magisk APM package is deprecated and no longer distributed)
 
 ## Versioning Note
 

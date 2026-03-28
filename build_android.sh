@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="${SCRIPT_DIR}/build"
+BORINGSSL_PREBUILT_DIR="${SCRIPT_DIR}/prebuilt/boringssl"
 
 # Default Android platform
 DEFAULT_PLATFORM="android-34"
@@ -89,6 +90,30 @@ else
   TOOLCHAIN_FILE="${ANDROID_NDK_ROOT_ENV}/build/cmake/android.toolchain.cmake"
   if [[ ! -f "${TOOLCHAIN_FILE}" ]]; then
     echo "Android toolchain file not found at ${TOOLCHAIN_FILE}." >&2
+    exit 1
+  fi
+
+  if [[ ! -f "${BORINGSSL_PREBUILT_DIR}/libssl.a" \
+     || ! -f "${BORINGSSL_PREBUILT_DIR}/libcrypto.a" \
+     || ! -d "${BORINGSSL_PREBUILT_DIR}/include" ]]; then
+    echo ""
+    echo "BoringSSL prebuilts for Android are missing."
+    echo "Expected files:"
+    echo "  ${BORINGSSL_PREBUILT_DIR}/libssl.a"
+    echo "  ${BORINGSSL_PREBUILT_DIR}/libcrypto.a"
+    echo "  ${BORINGSSL_PREBUILT_DIR}/include/"
+    echo ""
+    echo "Example: build BoringSSL from source (run inside your cloned 'boringssl' repo):"
+    echo "  cmake -DANDROID_ABI=${ANDROID_ABI} -DANDROID_PLATFORM=${DEFAULT_PLATFORM} -DCMAKE_TOOLCHAIN_FILE=${TOOLCHAIN_FILE} -GNinja -B build"
+    echo "  ninja -C build -j\$(nproc)"
+    echo ""
+    echo "Then copy the outputs into this repository:"
+    echo "  mkdir -p \"${BORINGSSL_PREBUILT_DIR}\""
+    echo "  cp -f build/ssl/libssl.a \"${BORINGSSL_PREBUILT_DIR}/\""
+    echo "  cp -f build/crypto/libcrypto.a \"${BORINGSSL_PREBUILT_DIR}/\""
+    echo "  cp -rf include \"${BORINGSSL_PREBUILT_DIR}/\""
+    echo ""
+    echo "After that, re-run ./build_android.sh."
     exit 1
   fi
 

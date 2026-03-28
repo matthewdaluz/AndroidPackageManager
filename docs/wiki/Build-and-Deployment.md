@@ -1,5 +1,57 @@
 # Build and Deployment
 
+## Prerequisites
+
+### Debian/Ubuntu packages (required)
+
+```bash
+sudo apt update
+sudo apt install -y \
+  build-essential cmake pkg-config git patch \
+  zlib1g-dev libcurl4-openssl-dev libssl-dev \
+  ninja-build soong clang clangd sdkmanager
+```
+
+### Other distro equivalents (recommended)
+
+Fedora:
+
+```bash
+sudo dnf install -y \
+  @development-tools cmake pkgconf-pkg-config git patch \
+  zlib-devel libcurl-devel openssl-devel \
+  ninja-build clang clang-tools-extra
+```
+
+Arch Linux:
+
+```bash
+sudo pacman -S --needed \
+  base-devel cmake pkgconf git patch zlib curl openssl ninja clang
+```
+
+Note: package names for `soong` and `sdkmanager` vary by distro/repo.
+
+### Required Android SDK components
+
+```bash
+sdkmanager --install \
+  "build-tools;36.1.0" \
+  "cmake;4.1.2" \
+  "ndk;r29" \
+  "tools;26.1.1"
+```
+
+### Recommended editor setup
+
+Visual Studio Code is strongly recommended when modifying APM code. Install:
+
+- `C/C++`
+- `C/C++ DevTools`
+- `C/C++ Extension Pack`
+- `clangd`
+- `CMake Tools`
+
 ## Build Modes
 
 ### Host emulator mode
@@ -37,17 +89,11 @@ Use `Android.bp` targets:
 
 ## Deployment Options
 
-### 1) Magisk module
+### Magisk module status
 
-Use assets under `apm-magisk/`.
+The Magisk version of APM is deprecated and no longer available.
 
-Highlights:
-
-- post-fs-data script creates runtime dirs and populates `/data/apm/bin`
-- service script starts `amsd` first, then `apmd`
-- init rc files are included in module payload
-
-### 2) Lineage recovery flashable
+### Lineage recovery flashable
 
 Use `apm-flashable-new/`:
 

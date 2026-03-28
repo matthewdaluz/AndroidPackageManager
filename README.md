@@ -68,6 +68,58 @@ Emulator mode roots:
 - `$HOME/APMEmulator/data/apm`
 - `$HOME/APMEmulator/ams`
 
+## Build Prerequisites
+
+### Debian/Ubuntu packages (required)
+
+```bash
+sudo apt update
+sudo apt install -y \
+  build-essential cmake pkg-config git patch \
+  zlib1g-dev libcurl4-openssl-dev libssl-dev \
+  ninja-build soong clang clangd sdkmanager
+```
+
+### Other distro equivalents (recommended)
+
+Fedora:
+
+```bash
+sudo dnf install -y \
+  @development-tools cmake pkgconf-pkg-config git patch \
+  zlib-devel libcurl-devel openssl-devel \
+  ninja-build clang clang-tools-extra
+```
+
+Arch Linux:
+
+```bash
+sudo pacman -S --needed \
+  base-devel cmake pkgconf git patch zlib curl openssl ninja clang
+```
+
+Note: package names for `soong` and `sdkmanager` vary by distro/repo.
+
+### Android SDK/NDK components (required)
+
+```bash
+sdkmanager --install \
+  "build-tools;36.1.0" \
+  "cmake;4.1.2" \
+  "ndk;r29" \
+  "tools;26.1.1"
+```
+
+### Recommended editor setup
+
+Visual Studio Code is strongly recommended for modifying APM source. Install:
+
+- `C/C++`
+- `C/C++ DevTools`
+- `C/C++ Extension Pack`
+- `clangd`
+- `CMake Tools`
+
 ## Build
 
 ### 1) Host Emulator Build
@@ -97,11 +149,9 @@ Use `Android.bp` (`apm`, `apmd`, `amsd` targets).
 
 ## Deploy
 
-### Magisk Module
+### Magisk Module Status
 
-`apm-magisk/` contains module assets and startup scripts. The service flow starts `amsd` first and then `apmd`.
-
-Note: some deployment scripts still reference `/dev/socket/amsd` as a readiness hint, but current daemon default socket path from runtime config is `/data/ams/amsd.sock`.
+The Magisk version of APM is deprecated and no longer available.
 
 ### Recovery Flashable
 
