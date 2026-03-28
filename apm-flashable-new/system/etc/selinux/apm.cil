@@ -185,8 +185,21 @@
 (typetransition amsd ams_data_file sock_file amsd_socket)
 
 ; apm CLI runs as shell in most root-shell workflows
+(allow shell shell_data_file (dir (search open read write add_name remove_name getattr setattr)))
+(allow shell shell_data_file (file (open read write append create unlink rename getattr setattr execute execute_no_trans map ioctl)))
+(allow shell shell_data_file (lnk_file (open read write getattr setattr)))
+(allow shell shell_data_file (sock_file (open read write getattr create unlink setattr)))
+
+; Compatibility mode for APM payloads that remain labeled system_data_file
+; on some ROMs despite custom file_context overlays.
+(allow shell system_data_file (dir (search open read getattr)))
+(allow shell system_data_file (file (open read getattr execute execute_no_trans map ioctl)))
+(allow shell system_data_file (lnk_file (open read getattr)))
+(allow shell system_data_file (sock_file (open read write getattr)))
+
 (allow shell apmd_socket (sock_file (open read write getattr)))
 (allow shell apmd (unix_stream_socket (connectto read write getopt setopt shutdown)))
+(allow shell su (unix_stream_socket (connectto read write getopt setopt shutdown)))
 
 (allow shell amsd_socket (sock_file (open read write getattr)))
 (allow shell amsd (unix_stream_socket (connectto read write getopt setopt shutdown)))

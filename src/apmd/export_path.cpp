@@ -136,6 +136,48 @@ bool applyFileModeAndOwnership(const std::string &path, mode_t mode,
   return ok;
 }
 
+bool ensureRuntimeShellAccessibleDirs(std::vector<std::string> &warnings) {
+  bool ok = true;
+
+  std::vector<std::string> dirs;
+  dirs.push_back(apm::config::getApmBinDir());
+  dirs.push_back(apm::config::getPathDir());
+
+  const auto parentDir = [](const std::string &path) {
+    auto pos = path.find_last_of('/');
+    if (pos == std::string::npos) {
+      return std::string{};
+    }
+    return path.substr(0, pos);
+  };
+
+  for (const auto &child : dirs) {
+    const std::string parent = parentDir(child);
+    if (!parent.empty()) {
+      dirs.push_back(parent);
+    }
+  }
+
+  std::sort(dirs.begin(), dirs.end());
+  dirs.erase(std::unique(dirs.begin(), dirs.end()), dirs.end());
+
+  for (const auto &dir : dirs) {
+    if (dir.empty()) {
+      continue;
+    }
+    if (!apm::fs::createDirs(dir)) {
+      warnings.push_back("Failed to create runtime directory: " + dir);
+      ok = false;
+      continue;
+    }
+    if (!applyFileModeAndOwnership(dir, 0775, warnings)) {
+      ok = false;
+    }
+  }
+
+  return ok;
+}
+
 std::string trim(std::string s) {
   auto isSpace = [](unsigned char c) {
     return c == ' ' || c == '\t' || c == '\n' || c == '\r';
@@ -980,6 +1022,9 @@ bool rebuild_command_index_and_shims(const std::string &triggerReason,
       !apm::fs::createDirs(apm::config::getSandboxMountsDir())) {
     warnings.push_back(
         "Failed to prepare runtime directories for hotload rebuild");
+    ok = false;
+  }
+  if (!ensureRuntimeShellAccessibleDirs(warnings)) {
     ok = false;
   }
 

@@ -9,6 +9,7 @@ on post-fs-data
     mkdir /data/ams/.runtime/upper 0700 root root
     mkdir /data/ams/.runtime/work 0700 root root
     mkdir /data/ams/.runtime/base 0700 root root
+    restorecon_recursive /data/ams
 
     start amsd
 
@@ -16,7 +17,7 @@ service amsd /system/bin/amsd
     class core
     user root
     group root system shell
-    # Compatibility mode: keep su domain unless custom policy is confirmed loaded.
+    # Compatibility mode: keep su domain unless custom policy merge is guaranteed.
     seclabel u:r:su:s0
     # amsd creates /data/ams/amsd.sock itself.
     capabilities SYS_ADMIN DAC_OVERRIDE DAC_READ_SEARCH CHOWN FOWNER SETUID SETGID

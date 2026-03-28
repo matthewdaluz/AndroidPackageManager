@@ -1,8 +1,6 @@
 # APM/AMSD file contexts (LineageOS recovery compatibility mode)
 # IMPORTANT:
-# Use only stock platform types here to avoid init boot failures such as
-# "set_policy_failed:/data/ams" on devices that do not safely merge custom
-# policy/file_context fragments at boot.
+# Use stock platform types to avoid unmapped custom-type boot failures.
 
 # Binaries: keep as platform system_file for compatibility.
 /system/bin/apm                                 u:object_r:system_file:s0
@@ -12,16 +10,17 @@
 /system/bin/apm-bash-path                       u:object_r:system_file:s0
 
 # Runtime data trees
+/data/apm/installed(/.*)?                       u:object_r:shell_data_file:s0
 /data/apm(/.*)?                                 u:object_r:system_data_file:s0
 /data/ams(/.*)?                                 u:object_r:system_data_file:s0
 
 # Runtime sockets
-/data/apm/apmd\.sock                            u:object_r:system_data_file:s0
+/data/local/tmp/apm/apmd\.sock                  u:object_r:shell_data_file:s0
 /data/ams/amsd\.sock                            u:object_r:system_data_file:s0
 
 # apmd-managed shell/profile integration targets
 /data/local/userinit\.sh                        u:object_r:system_data_file:s0
-/data/apm/path(/.*)?                            u:object_r:system_data_file:s0
+/data/local/tmp/apm(/.*)?                       u:object_r:shell_data_file:s0
 /data/local/tmp/\.profile                       u:object_r:system_data_file:s0
 /data/local/tmp/\.mkshrc                        u:object_r:system_data_file:s0
 /data/local/tmp/\.bashrc                        u:object_r:system_data_file:s0

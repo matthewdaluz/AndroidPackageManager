@@ -8,6 +8,8 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUILD_DIR="${PROJECT_ROOT}/build"
 FLASHABLE_DIR="${PROJECT_ROOT}/apm-flashable-new"
 OUTPUT_DIR="${PROJECT_ROOT}"
+SELINUX_DST_DIR="${FLASHABLE_DIR}/system/etc/selinux"
+SELINUX_SRC_DIR="${APM_SELINUX_SOURCE_DIR:-${SELINUX_DST_DIR}}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -49,9 +51,13 @@ require_file "${BUILD_DIR}/apmd"
 require_file "${BUILD_DIR}/amsd"
 require_file "${FLASHABLE_DIR}/system/bin/apm-sh-path"
 require_file "${FLASHABLE_DIR}/system/bin/apm-bash-path"
+require_file "${SELINUX_SRC_DIR}/apm.cil"
+require_file "${SELINUX_SRC_DIR}/apm_file_contexts"
+require_file "${SELINUX_SRC_DIR}/apm_property_contexts"
+require_file "${SELINUX_SRC_DIR}/apm_service_contexts"
 
 mkdir -p "${FLASHABLE_DIR}/system/bin"
-mkdir -p "${FLASHABLE_DIR}/system/etc/selinux"
+mkdir -p "${SELINUX_DST_DIR}"
 
 log_info "Copying binaries into flashable template"
 cp "${BUILD_DIR}/apm" "${FLASHABLE_DIR}/system/bin/apm"
@@ -60,13 +66,17 @@ cp "${BUILD_DIR}/amsd" "${FLASHABLE_DIR}/system/bin/amsd"
 chmod 0755 "${FLASHABLE_DIR}/system/bin/apm" "${FLASHABLE_DIR}/system/bin/apmd" "${FLASHABLE_DIR}/system/bin/amsd"
 chmod 0755 "${FLASHABLE_DIR}/system/bin/apm-sh-path" "${FLASHABLE_DIR}/system/bin/apm-bash-path"
 
-log_info "Syncing SELinux payload from selinux-contexting/"
-cp "${PROJECT_ROOT}/selinux-contexting/apm.cil" "${FLASHABLE_DIR}/system/etc/selinux/apm.cil"
-cp "${PROJECT_ROOT}/selinux-contexting/apm_file_contexts" "${FLASHABLE_DIR}/system/etc/selinux/apm_file_contexts"
-cp "${PROJECT_ROOT}/selinux-contexting/apm_property_contexts" "${FLASHABLE_DIR}/system/etc/selinux/apm_property_contexts"
-cp "${PROJECT_ROOT}/selinux-contexting/apm_service_contexts" "${FLASHABLE_DIR}/system/etc/selinux/apm_service_contexts"
-ensure_line_present "${FLASHABLE_DIR}/system/etc/selinux/apm_file_contexts" "/system/bin/apm-sh-path                         u:object_r:system_file:s0"
-ensure_line_present "${FLASHABLE_DIR}/system/etc/selinux/apm_file_contexts" "/system/bin/apm-bash-path                       u:object_r:system_file:s0"
+if [ "${SELINUX_SRC_DIR}" != "${SELINUX_DST_DIR}" ]; then
+  log_info "Syncing SELinux payload from ${SELINUX_SRC_DIR}/"
+  cp "${SELINUX_SRC_DIR}/apm.cil" "${SELINUX_DST_DIR}/apm.cil"
+  cp "${SELINUX_SRC_DIR}/apm_file_contexts" "${SELINUX_DST_DIR}/apm_file_contexts"
+  cp "${SELINUX_SRC_DIR}/apm_property_contexts" "${SELINUX_DST_DIR}/apm_property_contexts"
+  cp "${SELINUX_SRC_DIR}/apm_service_contexts" "${SELINUX_DST_DIR}/apm_service_contexts"
+else
+  log_info "Using SELinux payload from flashable tree: ${SELINUX_DST_DIR}/"
+fi
+ensure_line_present "${SELINUX_DST_DIR}/apm_file_contexts" "/system/bin/apm-sh-path                         u:object_r:system_file:s0"
+ensure_line_present "${SELINUX_DST_DIR}/apm_file_contexts" "/system/bin/apm-bash-path                       u:object_r:system_file:s0"
 
 # Copy xz tools if present
 if [ -d "${PROJECT_ROOT}/prebuilt/xz" ]; then

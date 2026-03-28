@@ -126,10 +126,10 @@ inline constexpr const char *LISTS_DIR = "/data/apm/lists";
 inline constexpr const char *PKGS_DIR = "/data/apm/pkgs";
 inline constexpr const char *LOGS_DIR = "/data/apm/logs";
 inline constexpr const char *MANUAL_PACKAGES_DIR = "/data/apm/manual-packages";
-inline constexpr const char *APM_BIN_DIR = "/data/apm/bin";
-inline constexpr const char *PATH_DIR = "/data/apm/path";
-inline constexpr const char *SH_PATH_FILE = "/data/apm/path/sh-path.sh";
-inline constexpr const char *BASH_PATH_FILE = "/data/apm/path/bash-path.sh";
+inline constexpr const char *APM_BIN_DIR = "/data/local/tmp/apm/bin";
+inline constexpr const char *PATH_DIR = "/data/local/tmp/apm/path";
+inline constexpr const char *SH_PATH_FILE = "/data/local/tmp/apm/path/sh-path.sh";
+inline constexpr const char *BASH_PATH_FILE = "/data/local/tmp/apm/path/bash-path.sh";
 inline constexpr const char *SANDBOX_ROOT = "/data/apm/sandbox";
 inline constexpr const char *SANDBOX_STATE_DIR = "/data/apm/sandbox/state";
 inline constexpr const char *SANDBOX_ENV_DIR = "/data/apm/sandbox/env";
@@ -173,9 +173,9 @@ inline constexpr const char *SOURCES_LIST_D =
 // For repo_index, this is treated as the “sources root” (dir).
 inline constexpr const char *SOURCES_LIST = SOURCES_DIR;
 
-// IPC (UNIX domain) socket path used when running as Magisk-style system-wide
-// (/data/apm/bin). The daemon binds here and the CLI connects here.
-inline constexpr const char *IPC_SOCKET_PATH = "/data/apm/apmd.sock";
+// IPC (UNIX domain) socket path used by shell-facing runtime.
+// The daemon binds here and the CLI connects here.
+inline constexpr const char *IPC_SOCKET_PATH = "/data/local/tmp/apm/apmd.sock";
 
 // Default architecture for Debian-style repos
 inline constexpr const char *DEFAULT_ARCH = "arm64";

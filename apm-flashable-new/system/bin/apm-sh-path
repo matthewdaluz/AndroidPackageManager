@@ -1,8 +1,8 @@
 #!/system/bin/sh
 # APM boot PATH hook for sh/mksh sessions.
 
-APM_SHIM_DIR="/data/apm/bin"
-APM_SH_PATH_FILE="/data/apm/path/sh-path.sh"
+APM_SHIM_DIR="/data/local/tmp/apm/bin"
+APM_SH_PATH_FILE="/data/local/tmp/apm/path/sh-path.sh"
 APM_BOOT_SH_HOOK="/system/bin/apm-sh-path"
 APM_BOOT_BASH_HOOK="/system/bin/apm-bash-path"
 

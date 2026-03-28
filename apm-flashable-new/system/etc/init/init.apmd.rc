@@ -3,18 +3,19 @@
 
 on init
     # Boot-level fallback so new sh/mksh/bash shells source APM PATH hooks
-    # even before /data/apm/path files are generated.
+    # even before /data/local/tmp/apm/path files are generated.
     export ENV /system/bin/apm-sh-path
     export BASH_ENV /system/bin/apm-bash-path
 
 on post-fs-data
     mkdir /data/apm 0775 root shell
-    mkdir /data/apm/bin 0775 root shell
+    mkdir /data/local/tmp/apm 0775 root shell
+    mkdir /data/local/tmp/apm/bin 0775 root shell
     mkdir /data/apm/cache 0775 root shell
     mkdir /data/apm/lists 0775 root shell
     mkdir /data/apm/keys 0775 root shell
     mkdir /data/apm/pkgs 0775 root shell
-    mkdir /data/apm/path 0775 root shell
+    mkdir /data/local/tmp/apm/path 0775 root shell
     mkdir /data/apm/installed 0775 root shell
     mkdir /data/apm/installed/commands 0775 root shell
     mkdir /data/apm/installed/dependencies 0775 root shell
@@ -34,20 +35,19 @@ on post-fs-data
     mkdir /data/apm/sandbox/mounts 0775 root shell
     mkdir /data/apm/.security 0700 root root
 
-    # Avoid stale binaries/scripts in /data/apm/bin shadowing /system/bin/apm*
+    # Avoid stale binaries/scripts in /data/local/tmp/apm/bin shadowing /system/bin/apm*
     # for shell sessions with PATH hooks enabled.
-    rm /data/apm/bin/apm
-    rm /data/apm/bin/apmd
-    rm /data/apm/bin/amsd
-    symlink /system/bin/apm /data/apm/bin/apm
-    symlink /system/bin/apmd /data/apm/bin/apmd
-    symlink /system/bin/amsd /data/apm/bin/amsd
+    rm /data/local/tmp/apm/bin/apm
+    rm /data/local/tmp/apm/bin/apmd
+    rm /data/local/tmp/apm/bin/amsd
+    restorecon_recursive /data/local/tmp/apm
+    restorecon_recursive /data/apm
 
 service apmd /system/bin/apmd
     class core
     user root
     group root system inet shell
-    # Compatibility mode: keep su domain unless custom policy is confirmed loaded.
+    # Compatibility mode: keep su domain unless custom policy merge is guaranteed.
     seclabel u:r:su:s0
     capabilities SYS_ADMIN NET_ADMIN NET_RAW DAC_OVERRIDE DAC_READ_SEARCH CHOWN FOWNER SETUID SETGID
 

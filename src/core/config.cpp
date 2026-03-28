@@ -168,25 +168,25 @@ std::string getManualPackagesDir() {
 std::string getApmBinDir() {
   if (g_emulatorMode)
     return buildEmulatorPath("bin");
-  return "/data/apm/bin";
+  return "/data/local/tmp/apm/bin";
 }
 
 std::string getPathDir() {
   if (g_emulatorMode)
     return buildEmulatorPath("path");
-  return "/data/apm/path";
+  return "/data/local/tmp/apm/path";
 }
 
 std::string getShPathFile() {
   if (g_emulatorMode)
     return buildEmulatorPath("path/sh-path.sh");
-  return "/data/apm/path/sh-path.sh";
+  return "/data/local/tmp/apm/path/sh-path.sh";
 }
 
 std::string getBashPathFile() {
   if (g_emulatorMode)
     return buildEmulatorPath("path/bash-path.sh");
-  return "/data/apm/path/bash-path.sh";
+  return "/data/local/tmp/apm/path/bash-path.sh";
 }
 
 std::string getSandboxRoot() {
@@ -320,7 +320,7 @@ std::string getSourcesList() { return getSourcesDir(); }
 std::string getIpcSocketPath() {
   if (g_emulatorMode)
     return buildEmulatorPath("apmd.socket");
-  return "/data/apm/apmd.sock";
+  return "/data/local/tmp/apm/apmd.sock";
 }
 
 std::string getAmsdSocketPath() {

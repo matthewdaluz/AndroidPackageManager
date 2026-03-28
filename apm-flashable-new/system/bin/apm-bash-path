@@ -2,7 +2,7 @@
 # APM boot PATH hook for bash sessions.
 
 APM_BOOT_SH_HOOK="/system/bin/apm-sh-path"
-APM_BASH_PATH_FILE="/data/apm/path/bash-path.sh"
+APM_BASH_PATH_FILE="/data/local/tmp/apm/path/bash-path.sh"
 
 if [ -f "$APM_BOOT_SH_HOOK" ]; then
   . "$APM_BOOT_SH_HOOK"
