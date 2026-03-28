@@ -1,0 +1,6 @@
+# APM Binder service contexts
+# Current APM runtime is UNIX-socket IPC only (no active Binder registration).
+# Keep this file for installer compatibility with existing flashable packaging.
+
+# Legacy reference only (disabled):
+# apm.apmd    u:object_r:apmd_service:s0

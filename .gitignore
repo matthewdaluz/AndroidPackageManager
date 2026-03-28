@@ -46,7 +46,6 @@ apm-systemwide-*.zip
 apm-flashable/*
 apm-magisk/*
 apm-lineage-recovery-*.zip
-selinux-contexting
 ShellResults.txt
 
 # Keep only flashable boot PATH hooks tracked.

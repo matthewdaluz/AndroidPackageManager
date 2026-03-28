@@ -1,0 +1,4 @@
+# APM custom property contexts
+
+amsd.ready    u:object_r:apm_prop:s0
+apm.restart   u:object_r:apm_prop:s0
