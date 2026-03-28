@@ -1,6 +1,6 @@
 # APM - Android Package Manager
 
-APM is a GPLv3 package manager for rooted Android with an APT-like workflow and Android-specific daemon tooling.
+APM is a GPLv3 package manager for Android with an APT-like workflow and Android-specific daemon tooling.
 
 Current CLI version string in source: `2.0.0b - Open Beta`.
 
