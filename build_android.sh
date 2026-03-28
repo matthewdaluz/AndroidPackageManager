@@ -4,13 +4,32 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="${SCRIPT_DIR}/build"
 BORINGSSL_PREBUILT_DIR="${SCRIPT_DIR}/prebuilt/boringssl"
+ROOT_COMPILE_COMMANDS="${SCRIPT_DIR}/compile_commands.json"
 
 # Default Android platform
 DEFAULT_PLATFORM="android-34"
 
+publish_compile_commands() {
+  local build_compile_commands="${BUILD_DIR}/compile_commands.json"
+
+  if [[ ! -f "${build_compile_commands}" ]]; then
+    echo "Warning: ${build_compile_commands} was not generated; skipping workspace compile_commands.json."
+    return
+  fi
+
+  rm -f "${ROOT_COMPILE_COMMANDS}"
+  if ln -s "${build_compile_commands}" "${ROOT_COMPILE_COMMANDS}" 2>/dev/null; then
+    echo "Linked ${ROOT_COMPILE_COMMANDS} -> ${build_compile_commands}"
+  else
+    cp -f "${build_compile_commands}" "${ROOT_COMPILE_COMMANDS}"
+    echo "Symlink unavailable; copied compile_commands.json to workspace root."
+  fi
+}
+
 echo "Cleaning build directory..."
 rm -rf "${BUILD_DIR}"
 mkdir -p "${BUILD_DIR}"
+rm -f "${ROOT_COMPILE_COMMANDS}"
 
 echo "Select target architecture:"
 ARCH_CHOICES=("arm64-v8a" "armeabi-v7a" "x86_64" "x86" "x86_64 (Emulator Mode)")
@@ -65,9 +84,10 @@ if [[ "${EMULATOR_MODE}" == "1" ]]; then
   echo ""
 
   cmake -S "${SCRIPT_DIR}" -B "${BUILD_DIR}" \
-    -G "Unix Makefiles" \
+    -G "Ninja" \
     -DAPM_EMULATOR_MODE=ON \
-    -DCMAKE_BUILD_TYPE=Release
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
 else
   # Normal Android build with NDK resolved under /opt/android-sdk
@@ -126,16 +146,19 @@ else
   echo ""
 
   cmake -S "${SCRIPT_DIR}" -B "${BUILD_DIR}" \
-    -G "Unix Makefiles" \
+    -G "Ninja" \
     -DANDROID_ABI="${ANDROID_ABI}" \
     -DANDROID_PLATFORM="${DEFAULT_PLATFORM}" \
     -DCMAKE_TOOLCHAIN_FILE="${TOOLCHAIN_FILE}" \
     -DANDROID_STL="c++_static" \
     -DANDROID_SDK_ROOT="${ANDROID_SDK_ROOT_ENV}" \
-    -DANDROID_NDK_ROOT="${ANDROID_NDK_ROOT_ENV}"
+    -DANDROID_NDK_ROOT="${ANDROID_NDK_ROOT_ENV}" \
+    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 fi
 
-echo "Building with make -j$(nproc)..."
-cmake --build "${BUILD_DIR}" -- -j"$(nproc)"
+publish_compile_commands
+
+echo "Building with cmake --build --parallel $(nproc)..."
+cmake --build "${BUILD_DIR}" --parallel "$(nproc)"
 
 echo "Build completed successfully for API ${API_LEVEL}."

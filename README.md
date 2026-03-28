@@ -120,6 +120,8 @@ Visual Studio Code is strongly recommended for modifying APM source. Install:
 - `clangd`
 - `CMake Tools`
 
+`./build_android.sh` now publishes `compile_commands.json` at the workspace root (linked or copied from `build/`) so VSCode/clangd can pick up generated compile flags without extra setup.
+
 ## Build
 
 ### 1) Host Emulator Build
@@ -142,6 +144,7 @@ Notes:
 - Script enforces API level >= 29.
 - Detects NDK from `ANDROID_NDK_ROOT`/`ANDROID_NDK_HOME` or `$ANDROID_SDK_ROOT/ndk`.
 - Includes an `x86_64 (Emulator Mode)` option.
+- Uses the `Ninja` generator (same default generator used by VSCode CMake Tools) to avoid generator mismatch in `build/`.
 
 ### 3) AOSP/Soong
 

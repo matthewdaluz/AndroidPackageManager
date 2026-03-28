@@ -1,4 +1,5 @@
 CompileFlags:
+  CompilationDatabase: build
   Add:
     - -std=c++17
     - -Wall
@@ -6,8 +7,8 @@ CompileFlags:
     - -Wno-unused-parameter
     - -Wno-unused-variable
 
-# Make Clangd use compile_commands.json
-# (CMake will generate this automatically)
+# Build scripts write compile_commands.json into build/
+# and publish a workspace-root copy/symlink for editor compatibility.
 
 Diagnostics:
   UnusedIncludes: Strict
@@ -16,4 +17,3 @@ Diagnostics:
     - unused-variable
     - unused-parameter
     - missing-prototypes
-
