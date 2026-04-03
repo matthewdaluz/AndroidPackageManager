@@ -400,17 +400,47 @@ endif()
 # ======================================================
 # BoringSSL/OpenSSL
 # ======================================================
-find_library(OPENSSL_SSL_LIBRARY NAMES ssl)
-find_library(OPENSSL_CRYPTO_LIBRARY NAMES crypto)
+set(_APM_BORINGSSL_ROOT "${CMAKE_SOURCE_DIR}/prebuilt/boringssl")
+set(_APM_BORINGSSL_INCLUDE_DIR "${_APM_BORINGSSL_ROOT}/include")
+set(_APM_BORINGSSL_LIBDIR "")
+
+if(ANDROID)
+  if(NOT DEFINED ANDROID_ABI OR ANDROID_ABI STREQUAL "")
+    message(FATAL_ERROR "ANDROID_ABI must be defined for Android builds so the correct prebuilt BoringSSL archive can be selected.")
+  endif()
+
+  set(_APM_BORINGSSL_LIBDIR "${_APM_BORINGSSL_ROOT}/build-${ANDROID_ABI}")
+  if(NOT EXISTS "${_APM_BORINGSSL_LIBDIR}/libssl.a"
+      OR NOT EXISTS "${_APM_BORINGSSL_LIBDIR}/libcrypto.a"
+      OR NOT EXISTS "${_APM_BORINGSSL_INCLUDE_DIR}")
+    message(FATAL_ERROR
+      "Prebuilt BoringSSL for Android ABI ${ANDROID_ABI} was not found.\n"
+      "Expected:\n"
+      "  ${_APM_BORINGSSL_LIBDIR}/libssl.a\n"
+      "  ${_APM_BORINGSSL_LIBDIR}/libcrypto.a\n"
+      "  ${_APM_BORINGSSL_INCLUDE_DIR}/\n")
+  endif()
+
+  message(STATUS "Using prebuilt BoringSSL for ${ANDROID_ABI} from ${_APM_BORINGSSL_LIBDIR}")
+  set(OPENSSL_SSL_LIBRARY "${_APM_BORINGSSL_LIBDIR}/libssl.a" CACHE FILEPATH "Prebuilt BoringSSL libssl" FORCE)
+  set(OPENSSL_CRYPTO_LIBRARY "${_APM_BORINGSSL_LIBDIR}/libcrypto.a" CACHE FILEPATH "Prebuilt BoringSSL libcrypto" FORCE)
+  include_directories(SYSTEM "${_APM_BORINGSSL_INCLUDE_DIR}")
+endif()
+
+if(NOT OPENSSL_SSL_LIBRARY OR NOT OPENSSL_CRYPTO_LIBRARY)
+  find_library(OPENSSL_SSL_LIBRARY NAMES ssl)
+  find_library(OPENSSL_CRYPTO_LIBRARY NAMES crypto)
+endif()
+
 if((NOT OPENSSL_SSL_LIBRARY OR NOT OPENSSL_CRYPTO_LIBRARY)
-    AND EXISTS "${CMAKE_SOURCE_DIR}/prebuilt/boringssl/libssl.a"
-    AND EXISTS "${CMAKE_SOURCE_DIR}/prebuilt/boringssl/libcrypto.a")
-  # Use the repository's prebuilt BoringSSL as a fallback (primarily for Android toolchain builds).
-  message(STATUS "Using prebuilt BoringSSL from ${CMAKE_SOURCE_DIR}/prebuilt/boringssl")
-  set(OPENSSL_SSL_LIBRARY "${CMAKE_SOURCE_DIR}/prebuilt/boringssl/libssl.a" CACHE FILEPATH "Prebuilt BoringSSL libssl" FORCE)
-  set(OPENSSL_CRYPTO_LIBRARY "${CMAKE_SOURCE_DIR}/prebuilt/boringssl/libcrypto.a" CACHE FILEPATH "Prebuilt BoringSSL libcrypto" FORCE)
-  if(EXISTS "${CMAKE_SOURCE_DIR}/prebuilt/boringssl/include")
-    include_directories(SYSTEM "${CMAKE_SOURCE_DIR}/prebuilt/boringssl/include")
+    AND EXISTS "${_APM_BORINGSSL_ROOT}/libssl.a"
+    AND EXISTS "${_APM_BORINGSSL_ROOT}/libcrypto.a")
+  # Legacy flat prebuilt layout fallback.
+  message(STATUS "Using prebuilt BoringSSL from ${_APM_BORINGSSL_ROOT}")
+  set(OPENSSL_SSL_LIBRARY "${_APM_BORINGSSL_ROOT}/libssl.a" CACHE FILEPATH "Prebuilt BoringSSL libssl" FORCE)
+  set(OPENSSL_CRYPTO_LIBRARY "${_APM_BORINGSSL_ROOT}/libcrypto.a" CACHE FILEPATH "Prebuilt BoringSSL libcrypto" FORCE)
+  if(EXISTS "${_APM_BORINGSSL_INCLUDE_DIR}")
+    include_directories(SYSTEM "${_APM_BORINGSSL_INCLUDE_DIR}")
   endif()
 endif()
 if(NOT OPENSSL_SSL_LIBRARY OR NOT OPENSSL_CRYPTO_LIBRARY)
@@ -423,15 +453,14 @@ if(NOT OPENSSL_SSL_LIBRARY OR NOT OPENSSL_CRYPTO_LIBRARY)
     "       cd boringssl\n"
     "\n"
     "  2. Build BoringSSL:\n"
-    "       mkdir build && cd build\n"
-    "       cmake -DCMAKE_BUILD_TYPE=Release ..\n"
-    "       make -j$(nproc)\n"
+    "       cmake -DCMAKE_BUILD_TYPE=Release .. -B build\n"
+    "       cmake --build build -j$(nproc)\n"
     "\n"
-    "  3. Copy the built libraries to the prebuilt directory:\n"
-    "       mkdir -p ${CMAKE_SOURCE_DIR}/prebuilt/boringssl\n"
-    "       cp ssl/libssl.a ${CMAKE_SOURCE_DIR}/prebuilt/boringssl/\n"
-    "       cp crypto/libcrypto.a ${CMAKE_SOURCE_DIR}/prebuilt/boringssl/\n"
-    "       cp -r ../include ${CMAKE_SOURCE_DIR}/prebuilt/boringssl/\n"
+    "  3. Copy the built libraries to the prebuilt directory.\n"
+    "     Android builds expect ABI-specific archives under:\n"
+    "       ${CMAKE_SOURCE_DIR}/prebuilt/boringssl/build-${ANDROID_ABI}\n"
+    "     with shared headers under:\n"
+    "       ${CMAKE_SOURCE_DIR}/prebuilt/boringssl/include\n"
     "\n"
     "  4. Re-run CMake to detect the prebuilt libraries.\n"
     "\n"
