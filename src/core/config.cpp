@@ -84,37 +84,37 @@ std::string getApmRoot() {
 std::string getInstalledDir() {
   if (g_emulatorMode)
     return buildEmulatorPath("installed");
-  return "/data/apm/installed";
+  return "/data/local/tmp/apm/runtime/installed";
 }
 
 std::string getCommandsDir() {
   if (g_emulatorMode)
     return buildEmulatorPath("installed/commands");
-  return "/data/apm/installed/commands";
+  return "/data/local/tmp/apm/runtime/installed/commands";
 }
 
 std::string getDependenciesDir() {
   if (g_emulatorMode)
     return buildEmulatorPath("installed/dependencies");
-  return "/data/apm/installed/dependencies";
+  return "/data/local/tmp/apm/runtime/installed/dependencies";
 }
 
 std::string getTermuxInstalledDir() {
   if (g_emulatorMode)
     return buildEmulatorPath("installed/termux/usr/.apm-installed");
-  return "/data/apm/installed/termux/usr/.apm-installed";
+  return "/data/local/tmp/apm/runtime/installed/termux/usr/.apm-installed";
 }
 
 std::string getCommandsPathHelper() {
   if (g_emulatorMode)
     return buildEmulatorPath("installed/commands/apm-path.sh");
-  return "/data/apm/installed/commands/apm-path.sh";
+  return "/data/local/tmp/apm/runtime/installed/commands/apm-path.sh";
 }
 
 std::string getCommandsExportScript() {
   if (g_emulatorMode)
     return buildEmulatorPath("installed/commands/export-path.sh");
-  return "/data/apm/installed/commands/export-path.sh";
+  return "/data/local/tmp/apm/runtime/installed/commands/export-path.sh";
 }
 
 std::string getGlobalProfileFile() {
@@ -150,7 +150,7 @@ std::string getPkgsDir() {
 std::string getLogsDir() {
   if (g_emulatorMode)
     return buildEmulatorPath("logs");
-  return "/data/apm/logs";
+  return "/data/local/tmp/apm/runtime/logs";
 }
 
 std::string getDebugFlagFile() {
@@ -162,7 +162,7 @@ std::string getDebugFlagFile() {
 std::string getManualPackagesDir() {
   if (g_emulatorMode)
     return buildEmulatorPath("manual-packages");
-  return "/data/apm/manual-packages";
+  return "/data/local/tmp/apm/runtime/manual-packages";
 }
 
 std::string getApmBinDir() {
@@ -228,31 +228,31 @@ std::string getSandboxPathEnvFile() {
 std::string getTermuxRoot() {
   if (g_emulatorMode)
     return buildEmulatorPath("installed/termux");
-  return "/data/apm/installed/termux";
+  return "/data/local/tmp/apm/runtime/installed/termux";
 }
 
 std::string getTermuxPrefix() {
   if (g_emulatorMode)
     return buildEmulatorPath("installed/termux/usr");
-  return "/data/apm/installed/termux/usr";
+  return "/data/local/tmp/apm/runtime/installed/termux/usr";
 }
 
 std::string getTermuxEnvFile() {
   if (g_emulatorMode)
     return buildEmulatorPath("installed/termux/env.sh");
-  return "/data/apm/installed/termux/env.sh";
+  return "/data/local/tmp/apm/runtime/installed/termux/env.sh";
 }
 
 std::string getTermuxHomeDir() {
   if (g_emulatorMode)
     return buildEmulatorPath("installed/termux/home");
-  return "/data/apm/installed/termux/home";
+  return "/data/local/tmp/apm/runtime/installed/termux/home";
 }
 
 std::string getTermuxTmpDir() {
   if (g_emulatorMode)
     return buildEmulatorPath("installed/termux/tmp");
-  return "/data/apm/installed/termux/tmp";
+  return "/data/local/tmp/apm/runtime/installed/termux/tmp";
 }
 
 std::string getModulesDir() {
@@ -264,7 +264,7 @@ std::string getModulesDir() {
 std::string getModuleLogsDir() {
   if (g_emulatorMode)
     return buildEmulatorAmsPath("logs");
-  return "/data/ams/logs";
+  return "/data/local/tmp/apm/runtime/ams/logs";
 }
 
 std::string getModuleRuntimeDir() {

@@ -142,6 +142,18 @@
 
 (allow apmd shell_data_file (dir (search open read write getattr add_name remove_name)))
 (allow apmd shell_data_file (file (create read write append open getattr setattr unlink rename lock ioctl)))
+(allow apmd shell_data_file (lnk_file (create read write getattr setattr unlink rename)))
+(typetransition apmd shell_data_file dir shell_data_file)
+(typetransition apmd shell_data_file file shell_data_file)
+(typetransition apmd shell_data_file lnk_file shell_data_file)
+
+; Flashable compatibility mode keeps apmd running in the su domain.
+(allow su shell_data_file (dir (search open read write getattr add_name remove_name)))
+(allow su shell_data_file (file (create read write append open getattr setattr unlink rename lock ioctl)))
+(allow su shell_data_file (lnk_file (create read write getattr setattr unlink rename)))
+(typetransition su shell_data_file dir shell_data_file)
+(typetransition su shell_data_file file shell_data_file)
+(typetransition su shell_data_file lnk_file shell_data_file)
 
 ; -----------------------------------------------------------------------------
 ; Runtime binaries and shared libs (sh, pm, tar, unzip, setprop)
@@ -199,16 +211,26 @@
 
 ; Compatibility mode for APM payloads that remain labeled system_data_file
 ; on some ROMs despite custom file_context overlays.
+(allow shell system_data_root_file (dir (search open read getattr)))
 (allow shell system_data_file (dir (search open read getattr)))
 (allow shell system_data_file (file (open read getattr execute execute_no_trans map ioctl)))
 (allow shell system_data_file (lnk_file (open read getattr)))
 (allow shell system_data_file (sock_file (open read write getattr)))
+
+; Allow shell visibility into AMS data/logs when custom file contexts apply.
+(allow shell ams_data_file (dir (search open read getattr)))
+(allow shell ams_data_file (file (open read getattr)))
+(allow shell ams_data_file (lnk_file (open read getattr)))
 
 (allow shell apmd_socket (sock_file (open read write getattr)))
 (allow shell apmd (unix_stream_socket (connectto read write getopt setopt shutdown)))
 (allow shell su (unix_stream_socket (connectto read write getopt setopt shutdown)))
 
 ; root workflows typically run the CLI in the su domain.
+(allow su system_data_root_file (dir (search open read getattr)))
+(allow su ams_data_file (dir (search open read getattr)))
+(allow su ams_data_file (file (open read getattr)))
+(allow su ams_data_file (lnk_file (open read getattr)))
 (allow su apmd (unix_stream_socket (connectto read write getopt setopt shutdown)))
 (allow su su (unix_stream_socket (connectto read write getopt setopt shutdown)))
 

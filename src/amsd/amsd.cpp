@@ -72,9 +72,7 @@ void handleSignal(int) {
 }
 
 std::string buildLogFilePath() {
-  // Place amsd.log next to the module log directory (../logs/amsd.log)
-  std::string logDir =
-      apm::fs::joinPath(apm::config::getModuleLogsDir(), "..");
+  std::string logDir = apm::config::getModuleLogsDir();
   apm::fs::createDirs(logDir);
   return apm::fs::joinPath(logDir, "amsd.log");
 }

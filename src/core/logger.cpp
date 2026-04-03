@@ -32,11 +32,14 @@
 #include <cctype>
 #include <ctime>
 #include <fstream>
+#include <grp.h>
 #include <iomanip>
 #include <iostream>
 #include <mutex>
 #include <sstream>
 #include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 namespace apm::logger {
 
@@ -207,6 +210,27 @@ static void ensureLogDirExists() {
   }
 }
 
+static bool hasPrefix(const std::string &value, const std::string &prefix) {
+  return value.size() >= prefix.size() &&
+         value.compare(0, prefix.size(), prefix) == 0;
+}
+
+static void ensureShellReadableLogFile() {
+  if (apm::config::isEmulatorMode()) {
+    return;
+  }
+
+  if (!hasPrefix(g_logFile, "/data/local/tmp/apm/")) {
+    return;
+  }
+
+  struct group *shellGroup = ::getgrnam("shell");
+  if (shellGroup) {
+    ::chown(g_logFile.c_str(), 0, shellGroup->gr_gid);
+  }
+  ::chmod(g_logFile.c_str(), 0664);
+}
+
 // ---------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------
@@ -282,6 +306,7 @@ void log(Level level, const std::string &message) {
     if (file.is_open()) {
       file.write(out.data(), static_cast<std::streamsize>(out.size()));
       file.flush();
+      ensureShellReadableLogFile();
     }
   }
 

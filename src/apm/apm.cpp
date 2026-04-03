@@ -380,7 +380,9 @@ static bool promptForSecurityQuestions(SecurityQaList &qaOut) {
 static bool requestSessionUnlock(const std::string &action,
                                  const std::string &secret,
                                  const SecurityQaList &securityQa,
-                                 std::string &sessionTokenOut) {
+                                 std::string &sessionTokenOut,
+                                 std::string *failureMessageOut = nullptr,
+                                 bool printFailure = true) {
   apm::ipc::Request req;
   req.type = apm::ipc::RequestType::Authenticate;
   req.id = "authenticate-1";
@@ -398,13 +400,21 @@ static bool requestSessionUnlock(const std::string &action,
   std::string err;
 
   if (!apm::ipc::sendRequestAuto(req, resp, &err)) {
-    std::cerr << "Error: " << err << "\n";
+    const std::string message = "Error: " + err;
+    if (failureMessageOut)
+      *failureMessageOut = message;
+    if (printFailure)
+      std::cerr << message << "\n";
     return false;
   }
 
   if (!resp.success) {
-    std::cerr << (resp.message.empty() ? "Authentication failed" : resp.message)
-              << "\n";
+    const std::string message =
+        resp.message.empty() ? "Authentication failed" : resp.message;
+    if (failureMessageOut)
+      *failureMessageOut = message;
+    if (printFailure)
+      std::cerr << message << "\n";
     return false;
   }
 
@@ -434,19 +444,26 @@ static bool ensureAuthenticatedSession(std::string &sessionTokenOut) {
   if (hadSession)
     std::cout << "APM security session expired. Please re-authenticate.\n";
 
-  const bool hasPasspin = apm::fs::isFile(apm::config::getPassPinFile());
-
   std::string secret;
-  if (hasPasspin) {
-    if (!promptForSecret("Enter APM password/PIN: ", secret)) {
-      std::cerr << "Failed to read password/PIN input.\n";
-      return false;
-    }
-    return requestSessionUnlock("unlock", secret, SecurityQaList{},
-                                sessionTokenOut);
+  if (!promptForSecret("Enter APM password/PIN: ", secret)) {
+    std::cerr << "Failed to read password/PIN input.\n";
+    return false;
   }
 
-  if (!promptForNewSecret(secret)) {
+  std::string authErr;
+  if (requestSessionUnlock("unlock", secret, SecurityQaList{}, sessionTokenOut,
+                           &authErr, false)) {
+    return true;
+  }
+
+  if (authErr != "Password/PIN not configured") {
+    if (!authErr.empty())
+      std::cerr << authErr << "\n";
+    return false;
+  }
+
+  std::string newSecret;
+  if (!promptForNewSecret(newSecret)) {
     std::cerr << "Password/PIN setup aborted.\n";
     return false;
   }
@@ -457,7 +474,7 @@ static bool ensureAuthenticatedSession(std::string &sessionTokenOut) {
     return false;
   }
 
-  return requestSessionUnlock("set", secret, securityQa, sessionTokenOut);
+  return requestSessionUnlock("set", newSecret, securityQa, sessionTokenOut);
 }
 
 static void attachSession(apm::ipc::Request &req,

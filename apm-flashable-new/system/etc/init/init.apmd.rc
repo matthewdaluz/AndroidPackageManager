@@ -15,20 +15,8 @@ on post-fs-data
     mkdir /data/apm/lists 0775 root shell
     mkdir /data/apm/keys 0775 root shell
     mkdir /data/apm/pkgs 0775 root shell
-    mkdir /data/local/tmp/apm/path 0775 root shell
-    mkdir /data/apm/installed 0775 root shell
-    mkdir /data/apm/installed/commands 0775 root shell
-    mkdir /data/apm/installed/dependencies 0775 root shell
-    mkdir /data/apm/installed/termux 0775 root shell
-    mkdir /data/apm/installed/termux/usr 0775 root shell
-    mkdir /data/apm/installed/termux/usr/bin 0775 root shell
-    mkdir /data/apm/installed/termux/usr/lib 0775 root shell
-    mkdir /data/apm/installed/termux/usr/lib64 0775 root shell
-    mkdir /data/apm/installed/termux/usr/lib32 0775 root shell
-    mkdir /data/apm/logs 0775 root shell
     mkdir /data/apm/sources 0775 root shell
     mkdir /data/apm/sources/sources.list.d 0775 root shell
-    mkdir /data/apm/manual-packages 0775 root shell
     mkdir /data/apm/sandbox 0775 root shell
     mkdir /data/apm/sandbox/state 0775 root shell
     mkdir /data/apm/sandbox/env 0775 root shell
@@ -38,10 +26,6 @@ on post-fs-data
     chmod 0775 /data/apm
     chown root shell /data/local/tmp/apm
     chmod 0775 /data/local/tmp/apm
-    chown root shell /data/local/tmp/apm/bin
-    chmod 0775 /data/local/tmp/apm/bin
-    chown root shell /data/local/tmp/apm/path
-    chmod 0775 /data/local/tmp/apm/path
 
     # Avoid stale binaries/scripts in /data/local/tmp/apm/bin shadowing /system/bin/apm*
     # for shell sessions with PATH hooks enabled.

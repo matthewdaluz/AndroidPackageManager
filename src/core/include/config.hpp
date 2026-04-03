@@ -107,16 +107,18 @@ std::string getDefaultArch();
 // Base root for all APM data on Android data partition.
 inline constexpr const char *APM_ROOT = "/data/apm";
 
-inline constexpr const char *INSTALLED_DIR = "/data/apm/installed";
-inline constexpr const char *COMMANDS_DIR = "/data/apm/installed/commands";
+inline constexpr const char *INSTALLED_DIR =
+    "/data/local/tmp/apm/runtime/installed";
+inline constexpr const char *COMMANDS_DIR =
+    "/data/local/tmp/apm/runtime/installed/commands";
 inline constexpr const char *DEPENDENCIES_DIR =
-    "/data/apm/installed/dependencies";
+    "/data/local/tmp/apm/runtime/installed/dependencies";
 inline constexpr const char *TERMUX_INSTALLED_DIR =
-    "/data/apm/installed/termux/usr/.apm-installed";
+    "/data/local/tmp/apm/runtime/installed/termux/usr/.apm-installed";
 inline constexpr const char *COMMANDS_PATH_HELPER =
-    "/data/apm/installed/commands/apm-path.sh";
+    "/data/local/tmp/apm/runtime/installed/commands/apm-path.sh";
 inline constexpr const char *COMMANDS_EXPORT_SCRIPT =
-    "/data/apm/installed/commands/export-path.sh";
+    "/data/local/tmp/apm/runtime/installed/commands/export-path.sh";
 inline constexpr const char *GLOBAL_PROFILE_FILE =
     "/data/local/tmp/.apm_profile";
 inline constexpr const char *GLOBAL_PROFILE_SOURCED_MARK =
@@ -124,8 +126,9 @@ inline constexpr const char *GLOBAL_PROFILE_SOURCED_MARK =
 inline constexpr const char *CACHE_DIR = "/data/apm/cache";
 inline constexpr const char *LISTS_DIR = "/data/apm/lists";
 inline constexpr const char *PKGS_DIR = "/data/apm/pkgs";
-inline constexpr const char *LOGS_DIR = "/data/apm/logs";
-inline constexpr const char *MANUAL_PACKAGES_DIR = "/data/apm/manual-packages";
+inline constexpr const char *LOGS_DIR = "/data/local/tmp/apm/runtime/logs";
+inline constexpr const char *MANUAL_PACKAGES_DIR =
+    "/data/local/tmp/apm/runtime/manual-packages";
 inline constexpr const char *APM_BIN_DIR = "/data/local/tmp/apm/bin";
 inline constexpr const char *PATH_DIR = "/data/local/tmp/apm/path";
 inline constexpr const char *SH_PATH_FILE = "/data/local/tmp/apm/path/sh-path.sh";
@@ -138,16 +141,20 @@ inline constexpr const char *COMMAND_INDEX_FILE =
     "/data/apm/sandbox/state/command-index.json";
 inline constexpr const char *SANDBOX_PATH_ENV_FILE =
     "/data/apm/sandbox/env/apm-path.env";
-inline constexpr const char *TERMUX_ROOT = "/data/apm/installed/termux";
-inline constexpr const char *TERMUX_PREFIX = "/data/apm/installed/termux/usr";
+inline constexpr const char *TERMUX_ROOT =
+    "/data/local/tmp/apm/runtime/installed/termux";
+inline constexpr const char *TERMUX_PREFIX =
+    "/data/local/tmp/apm/runtime/installed/termux/usr";
 inline constexpr const char *TERMUX_ENV_FILE =
-    "/data/apm/installed/termux/env.sh";
+    "/data/local/tmp/apm/runtime/installed/termux/env.sh";
 inline constexpr const char *TERMUX_HOME_DIR =
-    "/data/apm/installed/termux/home";
-inline constexpr const char *TERMUX_TMP_DIR = "/data/apm/installed/termux/tmp";
+    "/data/local/tmp/apm/runtime/installed/termux/home";
+inline constexpr const char *TERMUX_TMP_DIR =
+    "/data/local/tmp/apm/runtime/installed/termux/tmp";
 
 inline constexpr const char *MODULES_DIR = "/data/ams/modules";
-inline constexpr const char *MODULE_LOGS_DIR = "/data/ams/logs";
+inline constexpr const char *MODULE_LOGS_DIR =
+    "/data/local/tmp/apm/runtime/ams/logs";
 inline constexpr const char *MODULE_RUNTIME_DIR = "/data/ams/.runtime";
 inline constexpr const char *MODULE_RUNTIME_UPPER_DIR =
     "/data/ams/.runtime/upper";

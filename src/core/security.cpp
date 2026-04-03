@@ -38,6 +38,7 @@
 #include <cstring>
 #include <sstream>
 #include <string>
+#include <grp.h>
 #include <sys/file.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -110,15 +111,30 @@ static bool writeAllToFd(int fd, const std::string &data,
   return true;
 }
 
+static bool lookupShellGroup(gid_t &gidOut) {
+  struct group *shellGroup = ::getgrnam("shell");
+  if (!shellGroup)
+    return false;
+  gidOut = shellGroup->gr_gid;
+  return true;
+}
+
 } // namespace
 
 bool ensureSecurityDir(std::string *errorMsg) {
   const std::string secDir = apm::config::getSecurityDir();
-  if (apm::fs::createDirs(secDir, 0700))
-    return true;
-  if (errorMsg)
-    *errorMsg = "Failed to create security directory at " + secDir;
-  return false;
+  if (!apm::fs::createDirs(secDir, 0750)) {
+    if (errorMsg)
+      *errorMsg = "Failed to create security directory at " + secDir;
+    return false;
+  }
+
+  gid_t shellGid = 0;
+  if (lookupShellGroup(shellGid)) {
+    ::chown(secDir.c_str(), 0, shellGid);
+  }
+  ::chmod(secDir.c_str(), 0750);
+  return true;
 }
 
 bool validatePackageName(const std::string &name, std::string *errorMsg) {
@@ -260,7 +276,7 @@ bool writeSession(const SessionState &state, std::string *errorMsg) {
     return false;
 
   const std::string sessionFile = apm::config::getSessionFile();
-  int fd = ::open(sessionFile.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+  int fd = ::open(sessionFile.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0660);
   if (fd < 0) {
     if (errorMsg)
       *errorMsg = "Failed to open session file for writing";
@@ -279,8 +295,13 @@ bool writeSession(const SessionState &state, std::string *errorMsg) {
   } while (false);
 
   ::close(fd);
-  if (ok)
-    ::chmod(sessionFile.c_str(), 0600);
+  if (ok) {
+    gid_t shellGid = 0;
+    if (lookupShellGroup(shellGid)) {
+      ::chown(sessionFile.c_str(), 0, shellGid);
+    }
+    ::chmod(sessionFile.c_str(), 0660);
+  }
   return ok;
 }
 

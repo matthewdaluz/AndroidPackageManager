@@ -31,18 +31,37 @@
 #include "fs.hpp"
 #include "ipc_server.hpp"
 #include "logger.hpp"
+#include "manual_package.hpp"
 #include "process_lock.hpp"
+#include "status_db.hpp"
 
 #include <chrono>
+#include <cerrno>
+#include <fstream>
+#include <grp.h>
 #include <iostream>
 #include <memory>
 #include <string>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <thread>
 #include <unistd.h>
 #include <vector>
 
 namespace {
+
+constexpr const char *kLegacyInstalledDir = "/data/apm/installed";
+constexpr const char *kCurrentStagingInstalledDir = "/data/local/tmp/apm/installed";
+constexpr const char *kLegacyManualPackagesDir = "/data/apm/manual-packages";
+constexpr const char *kCurrentStagingManualPackagesDir =
+    "/data/local/tmp/apm/manual-packages";
+constexpr const char *kLegacyLogsDir = "/data/apm/logs";
+constexpr const char *kCurrentStagingLogsDir = "/data/local/tmp/apm/logs";
+constexpr const char *kLegacyModuleLogsDir = "/data/ams/logs";
+constexpr const char *kCurrentStagingModuleLogsDir = "/data/local/tmp/apm/ams/logs";
+constexpr const char *kLegacyTermuxPrefix = "/data/apm/installed/termux/usr";
+constexpr const char *kCurrentStagingTermuxPrefix =
+    "/data/local/tmp/apm/installed/termux/usr";
 
 bool isDataAccessible() {
   struct stat st{};
@@ -77,6 +96,333 @@ void waitForDataReady() {
   while (!isDataAccessible()) {
     std::cerr << "apmd: waiting for /data to become available..." << std::endl;
     std::this_thread::sleep_for(5s);
+  }
+}
+
+bool hasPathPrefix(const std::string &path, const std::string &prefix) {
+  return path.size() >= prefix.size() &&
+         path.compare(0, prefix.size(), prefix) == 0;
+}
+
+std::string parentDir(const std::string &path) {
+  auto slash = path.find_last_of('/');
+  if (slash == std::string::npos) {
+    return {};
+  }
+  return path.substr(0, slash);
+}
+
+std::string remapPathPrefix(const std::string &path, const std::string &oldPrefix,
+                            const std::string &newPrefix) {
+  if (!hasPathPrefix(path, oldPrefix)) {
+    return path;
+  }
+  return newPrefix + path.substr(oldPrefix.size());
+}
+
+std::string remapAnyPrefix(
+    const std::string &path,
+    const std::vector<std::pair<std::string, std::string>> &prefixes) {
+  for (const auto &entry : prefixes) {
+    if (hasPathPrefix(path, entry.first)) {
+      return entry.second + path.substr(entry.first.size());
+    }
+  }
+  return path;
+}
+
+bool lookupShellGroup(gid_t &gidOut) {
+  struct group *shellGroup = ::getgrnam("shell");
+  if (!shellGroup) {
+    return false;
+  }
+  gidOut = shellGroup->gr_gid;
+  return true;
+}
+
+bool copyFileWithMode(const std::string &src, const std::string &dst) {
+  std::ifstream in(src, std::ios::binary);
+  if (!in.is_open()) {
+    return false;
+  }
+
+  auto slash = dst.find_last_of('/');
+  if (slash != std::string::npos) {
+    std::string parent = dst.substr(0, slash);
+    if (!parent.empty() && !apm::fs::createDirs(parent)) {
+      return false;
+    }
+  }
+
+  std::ofstream out(dst, std::ios::binary | std::ios::trunc);
+  if (!out.is_open()) {
+    return false;
+  }
+
+  out << in.rdbuf();
+  if (!out.good()) {
+    return false;
+  }
+
+  struct stat st{};
+  if (::stat(src.c_str(), &st) == 0) {
+    ::chmod(dst.c_str(), st.st_mode & 07777);
+  }
+
+  return true;
+}
+
+bool copyTreeRecursive(const std::string &src, const std::string &dst) {
+  struct stat st{};
+  if (::lstat(src.c_str(), &st) != 0) {
+    return false;
+  }
+
+  if (S_ISDIR(st.st_mode)) {
+    if (!apm::fs::createDirs(dst)) {
+      return false;
+    }
+    auto entries = apm::fs::listDir(src, true);
+    for (const auto &entry : entries) {
+      if (entry == "." || entry == "..") {
+        continue;
+      }
+      if (!copyTreeRecursive(apm::fs::joinPath(src, entry),
+                             apm::fs::joinPath(dst, entry))) {
+        return false;
+      }
+    }
+    ::chmod(dst.c_str(), st.st_mode & 07777 ? st.st_mode & 07777 : 0775);
+    return true;
+  }
+
+  if (S_ISLNK(st.st_mode)) {
+    std::vector<char> buf(static_cast<std::size_t>(st.st_size > 0 ? st.st_size + 1 : 256), '\0');
+    ssize_t len = ::readlink(src.c_str(), buf.data(), buf.size() - 1);
+    if (len < 0) {
+      return false;
+    }
+    auto slash = dst.find_last_of('/');
+    if (slash != std::string::npos) {
+      std::string parent = dst.substr(0, slash);
+      if (!parent.empty() && !apm::fs::createDirs(parent)) {
+        return false;
+      }
+    }
+    ::unlink(dst.c_str());
+    return ::symlink(buf.data(), dst.c_str()) == 0;
+  }
+
+  if (S_ISREG(st.st_mode)) {
+    return copyFileWithMode(src, dst);
+  }
+
+  return true;
+}
+
+void normalizeShellReadableTree(const std::string &path) {
+  struct stat st{};
+  if (::lstat(path.c_str(), &st) != 0) {
+    return;
+  }
+
+  gid_t shellGid = 0;
+  const bool haveShellGid = lookupShellGroup(shellGid);
+
+  if (S_ISDIR(st.st_mode)) {
+    if (haveShellGid) {
+      ::chown(path.c_str(), 0, shellGid);
+    }
+    mode_t mode = st.st_mode & 07777;
+    mode |= S_IRGRP | S_IXGRP;
+    if ((mode & S_IWUSR) != 0) {
+      mode |= S_IWGRP;
+    }
+    ::chmod(path.c_str(), mode);
+
+    for (const auto &entry : apm::fs::listDir(path, true)) {
+      if (entry == "." || entry == "..") {
+        continue;
+      }
+      normalizeShellReadableTree(apm::fs::joinPath(path, entry));
+    }
+    return;
+  }
+
+  if (S_ISREG(st.st_mode)) {
+    if (haveShellGid) {
+      ::chown(path.c_str(), 0, shellGid);
+    }
+    mode_t mode = st.st_mode & 07777;
+    if ((mode & S_IRUSR) != 0) {
+      mode |= S_IRGRP;
+    }
+    if ((mode & S_IWUSR) != 0) {
+      mode |= S_IWGRP;
+    }
+    if ((mode & S_IXUSR) != 0) {
+      mode |= S_IXGRP;
+    }
+    ::chmod(path.c_str(), mode);
+  }
+}
+
+void migrateDirectoryIfNeeded(const std::string &legacyPath,
+                              const std::string &newPath,
+                              bool removeLegacyOnSuccess = false) {
+  if (legacyPath.empty() || newPath.empty() || legacyPath == newPath) {
+    return;
+  }
+  if (!apm::fs::pathExists(legacyPath)) {
+    return;
+  }
+
+  if (apm::fs::pathExists(newPath) && !apm::fs::removeDirRecursive(newPath)) {
+    apm::logger::warn("apmd: failed to clear stale migrated path " + newPath);
+    return;
+  }
+
+  auto slash = newPath.find_last_of('/');
+  if (slash != std::string::npos) {
+    std::string parent = newPath.substr(0, slash);
+    if (!parent.empty()) {
+      apm::fs::createDirs(parent);
+    }
+  }
+
+  if (!copyTreeRecursive(legacyPath, newPath)) {
+    apm::logger::warn("apmd: failed to copy-migrate " + legacyPath + " to " +
+                      newPath);
+    return;
+  }
+
+  if (removeLegacyOnSuccess && !apm::fs::removeDirRecursive(legacyPath)) {
+    apm::logger::warn("apmd: migrated " + legacyPath + " to " + newPath +
+                      " but failed to remove legacy path");
+  } else {
+    apm::logger::info("apmd: migrated " + legacyPath + " to " + newPath);
+  }
+}
+
+void migrateStatusPaths() {
+  apm::status::InstalledDb db;
+  std::string err;
+  if (!apm::status::loadStatus(db, &err)) {
+    apm::logger::warn("apmd: failed to load status DB for path migration: " +
+                      err);
+    return;
+  }
+
+  bool changed = false;
+  for (auto &[_, pkg] : db) {
+    std::string newInstallRoot = remapAnyPrefix(
+        pkg.installRoot,
+        {{kCurrentStagingInstalledDir, apm::config::getInstalledDir()},
+         {kLegacyInstalledDir, apm::config::getInstalledDir()}});
+    if (newInstallRoot != pkg.installRoot) {
+      pkg.installRoot = std::move(newInstallRoot);
+      changed = true;
+    }
+
+    std::string newInstallPrefix = remapAnyPrefix(
+        pkg.installPrefix,
+        {{kCurrentStagingTermuxPrefix, apm::config::getTermuxPrefix()},
+         {kLegacyTermuxPrefix, apm::config::getTermuxPrefix()}});
+    if (newInstallPrefix != pkg.installPrefix) {
+      pkg.installPrefix = std::move(newInstallPrefix);
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    std::string writeErr;
+    if (!apm::status::writeStatus(db, &writeErr)) {
+      apm::logger::warn("apmd: failed to rewrite migrated status DB paths: " +
+                        writeErr);
+    } else {
+      apm::logger::info("apmd: migrated stored package install paths");
+    }
+  }
+}
+
+void migrateManualPackageMetadata() {
+  std::vector<apm::manual::PackageInfo> packages;
+  std::string err;
+  if (!apm::manual::listInstalledPackages(packages, &err)) {
+    apm::logger::warn("apmd: failed to load manual package metadata for path "
+                      "migration: " + err);
+    return;
+  }
+
+  for (auto &pkg : packages) {
+    std::string newPrefix = remapAnyPrefix(
+        pkg.prefix,
+        {{kCurrentStagingInstalledDir, apm::config::getInstalledDir()},
+         {kLegacyInstalledDir, apm::config::getInstalledDir()}});
+    if (newPrefix == pkg.prefix) {
+      continue;
+    }
+    pkg.prefix = std::move(newPrefix);
+    std::string saveErr;
+    if (!apm::manual::saveInstalledPackage(pkg, &saveErr)) {
+      apm::logger::warn("apmd: failed to rewrite manual package metadata for " +
+                        pkg.name + ": " + saveErr);
+    }
+  }
+}
+
+void migrateShellAccessibleRuntime() {
+  if (apm::config::isEmulatorMode()) {
+    return;
+  }
+
+  migrateDirectoryIfNeeded(kCurrentStagingInstalledDir,
+                           apm::config::getInstalledDir());
+  migrateDirectoryIfNeeded(kLegacyInstalledDir, apm::config::getInstalledDir());
+  migrateDirectoryIfNeeded(kCurrentStagingManualPackagesDir,
+                           apm::config::getManualPackagesDir());
+  migrateDirectoryIfNeeded(kLegacyManualPackagesDir,
+                           apm::config::getManualPackagesDir());
+  migrateDirectoryIfNeeded(kCurrentStagingLogsDir, apm::config::getLogsDir());
+  migrateDirectoryIfNeeded(kLegacyLogsDir, apm::config::getLogsDir());
+  migrateDirectoryIfNeeded(kCurrentStagingModuleLogsDir,
+                           apm::config::getModuleLogsDir());
+  migrateDirectoryIfNeeded(kLegacyModuleLogsDir,
+                           apm::config::getModuleLogsDir());
+
+  migrateStatusPaths();
+  migrateManualPackageMetadata();
+
+  const std::vector<std::string> shellRuntimeDirs = {
+      parentDir(apm::config::getInstalledDir()),
+      apm::config::getInstalledDir(),
+      apm::config::getCommandsDir(),
+      apm::config::getDependenciesDir(),
+      apm::config::getTermuxRoot(),
+      apm::config::getTermuxPrefix(),
+      apm::config::getTermuxInstalledDir(),
+      apm::config::getTermuxHomeDir(),
+      apm::config::getTermuxTmpDir(),
+      apm::config::getLogsDir(),
+      apm::config::getManualPackagesDir(),
+      parentDir(apm::config::getModuleLogsDir()),
+      apm::config::getModuleLogsDir(),
+  };
+
+  for (const auto &dir : shellRuntimeDirs) {
+    if (!dir.empty()) {
+      apm::fs::createDirs(dir);
+    }
+  }
+
+  const std::string runtimeRoot = parentDir(apm::config::getInstalledDir());
+  if (!runtimeRoot.empty() && apm::fs::pathExists(runtimeRoot)) {
+    normalizeShellReadableTree(runtimeRoot);
+  }
+
+  const std::string runtimeBase = parentDir(runtimeRoot);
+  if (!runtimeBase.empty() && apm::fs::pathExists(runtimeBase)) {
+    normalizeShellReadableTree(runtimeBase);
   }
 }
 
@@ -129,9 +475,11 @@ int runDaemon(bool debugMode, bool emulatorMode,
                       apm::config::getApmRoot());
   }
 
+  migrateShellAccessibleRuntime();
+
   std::string logFile = emulatorMode
                             ? apm::config::getLogsDir() + "/apmd-emulator.log"
-                            : "/data/apm/logs/apmd.log";
+                            : apm::config::getLogsDir() + "/apmd.log";
   apm::logger::setLogFile(logFile);
   apm::logger::setDebugControlFile(apm::config::getDebugFlagFile());
   apm::logger::setMinLogLevel(debugMode ? apm::logger::Level::Debug
@@ -167,12 +515,10 @@ int runDaemon(bool debugMode, bool emulatorMode,
   apm::daemon::path::ensureProfileLoaded();
 
   apm::ams::ModuleManager moduleManager;
-  std::string moduleErr;
-  if (!moduleManager.applyEnabledModules(&moduleErr)) {
-    apm::logger::warn("runDaemon: module initialization failed: " + moduleErr);
-  } else {
-    moduleManager.startEnabledModules();
-  }
+  // AMS boot lifecycle is owned by amsd, which starts earlier during boot.
+  // apmd keeps a ModuleManager only to service explicit module IPC requests
+  // (install/list/enable/disable/remove) without re-applying overlays or
+  // re-running module scripts on every apmd startup.
 
   std::string resolvedSocket =
       socketPath.empty() ? apm::config::getIpcSocketPath() : socketPath;
