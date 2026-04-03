@@ -26,6 +26,52 @@ publish_compile_commands() {
   fi
 }
 
+resolve_strip_tool() {
+  local cache_file="${BUILD_DIR}/CMakeCache.txt"
+
+  if [[ -f "${cache_file}" ]]; then
+    STRIP_TOOL=$(grep '^CMAKE_STRIP:FILEPATH=' "${cache_file}" | head -n1 | cut -d= -f2- || true)
+  fi
+
+  if [[ -z "${STRIP_TOOL:-}" ]]; then
+    STRIP_TOOL="$(command -v llvm-strip || command -v strip || true)"
+  fi
+}
+
+strip_built_binaries() {
+  local binaries=("${BUILD_DIR}/apm" "${BUILD_DIR}/apmd" "${BUILD_DIR}/amsd")
+  local binary
+  local stripped_any=0
+
+  if [[ "${APM_STRIP_BINARIES:-1}" == "0" ]]; then
+    echo "Skipping binary stripping because APM_STRIP_BINARIES=0."
+    return
+  fi
+
+  resolve_strip_tool
+  if [[ -z "${STRIP_TOOL:-}" ]]; then
+    echo "Warning: no strip tool found; leaving binaries unstripped."
+    return
+  fi
+
+  echo "Stripping built binaries with ${STRIP_TOOL}..."
+  for binary in "${binaries[@]}"; do
+    if [[ ! -f "${binary}" ]]; then
+      continue
+    fi
+
+    if ! "${STRIP_TOOL}" --strip-unneeded "${binary}" 2>/dev/null; then
+      "${STRIP_TOOL}" "${binary}"
+    fi
+    stripped_any=1
+    echo "  Stripped ${binary}"
+  done
+
+  if [[ "${stripped_any}" == "0" ]]; then
+    echo "Warning: no built binaries were found to strip."
+  fi
+}
+
 echo "Cleaning build directory..."
 rm -rf "${BUILD_DIR}"
 mkdir -p "${BUILD_DIR}"
@@ -150,6 +196,7 @@ else
     -DANDROID_ABI="${ANDROID_ABI}" \
     -DANDROID_PLATFORM="${DEFAULT_PLATFORM}" \
     -DCMAKE_TOOLCHAIN_FILE="${TOOLCHAIN_FILE}" \
+    -DCMAKE_BUILD_TYPE=Release \
     -DANDROID_STL="c++_static" \
     -DANDROID_SDK_ROOT="${ANDROID_SDK_ROOT_ENV}" \
     -DANDROID_NDK_ROOT="${ANDROID_NDK_ROOT_ENV}" \
@@ -160,5 +207,6 @@ publish_compile_commands
 
 echo "Building with cmake --build --parallel $(nproc)..."
 cmake --build "${BUILD_DIR}" --parallel "$(nproc)"
+strip_built_binaries
 
 echo "Build completed successfully for API ${API_LEVEL}."
