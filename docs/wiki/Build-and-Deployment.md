@@ -120,8 +120,10 @@ Canonical source used by flashable build script:
 ## Verification Checklist After Deployment
 
 1. Confirm sockets exist:
-- `/data/apm/apmd.sock`
-- `/data/ams/amsd.sock`
+- `amsd`: `/data/ams/amsd.sock`
+1. Confirm `apmd` is listening:
+- Android: abstract socket `@apmd` (not visible in the filesystem)
+- Emulator: `$HOME/APMEmulator/data/apm/apmd.socket`
 
 2. Check daemon logs:
 - `/data/apm/logs/apmd.log`

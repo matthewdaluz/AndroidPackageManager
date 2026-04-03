@@ -8,7 +8,7 @@
 
 ## Active IPC Topology
 
-- `apm -> apmd`: `/data/apm/apmd.sock`
+- `apm -> apmd`: abstract UNIX socket `@apmd` on Android
 - `client -> amsd`: `/data/ams/amsd.sock` (module daemon API)
 - Emulator mode paths:
   - apmd: `$HOME/APMEmulator/data/apm/apmd.socket`

@@ -5,7 +5,8 @@
 Check:
 
 - `apmd` is running
-- `/data/apm/apmd.sock` exists and is accessible
+- Android runtime uses abstract socket `@apmd`, so there is no filesystem socket to inspect
+- emulator mode uses `$HOME/APMEmulator/data/apm/apmd.socket`
 - `/data/apm/logs/apmd.log` for bind/listen errors
 
 ## `module-install` fails

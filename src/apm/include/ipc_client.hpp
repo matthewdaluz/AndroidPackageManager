@@ -38,8 +38,7 @@ using ProgressHandler = std::function<void(const Response &)>;
 //
 // - req:      Request to send
 // - resp:     Filled with parsed response
-// - socketPath: path to UNIX domain socket (e.g. /data/apm/apmd.sock or
-// /tmp/apmd.sock)
+// - socketPath: UNIX domain socket endpoint (e.g. @apmd or /tmp/apmd.sock)
 // - errorMsg: optional, filled on failure
 //
 // Returns true on success, false if connection failed / parse error / etc.

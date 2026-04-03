@@ -14,7 +14,7 @@ Current CLI version string in source: `2.0.0b - Open Beta`.
 ## Architecture At A Glance
 
 - Transport is UNIX socket based.
-- CLI requests go to `apmd` over `/data/apm/apmd.sock` (emulator: `$HOME/APMEmulator/data/apm/apmd.socket`).
+- CLI requests go to `apmd` over the abstract UNIX socket `@apmd` on Android (emulator: `$HOME/APMEmulator/data/apm/apmd.socket`).
 - AMS daemon serves module IPC over `/data/ams/amsd.sock` (emulator: `$HOME/APMEmulator/ams/amsd.socket`).
 - Binder code exists in-tree as legacy/reference, but active runtime flow is socket-first.
 
@@ -50,7 +50,7 @@ APM root:
 - `/data/apm/path`
 - `/data/apm/.security`
 - `/data/apm/logs`
-- `/data/apm/apmd.sock`
+- Android runtime uses abstract socket `@apmd`
 
 AMS root:
 

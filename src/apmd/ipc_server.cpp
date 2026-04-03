@@ -35,7 +35,9 @@
 #include "repo_index.hpp"
 
 #include <cerrno>
+#include <cstddef>
 #include <cstring>
+#include <grp.h>
 #include <sstream>
 #include <string>
 #include <sys/socket.h>
@@ -51,6 +53,46 @@ namespace {
 
 constexpr std::size_t kMaxRequestBytes = 64 * 1024;
 constexpr const char *kLogFileTag = "ipc_server.cpp";
+
+bool isAbstractSocketName(const std::string &socketPath) {
+  return !socketPath.empty() && socketPath.front() == '@';
+}
+
+std::string parentDir(const std::string &path) {
+  auto slash = path.find_last_of('/');
+  if (slash == std::string::npos)
+    return ".";
+  if (slash == 0)
+    return "/";
+  return path.substr(0, slash);
+}
+
+bool lookupShellGroup(gid_t &gidOut) {
+  struct group *shellGroup = ::getgrnam("shell");
+  if (!shellGroup)
+    return false;
+  gidOut = shellGroup->gr_gid;
+  return true;
+}
+
+void ensurePathAccess(const std::string &path, mode_t mode) {
+  if (path.empty())
+    return;
+
+  gid_t shellGid = 0;
+  const bool haveShellGid = lookupShellGroup(shellGid);
+
+  if (haveShellGid && ::chown(path.c_str(), 0, shellGid) < 0 &&
+      errno != EPERM) {
+    apm::logger::warn(std::string(kLogFileTag) + ": chown(" + path +
+                      ") failed: " + std::strerror(errno));
+  }
+
+  if (::chmod(path.c_str(), mode) < 0) {
+    apm::logger::warn(std::string(kLogFileTag) + ": chmod(" + path +
+                      ") failed: " + std::strerror(errno));
+  }
+}
 
 // Convert a repo update stage enum into a compact logging-friendly string.
 std::string stageToString(apm::repo::RepoUpdateStage stage) {
@@ -167,8 +209,16 @@ bool IpcServer::start() {
     return false;
   }
 
+  const bool abstractSocket = isAbstractSocketName(m_socketPath);
+
+  if (!apm::config::isEmulatorMode() && !abstractSocket) {
+    ensurePathAccess(parentDir(m_socketPath), 0775);
+  }
+
   // Remove stale socket if present
-  ::unlink(m_socketPath.c_str());
+  if (!abstractSocket) {
+    ::unlink(m_socketPath.c_str());
+  }
 
   m_listenFd = ::socket(AF_UNIX, SOCK_STREAM, 0);
   if (m_listenFd < 0) {
@@ -179,18 +229,43 @@ bool IpcServer::start() {
 
   sockaddr_un addr{};
   addr.sun_family = AF_UNIX;
+  socklen_t addrLen = sizeof(sa_family_t);
 
-  if (m_socketPath.size() >= sizeof(addr.sun_path)) {
-    apm::logger::error("IpcServer::start: socket path too long: " +
-                       m_socketPath);
-    ::close(m_listenFd);
-    m_listenFd = -1;
-    return false;
+  if (abstractSocket) {
+    const std::string socketName = m_socketPath.substr(1);
+    if (socketName.empty()) {
+      apm::logger::error("IpcServer::start: abstract socket name is empty");
+      ::close(m_listenFd);
+      m_listenFd = -1;
+      return false;
+    }
+    if (socketName.size() + 1 > sizeof(addr.sun_path)) {
+      apm::logger::error("IpcServer::start: abstract socket name too long: " +
+                         m_socketPath);
+      ::close(m_listenFd);
+      m_listenFd = -1;
+      return false;
+    }
+    addr.sun_path[0] = '\0';
+    std::memcpy(addr.sun_path + 1, socketName.data(), socketName.size());
+    addrLen = static_cast<socklen_t>(offsetof(sockaddr_un, sun_path) + 1 +
+                                     socketName.size());
+  } else {
+    if (m_socketPath.size() >= sizeof(addr.sun_path)) {
+      apm::logger::error("IpcServer::start: socket path too long: " +
+                         m_socketPath);
+      ::close(m_listenFd);
+      m_listenFd = -1;
+      return false;
+    }
+
+    std::strncpy(addr.sun_path, m_socketPath.c_str(),
+                 sizeof(addr.sun_path) - 1);
+    addrLen = static_cast<socklen_t>(offsetof(sockaddr_un, sun_path) +
+                                     m_socketPath.size() + 1);
   }
 
-  std::strncpy(addr.sun_path, m_socketPath.c_str(), sizeof(addr.sun_path) - 1);
-
-  if (::bind(m_listenFd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) <
+  if (::bind(m_listenFd, reinterpret_cast<sockaddr *>(&addr), addrLen) <
       0) {
     apm::logger::error("IpcServer::start: bind() failed: " +
                        std::string(std::strerror(errno)));
@@ -209,10 +284,15 @@ bool IpcServer::start() {
 
   // Set socket permissions (0600 for emulator mode, 0666 for Android)
   mode_t socketMode = apm::config::isEmulatorMode() ? 0600 : 0666;
-  if (::chmod(m_socketPath.c_str(), socketMode) < 0) {
-    apm::logger::warn("IpcServer::start: chmod() failed: " +
-                      std::string(std::strerror(errno)));
-    // Continue anyway - not a fatal error
+  if (!abstractSocket) {
+    if (::chmod(m_socketPath.c_str(), socketMode) < 0) {
+      apm::logger::warn("IpcServer::start: chmod() failed: " +
+                        std::string(std::strerror(errno)));
+      // Continue anyway - not a fatal error
+    }
+    if (!apm::config::isEmulatorMode()) {
+      ensurePathAccess(m_socketPath, socketMode);
+    }
   }
 
   m_running = true;

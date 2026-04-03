@@ -28,12 +28,21 @@
 #include "logger.hpp"
 
 #include <cerrno>
+#include <cstddef>
 #include <cstring>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
 
 namespace apm::ipc {
+
+namespace {
+
+bool isAbstractSocketName(const std::string &socketPath) {
+  return !socketPath.empty() && socketPath.front() == '@';
+}
+
+}
 
 // Write the entire buffer to the socket, retrying on EINTR and surfacing
 // failures so the higher-level sendRequest can report them.
@@ -81,16 +90,34 @@ bool sendRequest(const Request &req, Response &resp,
 
   sockaddr_un addr{};
   addr.sun_family = AF_UNIX;
-  if (socketPath.size() >= sizeof(addr.sun_path)) {
-    if (errorMsg)
-      *errorMsg = "Socket path too long: " + socketPath;
-    apm::logger::error("ipc_client: socket path too long");
-    ::close(fd);
-    return false;
+  socklen_t addrLen = sizeof(sa_family_t);
+  if (isAbstractSocketName(socketPath)) {
+    const std::string socketName = socketPath.substr(1);
+    if (socketName.empty() || socketName.size() + 1 > sizeof(addr.sun_path)) {
+      if (errorMsg)
+        *errorMsg = "Abstract socket name is invalid: " + socketPath;
+      apm::logger::error("ipc_client: invalid abstract socket name");
+      ::close(fd);
+      return false;
+    }
+    addr.sun_path[0] = '\0';
+    std::memcpy(addr.sun_path + 1, socketName.data(), socketName.size());
+    addrLen = static_cast<socklen_t>(offsetof(sockaddr_un, sun_path) + 1 +
+                                     socketName.size());
+  } else {
+    if (socketPath.size() >= sizeof(addr.sun_path)) {
+      if (errorMsg)
+        *errorMsg = "Socket path too long: " + socketPath;
+      apm::logger::error("ipc_client: socket path too long");
+      ::close(fd);
+      return false;
+    }
+    std::strncpy(addr.sun_path, socketPath.c_str(), sizeof(addr.sun_path) - 1);
+    addrLen = static_cast<socklen_t>(offsetof(sockaddr_un, sun_path) +
+                                     socketPath.size() + 1);
   }
-  std::strncpy(addr.sun_path, socketPath.c_str(), sizeof(addr.sun_path) - 1);
 
-  if (::connect(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) < 0) {
+  if (::connect(fd, reinterpret_cast<sockaddr *>(&addr), addrLen) < 0) {
     if (errorMsg)
       *errorMsg = "connect() failed: " + std::string(std::strerror(errno));
     apm::logger::error("ipc_client: connect() failed: " +

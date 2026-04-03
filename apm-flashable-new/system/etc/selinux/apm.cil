@@ -103,6 +103,13 @@
 (allow apmd apmd_socket (sock_file (create unlink write read open getattr setattr)))
 (typetransition apmd apm_data_file sock_file apmd_socket)
 
+; Flashable compatibility mode may keep apmd running in the su domain.
+(allow su apm_data_file (dir (search open read write getattr add_name remove_name)))
+(allow su system_data_file (dir (search open read write getattr add_name remove_name)))
+(allow su apmd_socket (sock_file (create unlink write read open getattr setattr)))
+(typetransition su apm_data_file sock_file apmd_socket)
+(typetransition su system_data_file sock_file apmd_socket)
+
 ; Auto-label /data/apm tree content when created by apmd
 (typetransition apmd system_data_file dir apm_data_file "apm")
 (typetransition apmd apm_data_file dir apm_data_file)
@@ -185,10 +192,10 @@
 (typetransition amsd ams_data_file sock_file amsd_socket)
 
 ; apm CLI runs as shell in most root-shell workflows
-(allow shell shell_data_file (dir (search open read write add_name remove_name getattr setattr)))
-(allow shell shell_data_file (file (open read write append create unlink rename getattr setattr execute execute_no_trans map ioctl)))
-(allow shell shell_data_file (lnk_file (open read write getattr setattr)))
-(allow shell shell_data_file (sock_file (open read write getattr create unlink setattr)))
+(allow shell apm_data_file (dir (search open read getattr)))
+(allow shell apm_data_file (file (open read getattr execute execute_no_trans map ioctl)))
+(allow shell apm_data_file (lnk_file (open read getattr)))
+(allow shell apm_data_file (sock_file (open read write getattr)))
 
 ; Compatibility mode for APM payloads that remain labeled system_data_file
 ; on some ROMs despite custom file_context overlays.
@@ -200,6 +207,10 @@
 (allow shell apmd_socket (sock_file (open read write getattr)))
 (allow shell apmd (unix_stream_socket (connectto read write getopt setopt shutdown)))
 (allow shell su (unix_stream_socket (connectto read write getopt setopt shutdown)))
+
+; root workflows typically run the CLI in the su domain.
+(allow su apmd (unix_stream_socket (connectto read write getopt setopt shutdown)))
+(allow su su (unix_stream_socket (connectto read write getopt setopt shutdown)))
 
 (allow shell amsd_socket (sock_file (open read write getattr)))
 (allow shell amsd (unix_stream_socket (connectto read write getopt setopt shutdown)))

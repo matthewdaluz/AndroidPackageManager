@@ -34,12 +34,22 @@ on post-fs-data
     mkdir /data/apm/sandbox/env 0775 root shell
     mkdir /data/apm/sandbox/mounts 0775 root shell
     mkdir /data/apm/.security 0700 root root
+    chown root shell /data/apm
+    chmod 0775 /data/apm
+    chown root shell /data/local/tmp/apm
+    chmod 0775 /data/local/tmp/apm
+    chown root shell /data/local/tmp/apm/bin
+    chmod 0775 /data/local/tmp/apm/bin
+    chown root shell /data/local/tmp/apm/path
+    chmod 0775 /data/local/tmp/apm/path
 
     # Avoid stale binaries/scripts in /data/local/tmp/apm/bin shadowing /system/bin/apm*
     # for shell sessions with PATH hooks enabled.
     rm /data/local/tmp/apm/bin/apm
     rm /data/local/tmp/apm/bin/apmd
     rm /data/local/tmp/apm/bin/amsd
+    rm /data/local/tmp/apm/apmd.sock
+    rm /data/apm/apmd.sock
     restorecon_recursive /data/local/tmp/apm
     restorecon_recursive /data/apm
 

@@ -14,7 +14,7 @@ This wiki documents APM (Android Package Manager), AMS (APM Module System), runt
 ## Quick Facts
 
 - Runtime transport is UNIX socket based.
-- Main daemon socket: `/data/apm/apmd.sock`.
+- Main daemon socket on Android: abstract UNIX socket `@apmd`.
 - AMS daemon socket: `/data/ams/amsd.sock`.
 - CLI version string in source: `2.0.0b - Open Beta`.
 - Core runtime directories: `/data/apm` and `/data/ams`.

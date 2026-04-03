@@ -173,9 +173,10 @@ inline constexpr const char *SOURCES_LIST_D =
 // For repo_index, this is treated as the “sources root” (dir).
 inline constexpr const char *SOURCES_LIST = SOURCES_DIR;
 
-// IPC (UNIX domain) socket path used by shell-facing runtime.
-// The daemon binds here and the CLI connects here.
-inline constexpr const char *IPC_SOCKET_PATH = "/data/local/tmp/apm/apmd.sock";
+// IPC endpoint used by shell/root-facing runtime.
+// Android uses an abstract UNIX domain socket so shell clients do not depend
+// on filesystem socket labels. Emulator mode still uses a filesystem path.
+inline constexpr const char *IPC_SOCKET_PATH = "@apmd";
 
 // Default architecture for Debian-style repos
 inline constexpr const char *DEFAULT_ARCH = "arm64";

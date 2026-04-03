@@ -320,7 +320,7 @@ std::string getSourcesList() { return getSourcesDir(); }
 std::string getIpcSocketPath() {
   if (g_emulatorMode)
     return buildEmulatorPath("apmd.socket");
-  return "/data/local/tmp/apm/apmd.sock";
+  return "@apmd";
 }
 
 std::string getAmsdSocketPath() {
