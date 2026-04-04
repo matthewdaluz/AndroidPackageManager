@@ -172,7 +172,8 @@ void sendResponseMessage(int clientFd, Response resp) {
   if (resp.status == ResponseStatus::Unknown) {
     resp.status = resp.success ? ResponseStatus::Ok : ResponseStatus::Error;
   }
-  if (apm::logger::isDebugEnabled()) {
+  const bool debugEnabled = apm::logger::isDebugEnabled();
+  if (debugEnabled) {
     apm::logger::debug(std::string(kLogFileTag) +
                        ": sendResponseMessage status=" +
                        (resp.success ? "ok" : "error") + " id='" + resp.id +

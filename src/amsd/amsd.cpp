@@ -34,8 +34,10 @@
 #include "security_manager.hpp"
 
 #include <atomic>
+#include <cerrno>
 #include <csignal>
 #include <cstdint>
+#include <cstring>
 #include <cstdlib>
 #include <cstdio>
 #include <iostream>
@@ -48,7 +50,7 @@ namespace {
 
 constexpr const char *kLogFileTag = "amsd.cpp";
 
-apm::amsd::IpcServer *g_server = nullptr;
+std::atomic<apm::amsd::IpcServer *> g_server{nullptr};
 
 bool isDataAccessible() {
   struct stat st{};
@@ -67,8 +69,32 @@ void waitForDataReady() {
 }
 
 void handleSignal(int) {
-  if (g_server)
-    g_server->stop();
+  apm::amsd::IpcServer *server = g_server.load(std::memory_order_acquire);
+  if (server)
+    server->stop();
+}
+
+bool installSignalHandlers() {
+  struct sigaction sa {};
+  sa.sa_handler = handleSignal;
+  sigemptyset(&sa.sa_mask);
+  sa.sa_flags = 0;
+
+  if (::sigaction(SIGTERM, &sa, nullptr) != 0) {
+    apm::logger::error(std::string(kLogFileTag) +
+                       ": failed to install SIGTERM handler: " +
+                       std::strerror(errno));
+    return false;
+  }
+
+  if (::sigaction(SIGINT, &sa, nullptr) != 0) {
+    apm::logger::error(std::string(kLogFileTag) +
+                       ": failed to install SIGINT handler: " +
+                       std::strerror(errno));
+    return false;
+  }
+
+  return true;
 }
 
 std::string buildLogFilePath() {
@@ -99,7 +125,8 @@ bool readSystemProperty(const std::string &name, std::string *valueOut) {
     return false;
 
   std::string cmd = "getprop " + name;
-  if (apm::logger::isDebugEnabled()) {
+  const bool debugEnabled = apm::logger::isDebugEnabled();
+  if (debugEnabled) {
     apm::logger::debug(std::string(kLogFileTag) +
                        ": readSystemProperty exec='" + cmd + "'");
   }
@@ -114,7 +141,7 @@ bool readSystemProperty(const std::string &name, std::string *valueOut) {
   }
 
   const int rc = ::pclose(pipe);
-  if (apm::logger::isDebugEnabled()) {
+  if (debugEnabled) {
     apm::logger::debug(std::string(kLogFileTag) +
                        ": readSystemProperty result name='" + name +
                        "' rc=" + std::to_string(rc) + " raw='" + output + "'");
@@ -241,13 +268,17 @@ int main(int argc, char **argv) {
 
   apm::amsd::RequestDispatcher dispatcher(moduleManager, securityManager);
   apm::amsd::IpcServer server(socketPath, dispatcher);
-  g_server = &server;
-  std::signal(SIGTERM, handleSignal);
-  std::signal(SIGINT, handleSignal);
+  g_server.store(&server, std::memory_order_release);
+  if (!installSignalHandlers()) {
+    g_server.store(nullptr, std::memory_order_release);
+    moduleManager.stopPartitionMonitor();
+    return 1;
+  }
 
   if (!server.start()) {
     apm::logger::error("amsd: failed to start IPC server");
     moduleManager.stopPartitionMonitor();
+    g_server.store(nullptr, std::memory_order_release);
     return 1;
   }
 
@@ -289,12 +320,13 @@ int main(int argc, char **argv) {
   }
 
   const std::string setPropCmd = "setprop amsd.ready 1";
-  if (apm::logger::isDebugEnabled()) {
+  const bool debugEnabled = apm::logger::isDebugEnabled();
+  if (debugEnabled) {
     apm::logger::debug(std::string(kLogFileTag) +
                        ": exec startup command='" + setPropCmd + "'");
   }
   int setPropRc = ::system(setPropCmd.c_str());
-  if (apm::logger::isDebugEnabled()) {
+  if (debugEnabled) {
     apm::logger::debug(std::string(kLogFileTag) +
                        ": startup command result rc=" +
                        std::to_string(setPropRc));
@@ -305,7 +337,7 @@ int main(int argc, char **argv) {
   if (bootWatcher.joinable())
     bootWatcher.join();
   moduleManager.stopPartitionMonitor();
-  g_server = nullptr;
+  g_server.store(nullptr, std::memory_order_release);
 
   return 0;
 }

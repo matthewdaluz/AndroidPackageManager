@@ -32,7 +32,6 @@
 
 #include <cerrno>
 #include <cstring>
-#include <sstream>
 #include <string>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -73,7 +72,8 @@ void sendResponseMessage(int clientFd, apm::ipc::Response resp) {
     resp.status = resp.success ? apm::ipc::ResponseStatus::Ok
                                : apm::ipc::ResponseStatus::Error;
   }
-  if (apm::logger::isDebugEnabled()) {
+  const bool debugEnabled = apm::logger::isDebugEnabled();
+  if (debugEnabled) {
     apm::logger::debug(std::string(kLogFileTag) +
                        ": sendResponseMessage status=" +
                        (resp.success ? "ok" : "error") + " id='" + resp.id +

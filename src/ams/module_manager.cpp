@@ -123,13 +123,14 @@ std::string shellEscapeSingleQuotes(const std::string &value) {
 }
 
 bool runCommand(const std::string &cmd, std::string *errorMsg) {
-  if (apm::logger::isDebugEnabled()) {
+  const bool debugEnabled = apm::logger::isDebugEnabled();
+  if (debugEnabled) {
     apm::logger::debug(std::string(kLogFileTag) + ": runCommand exec='" + cmd +
                        "'");
   }
 
   int rc = ::system(cmd.c_str());
-  if (apm::logger::isDebugEnabled()) {
+  if (debugEnabled) {
     apm::logger::debug(std::string(kLogFileTag) +
                        ": runCommand result rc=" + std::to_string(rc));
   }
@@ -347,7 +348,7 @@ std::vector<std::string> immediateSubmounts(const std::string &target) {
   return out;
 }
 
-bool isMountShared(const std::string &path) {
+[[maybe_unused]] bool isMountShared(const std::string &path) {
   std::vector<MountInfoEntry> entries;
   if (!readMountInfo(entries))
     return false;
@@ -463,7 +464,7 @@ bool ensureBaseMirrorForTarget(const OverlayTarget &target,
   return true;
 }
 
-bool ensureBaseMirrors(std::string *errorMsg) {
+[[maybe_unused]] bool ensureBaseMirrors(std::string *errorMsg) {
   for (const auto &target : kOverlayTargets) {
     if (!ensureBaseMirrorForTarget(target, effectiveMountPoint(target),
                                    errorMsg))
@@ -507,8 +508,10 @@ bool mountBaseOnly(const OverlayTarget &target, const std::string &mountPoint,
   return true;
 }
 
-bool setMountPropagation(const std::string &path, unsigned long flags,
-                         std::string *errorMsg, int *errorCode = nullptr) {
+[[maybe_unused]] bool setMountPropagation(const std::string &path,
+                                          unsigned long flags,
+                                          std::string *errorMsg,
+                                          int *errorCode = nullptr) {
   if (::mount(nullptr, path.c_str(), nullptr, flags | MS_REC, nullptr) == 0) {
     return true;
   }
@@ -544,10 +547,9 @@ struct MovedSubmount {
 bool restoreMovedSubmounts(std::vector<MovedSubmount> &moved,
                            std::string *errorMsg);
 
-bool moveImmediateSubmounts(const std::string &targetMountPoint,
-                            const std::string &stagingRoot,
-                            std::vector<MovedSubmount> &moved,
-                            std::string *errorMsg) {
+[[maybe_unused]] bool moveImmediateSubmounts(
+  const std::string &targetMountPoint, const std::string &stagingRoot,
+  std::vector<MovedSubmount> &moved, std::string *errorMsg) {
   moved.clear();
   auto rollback = [&]() {
     std::string ignored;
@@ -766,9 +768,9 @@ bool mountOverlayReadOnlyCompat(const std::string &mountPoint,
   return false;
 }
 
-bool mountOverlayReadOnlyCompat(const std::string &mountPoint,
-                                const std::string &lowerDir,
-                                std::string *errorMsg) {
+[[maybe_unused]] bool mountOverlayReadOnlyCompat(
+  const std::string &mountPoint, const std::string &lowerDir,
+  std::string *errorMsg) {
   return mountOverlayReadOnlyCompat(mountPoint, lowerDir, "", errorMsg);
 }
 
@@ -902,12 +904,10 @@ void alignStagedTreeLabelsWithBase(const std::string &stagedRoot,
   }
 }
 
-bool mountOverlayWithUpperComposition(const std::string &mountPoint,
-                                      const std::vector<std::string> &layers,
-                                      const std::string &baseLowerDir,
-                                      const std::string &upperDir,
-                                      const std::string &workDir,
-                                      std::string *errorMsg) {
+[[maybe_unused]] bool mountOverlayWithUpperComposition(
+  const std::string &mountPoint, const std::vector<std::string> &layers,
+  const std::string &baseLowerDir, const std::string &upperDir,
+  const std::string &workDir, std::string *errorMsg) {
   std::string localErr;
 
   if (!resetOverlayScratchDir(upperDir, &localErr)) {
@@ -1017,10 +1017,9 @@ bool ensureTmpfsOverlayStagingRoot(const std::string &root,
   return true;
 }
 
-bool mountOverlayWithTmpfsStagedLower(const OverlayTarget &target,
-                                      const std::string &mountPoint,
-                                      const std::vector<std::string> &layers,
-                                      std::string *errorMsg) {
+[[maybe_unused]] bool mountOverlayWithTmpfsStagedLower(
+  const OverlayTarget &target, const std::string &mountPoint,
+  const std::vector<std::string> &layers, std::string *errorMsg) {
   if (layers.empty()) {
     if (errorMsg)
       *errorMsg = "No overlay layers to stage into tmpfs";
@@ -1153,8 +1152,9 @@ bool unmountTrackedBindMounts(const OverlayTarget &target, std::string *errorMsg
   return true;
 }
 
-bool copyDirectoryContents(const std::string &srcDir, const std::string &dstDir,
-                           std::string *errorMsg) {
+[[maybe_unused]] bool copyDirectoryContents(const std::string &srcDir,
+                                            const std::string &dstDir,
+                                            std::string *errorMsg) {
   if (!apm::fs::isDirectory(srcDir))
     return true;
   if (!ensureDir(dstDir)) {
@@ -1943,128 +1943,6 @@ bool ModuleManager::applyOverlayForTarget(std::size_t targetIndex,
     if (errorMsg)
       errorMsg->clear();
     return true;
-
-    std::string propagationPath = mountPoint;
-    bool wasShared = isMountShared(propagationPath);
-    bool propagationChanged = false;
-    int propErrno = 0;
-    if (!setMountPropagation(propagationPath, MS_PRIVATE, &localErr,
-                             &propErrno)) {
-      if (mountPoint == "/system" && propErrno == EINVAL) {
-        propagationPath = "/";
-        wasShared = isMountShared(propagationPath);
-        if (!setMountPropagation(propagationPath, MS_PRIVATE, &localErr,
-                                 &propErrno)) {
-          failCandidate("pre-private", localErr);
-          continue;
-        }
-      } else {
-        failCandidate("pre-private", localErr);
-        continue;
-      }
-    }
-    propagationChanged = true;
-
-    std::vector<MovedSubmount> moved;
-    const std::string moveRoot = apm::fs::joinPath(
-        apm::config::getModuleRuntimeDir(),
-        "move-" + std::string(target.name) + "-" + sanitizeForPath(mountPoint));
-    if (mountPoint == "/") {
-      apm::logger::info(
-          "AMS overlay: skipping submount move path for '/' candidate");
-    } else if (!moveImmediateSubmounts(mountPoint, moveRoot, moved, &localErr)) {
-      failCandidate("move-submount", localErr);
-      if (propagationChanged && wasShared) {
-        setMountPropagation(propagationPath, MS_SHARED, nullptr);
-      }
-      continue;
-    }
-
-    if (mountPoint != "/" && !unmountPath(mountPoint, &localErr)) {
-      failCandidate("pre-unmount", localErr);
-      std::string restoreErr;
-      restoreMovedSubmounts(moved, &restoreErr);
-      if (propagationChanged && wasShared) {
-        setMountPropagation(propagationPath, MS_SHARED, nullptr);
-      }
-      continue;
-    }
-
-    bool mounted = false;
-    if (layers.empty()) {
-      mounted = mountBaseOnly(target, mountPoint, &localErr);
-    } else {
-      if (std::strcmp(target.name, "system") == 0 &&
-          mountPoint == "/system") {
-        if (mountOverlayWithTmpfsStagedLower(target, mountPoint, layers,
-                                             &localErr)) {
-          mounted = true;
-        } else {
-          apm::logger::warn("AMS overlay: tmpfs staged fallback precheck failed "
-                            "for /system, continuing with compatibility "
-                            "strategy chain: " +
-                            localErr);
-        }
-      }
-
-      std::ostringstream lower;
-      for (size_t i = 0; i < layers.size(); ++i) {
-        if (i > 0)
-          lower << ':';
-        lower << layers[i];
-      }
-      lower << ':' << baseMirrorPath(target);
-
-      std::string upperDir =
-          apm::fs::joinPath(apm::config::getModuleRuntimeUpperDir(), target.name);
-      std::string workDir =
-          apm::fs::joinPath(apm::config::getModuleRuntimeWorkDir(), target.name);
-
-      if (!mounted) {
-        if (!resetOverlayScratchDir(upperDir, &localErr) ||
-            !resetOverlayScratchDir(workDir, &localErr)) {
-          mounted = false;
-        } else if (mountOverlayCompat(mountPoint, lower.str(), upperDir, workDir,
-                                      &localErr)) {
-          mounted = true;
-        } else if (mountOverlayReadOnlyCompat(
-                       mountPoint, lower.str(), selinuxContextForTarget(target),
-                       &localErr)) {
-          mounted = true;
-        } else if (mountOverlayWithTmpfsStagedLower(target, mountPoint, layers,
-                                                    &localErr)) {
-          mounted = true;
-        } else {
-          const std::string baseOnlyLower = baseMirrorPath(target);
-          mounted = mountOverlayWithUpperComposition(mountPoint, layers,
-                                                     baseOnlyLower, upperDir,
-                                                     workDir, &localErr);
-        }
-      }
-    }
-
-    std::string restoreErr;
-    if (!restoreMovedSubmounts(moved, &restoreErr)) {
-      failCandidate("restore-submount", restoreErr);
-      mounted = false;
-    }
-
-    if (propagationChanged && wasShared) {
-      std::string propRestoreErr;
-      if (!setMountPropagation(propagationPath, MS_SHARED, &propRestoreErr)) {
-        failCandidate("restore-propagation", propRestoreErr);
-      }
-    }
-
-    if (mounted) {
-      apm::logger::info("AMS overlay updated for " + mountPoint);
-      if (errorMsg)
-        errorMsg->clear();
-      return true;
-    }
-
-    failCandidate("overlay-mount", localErr);
-    mountBaseOnly(target, mountPoint, nullptr);
   }
 
   if (!triedAnyMountedCandidate) {

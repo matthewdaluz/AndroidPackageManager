@@ -370,9 +370,11 @@ static void parseStanzas(
   std::unordered_map<std::string, std::string> fields;
   std::string currentKey;
 
+  fields.reserve(16);
+
   auto flushCurrent = [&]() {
     if (!fields.empty()) {
-      outStanzas.push_back(fields);
+      outStanzas.push_back(std::move(fields));
       fields.clear();
       currentKey.clear();
     }
@@ -437,6 +439,7 @@ bool parsePackagesString(const std::string &content, PackageList &out,
 
   std::vector<std::unordered_map<std::string, std::string>> stanzas;
   parseStanzas(content, stanzas);
+  out.reserve(stanzas.size());
 
   for (const auto &fields : stanzas) {
     PackageEntry pkg;
