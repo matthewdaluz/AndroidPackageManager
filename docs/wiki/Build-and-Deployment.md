@@ -7,8 +7,7 @@
 ```bash
 sudo apt update
 sudo apt install -y \
-  build-essential cmake pkg-config git patch \
-  zlib1g-dev libcurl4-openssl-dev libssl-dev \
+  build-essential cmake pkg-config git \
   ninja-build soong clang clangd sdkmanager
 ```
 
@@ -18,8 +17,7 @@ Fedora:
 
 ```bash
 sudo dnf install -y \
-  @development-tools cmake pkgconf-pkg-config git patch \
-  zlib-devel libcurl-devel openssl-devel \
+  @development-tools cmake pkgconf-pkg-config git \
   ninja-build clang clang-tools-extra
 ```
 
@@ -27,10 +25,19 @@ Arch Linux:
 
 ```bash
 sudo pacman -S --needed \
-  base-devel cmake pkgconf git patch zlib curl openssl ninja clang
+  base-devel cmake pkgconf git ninja clang
 ```
 
 Note: package names for `soong` and `sdkmanager` vary by distro/repo.
+
+### BoringSSL prebuilts (required for all builds)
+
+APM uses bundled `libcurl` with repository-staged BoringSSL prebuilts only.
+
+- Android builds require `prebuilt/boringssl/build-<abi>/libssl.a`
+- Android builds require `prebuilt/boringssl/build-<abi>/libcrypto.a`
+- Host/emulator builds require `prebuilt/boringssl/build-x86_64/` or `prebuilt/boringssl/build-x86/`
+- All builds require `prebuilt/boringssl/include/openssl/base.h`
 
 ### Required Android SDK components
 
@@ -61,6 +68,8 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DAPM_EMULATOR_MODE=ON
 cmake --build build -j$(nproc)
 ```
 
+This mode links against bundled `libcurl` and the host BoringSSL prebuilts in `prebuilt/boringssl/`.
+
 Run with emulator flag:
 
 ```bash
@@ -78,6 +87,7 @@ Notes:
 
 - API level minimum is 29.
 - Script supports ABI selection and detects NDK paths.
+- Script requires staged Android BoringSSL prebuilts under `prebuilt/boringssl/build-<abi>/`.
 
 ### AOSP/Soong mode
 

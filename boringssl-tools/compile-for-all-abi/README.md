@@ -4,7 +4,7 @@ This directory contains `build_all.sh`, a helper script used to compile BoringSS
 
 ## Purpose
 
-Use this script to generate one Android build directory per ABI from the BoringSSL source tree so the compiled artifacts can be staged into the repository's prebuilt area.
+Use this script to generate one Android build directory per ABI from the BoringSSL source tree so the compiled artifacts can be staged into APM's canonical `prebuilt/boringssl/` area.
 
 Target ABIs:
 
@@ -48,3 +48,7 @@ cp -a build-arm64-v8a build-armeabi-v7a build-x86 build-x86_64 include \
 ```
 
 That staged content is what APM consumes as prebuilt BoringSSL artifacts.
+
+Note: emulator/host builds also require a native BoringSSL prebuilt under
+`prebuilt/boringssl/build-x86_64/` or `prebuilt/boringssl/build-x86/`. This
+helper only covers the Android ABI builds.

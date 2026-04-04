@@ -24,7 +24,6 @@
 
 cmake_minimum_required(VERSION 3.14)
 project(APM)
-include_directories(SYSTEM /usr/include /usr/include/openssl)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -49,7 +48,6 @@ if(POLICY CMP0077)
 endif()
 
 find_package(Git QUIET)
-find_program(PATCH_EXECUTABLE patch)
 
 function(apm_require_program program_path pretty_name reason)
   if(NOT program_path)
@@ -151,321 +149,183 @@ else()
   message(STATUS "ZLIB found: ${ZLIB_VERSION}")
 endif()
 
-set(APM_USE_SYSTEM_CURL_DEFAULT ON)
-if(ANDROID)
-  set(APM_USE_SYSTEM_CURL_DEFAULT OFF)
-endif()
-option(APM_USE_SYSTEM_CURL "Prefer system-installed libcurl" ${APM_USE_SYSTEM_CURL_DEFAULT})
-
-if(APM_USE_SYSTEM_CURL)
-  find_package(CURL QUIET)
-endif()
-
-set(APM_BUNDLED_TLS_LIBS "")
-if(NOT CURL_FOUND)
-  message(STATUS "Falling back to bundled libcurl and mbedTLS")
-  set(APM_USE_SYSTEM_CURL OFF CACHE BOOL "Prefer system-installed libcurl" FORCE)
-  apm_require_program("${GIT_EXECUTABLE}" "git" "to fetch the bundled curl/mbedTLS sources")
-  apm_require_program("${PATCH_EXECUTABLE}" "patch" "to apply bundled curl/mbedTLS patches")
-
-  set(_APM_PREV_ENABLE_TESTING_DEFINED FALSE)
-  set(_APM_PREV_ENABLE_TESTING_CACHE FALSE)
-  if(DEFINED CACHE{ENABLE_TESTING})
-    set(_APM_PREV_ENABLE_TESTING_CACHE TRUE)
-    set(_APM_PREV_ENABLE_TESTING "${CACHE{ENABLE_TESTING}}")
-  elseif(DEFINED ENABLE_TESTING)
-    set(_APM_PREV_ENABLE_TESTING_DEFINED TRUE)
-    set(_APM_PREV_ENABLE_TESTING "${ENABLE_TESTING}")
-  endif()
-
-  set(_APM_PREV_ENABLE_PROGRAMS_DEFINED FALSE)
-  set(_APM_PREV_ENABLE_PROGRAMS_CACHE FALSE)
-  if(DEFINED CACHE{ENABLE_PROGRAMS})
-    set(_APM_PREV_ENABLE_PROGRAMS_CACHE TRUE)
-    set(_APM_PREV_ENABLE_PROGRAMS "${CACHE{ENABLE_PROGRAMS}}")
-  elseif(DEFINED ENABLE_PROGRAMS)
-    set(_APM_PREV_ENABLE_PROGRAMS_DEFINED TRUE)
-    set(_APM_PREV_ENABLE_PROGRAMS "${ENABLE_PROGRAMS}")
-  endif()
-
-  set(_APM_PREV_BUILD_SHARED_LIBS_DEFINED FALSE)
-  set(_APM_PREV_BUILD_SHARED_LIBS_CACHE FALSE)
-  if(DEFINED CACHE{BUILD_SHARED_LIBS})
-    set(_APM_PREV_BUILD_SHARED_LIBS_CACHE TRUE)
-    set(_APM_PREV_BUILD_SHARED_LIBS "${CACHE{BUILD_SHARED_LIBS}}")
-  elseif(DEFINED BUILD_SHARED_LIBS)
-    set(_APM_PREV_BUILD_SHARED_LIBS_DEFINED TRUE)
-    set(_APM_PREV_BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS}")
-  endif()
-
-  set(ENABLE_TESTING OFF)
-  set(ENABLE_PROGRAMS OFF)
-  set(BUILD_SHARED_LIBS OFF)
-  set(MBEDTLS_FATAL_WARNINGS OFF)
-  set(DISABLE_PACKAGE_CONFIG_AND_INSTALL OFF)
-
-  set(_APM_MBEDTLS_PATCH "${CMAKE_SOURCE_DIR}/cmake/patches/mbedtls-disable-tls13.patch")
-
-  FetchContent_Declare(
-    mbedtls
-    URL https://github.com/Mbed-TLS/mbedtls/releases/download/v3.6.0/mbedtls-3.6.0.tar.bz2
-    URL_HASH SHA256=3ecf94fcfdaacafb757786a01b7538a61750ebd85c4b024f56ff8ba1490fcd38
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-    PATCH_COMMAND ${CMAKE_COMMAND} -E chdir <SOURCE_DIR>
-                  patch -p1 -N -i "${_APM_MBEDTLS_PATCH}"
-  )
-  FetchContent_MakeAvailable(mbedtls)
-  set(MbedTLS_DIR "${mbedtls_BINARY_DIR}" CACHE PATH "Path to bundled mbedTLS" FORCE)
-  set(_APM_MBEDTLS_LIBDIR "${mbedtls_BINARY_DIR}/library")
-  set(MBEDTLS_INCLUDE_DIRS "${mbedtls_SOURCE_DIR}/include" CACHE PATH "Bundled mbedTLS includes" FORCE)
-  set(MBEDTLS_LIBRARY "${_APM_MBEDTLS_LIBDIR}/libmbedtls.a" CACHE FILEPATH "Bundled mbedtls library" FORCE)
-  set(MBEDX509_LIBRARY "${_APM_MBEDTLS_LIBDIR}/libmbedx509.a" CACHE FILEPATH "Bundled mbedx509 library" FORCE)
-  set(MBEDCRYPTO_LIBRARY "${_APM_MBEDTLS_LIBDIR}/libmbedcrypto.a" CACHE FILEPATH "Bundled mbedcrypto library" FORCE)
-  set(MBEDTLS_LIBRARIES "${MBEDTLS_LIBRARY};${MBEDX509_LIBRARY};${MBEDCRYPTO_LIBRARY}" CACHE STRING "Bundled mbedTLS libraries" FORCE)
-  set(APM_BUNDLED_TLS_LIBS ${MBEDTLS_LIBRARIES})
-
-  set(BUILD_CURL_EXE OFF)
-  set(ENABLE_ARES OFF)
-  set(ENABLE_THREADED_RESOLVER OFF)
-  set(HTTP_ONLY ON)
-  set(CURL_USE_MBEDTLS ON)
-  set(CURL_USE_OPENSSL OFF)
-  set(CURL_ZLIB ON)
-  set(CURL_BROTLI OFF)
-  set(CURL_ZSTD OFF)
-  set(CURL_DISABLE_LDAP ON)
-  set(CURL_DISABLE_LDAPS ON)
-  set(CURL_DISABLE_RTSP ON)
-  set(CURL_DISABLE_DICT ON)
-  set(CURL_DISABLE_GOPHER ON)
-  set(CURL_DISABLE_IMAP ON)
-  set(CURL_DISABLE_POP3 ON)
-  set(CURL_DISABLE_SMTP ON)
-  set(CURL_DISABLE_TELNET ON)
-  set(CURL_DISABLE_TFTP ON)
-  set(CURL_DISABLE_FTP ON)
-  set(CURL_DISABLE_SMB ON)
-  set(CURL_DISABLE_MQTT ON)
-
-  set(_APM_CURL_PATCH "${CMAKE_SOURCE_DIR}/cmake/patches/curl-mbedtls-rng.patch")
-
-  FetchContent_Declare(
-    curl
-    URL https://curl.se/download/curl-8.7.1.tar.xz
-    URL_HASH SHA256=6fea2aac6a4610fbd0400afb0bcddbe7258a64c63f1f68e5855ebc0c659710cd
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-    PATCH_COMMAND ${CMAKE_COMMAND} -E chdir <SOURCE_DIR>
-                  patch -p1 -N -i "${_APM_CURL_PATCH}"
-  )
-  FetchContent_MakeAvailable(curl)
-
-  if(NOT TARGET CURL::libcurl AND TARGET libcurl)
-    add_library(CURL::libcurl ALIAS libcurl)
-  endif()
-
-  if(_APM_PREV_ENABLE_TESTING_CACHE)
-    set(ENABLE_TESTING "${_APM_PREV_ENABLE_TESTING}" CACHE BOOL "" FORCE)
-  elseif(_APM_PREV_ENABLE_TESTING_DEFINED)
-    set(ENABLE_TESTING "${_APM_PREV_ENABLE_TESTING}")
+function(apm_resolve_boringssl_libdir out_var)
+  if(ANDROID)
+    if(NOT DEFINED ANDROID_ABI OR ANDROID_ABI STREQUAL "")
+      message(FATAL_ERROR "ANDROID_ABI must be defined for Android builds so the correct prebuilt BoringSSL archive can be selected.")
+    endif()
+    set(_apm_boringssl_arch "${ANDROID_ABI}")
   else()
-    unset(ENABLE_TESTING CACHE)
+    string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" _apm_host_arch)
+    if(_apm_host_arch STREQUAL "x86_64" OR _apm_host_arch STREQUAL "amd64")
+      set(_apm_boringssl_arch "x86_64")
+    elseif(_apm_host_arch STREQUAL "x86" OR _apm_host_arch MATCHES "^i[3-6]86$")
+      set(_apm_boringssl_arch "x86")
+    else()
+      message(FATAL_ERROR
+        "Unsupported host architecture '${CMAKE_SYSTEM_PROCESSOR}' for prebuilt BoringSSL.\n"
+        "Supported desktop/emulator prebuilt directories are build-x86_64 and build-x86.")
+    endif()
   endif()
 
-  if(_APM_PREV_ENABLE_PROGRAMS_CACHE)
-    set(ENABLE_PROGRAMS "${_APM_PREV_ENABLE_PROGRAMS}" CACHE BOOL "" FORCE)
-  elseif(_APM_PREV_ENABLE_PROGRAMS_DEFINED)
-    set(ENABLE_PROGRAMS "${_APM_PREV_ENABLE_PROGRAMS}")
+  set(${out_var} "${APM_BORINGSSL_ROOT}/build-${_apm_boringssl_arch}" PARENT_SCOPE)
+endfunction()
+
+set(APM_BORINGSSL_ROOT "${CMAKE_SOURCE_DIR}/prebuilt/boringssl")
+set(APM_BORINGSSL_INCLUDE_DIR "${APM_BORINGSSL_ROOT}/include")
+apm_resolve_boringssl_libdir(APM_BORINGSSL_LIBDIR)
+
+set(APM_BORINGSSL_SSL_LIBRARY "${APM_BORINGSSL_LIBDIR}/libssl.a")
+set(APM_BORINGSSL_CRYPTO_LIBRARY "${APM_BORINGSSL_LIBDIR}/libcrypto.a")
+
+if(NOT EXISTS "${APM_BORINGSSL_SSL_LIBRARY}"
+    OR NOT EXISTS "${APM_BORINGSSL_CRYPTO_LIBRARY}"
+    OR NOT EXISTS "${APM_BORINGSSL_INCLUDE_DIR}/openssl/base.h")
+  if(ANDROID)
+    set(_apm_boringssl_expected
+      "  ${APM_BORINGSSL_SSL_LIBRARY}\n"
+      "  ${APM_BORINGSSL_CRYPTO_LIBRARY}\n"
+      "  ${APM_BORINGSSL_INCLUDE_DIR}/openssl/base.h")
+    set(_apm_boringssl_hint
+      "Android builds require ABI-specific BoringSSL prebuilts under prebuilt/boringssl/build-${ANDROID_ABI}.")
   else()
-    unset(ENABLE_PROGRAMS CACHE)
+    set(_apm_boringssl_expected
+      "  ${APM_BORINGSSL_SSL_LIBRARY}\n"
+      "  ${APM_BORINGSSL_CRYPTO_LIBRARY}\n"
+      "  ${APM_BORINGSSL_INCLUDE_DIR}/openssl/base.h")
+    set(_apm_boringssl_hint
+      "Desktop/emulator builds require host prebuilts under prebuilt/boringssl/build-x86_64 or build-x86.")
   endif()
 
-  if(_APM_PREV_BUILD_SHARED_LIBS_CACHE)
-    set(BUILD_SHARED_LIBS "${_APM_PREV_BUILD_SHARED_LIBS}" CACHE BOOL "" FORCE)
-  elseif(_APM_PREV_BUILD_SHARED_LIBS_DEFINED)
-    set(BUILD_SHARED_LIBS "${_APM_PREV_BUILD_SHARED_LIBS}")
-  else()
-    unset(BUILD_SHARED_LIBS CACHE)
-  endif()
-
-  unset(_APM_PREV_ENABLE_TESTING_CACHE)
-  unset(_APM_PREV_ENABLE_TESTING)
-  unset(_APM_PREV_ENABLE_TESTING_DEFINED)
-  unset(_APM_PREV_ENABLE_PROGRAMS_CACHE)
-  unset(_APM_PREV_ENABLE_PROGRAMS)
-  unset(_APM_PREV_ENABLE_PROGRAMS_DEFINED)
-  unset(_APM_PREV_BUILD_SHARED_LIBS_CACHE)
-  unset(_APM_PREV_BUILD_SHARED_LIBS)
-  unset(_APM_PREV_BUILD_SHARED_LIBS_DEFINED)
-  unset(_APM_MBEDTLS_LIBDIR)
+  message(FATAL_ERROR
+    "Required BoringSSL prebuilts were not found.\n"
+    "Expected:\n${_apm_boringssl_expected}\n"
+    "${_apm_boringssl_hint}")
 endif()
 
-# Ensure mbedTLS is available even when using the system curl.
-if(NOT DEFINED MBEDTLS_LIBRARIES OR MBEDTLS_LIBRARIES STREQUAL "")
-  apm_require_program("${PATCH_EXECUTABLE}" "patch" "to apply bundled mbedTLS patches")
+message(STATUS "Using prebuilt BoringSSL from ${APM_BORINGSSL_LIBDIR}")
+include_directories(SYSTEM "${APM_BORINGSSL_INCLUDE_DIR}")
 
-  set(_APM_PREV_ENABLE_TESTING_CACHE FALSE)
-  set(_APM_PREV_ENABLE_TESTING_DEFINED FALSE)
-  if(DEFINED CACHE{ENABLE_TESTING})
-    set(_APM_PREV_ENABLE_TESTING_CACHE TRUE)
-    set(_APM_PREV_ENABLE_TESTING "${CACHE{ENABLE_TESTING}}")
-  elseif(DEFINED ENABLE_TESTING)
-    set(_APM_PREV_ENABLE_TESTING_DEFINED TRUE)
-    set(_APM_PREV_ENABLE_TESTING "${ENABLE_TESTING}")
-  endif()
+# These cache entries allow bundled curl's FindOpenSSL module to resolve the
+# BoringSSL prebuilts without probing host OpenSSL installations.
+set(OPENSSL_ROOT_DIR "${APM_BORINGSSL_ROOT}" CACHE PATH "APM BoringSSL root" FORCE)
+set(OPENSSL_INCLUDE_DIR "${APM_BORINGSSL_INCLUDE_DIR}" CACHE PATH "APM BoringSSL includes" FORCE)
+set(OPENSSL_SSL_LIBRARY "${APM_BORINGSSL_SSL_LIBRARY}" CACHE FILEPATH "APM BoringSSL libssl" FORCE)
+set(OPENSSL_CRYPTO_LIBRARY "${APM_BORINGSSL_CRYPTO_LIBRARY}" CACHE FILEPATH "APM BoringSSL libcrypto" FORCE)
+set(OPENSSL_LIBRARIES "${OPENSSL_SSL_LIBRARY};${OPENSSL_CRYPTO_LIBRARY}" CACHE STRING "APM BoringSSL libraries" FORCE)
+set(OPENSSL_USE_STATIC_LIBS TRUE CACHE BOOL "Link BoringSSL statically" FORCE)
 
-  set(_APM_PREV_ENABLE_PROGRAMS_CACHE FALSE)
-  set(_APM_PREV_ENABLE_PROGRAMS_DEFINED FALSE)
-  if(DEFINED CACHE{ENABLE_PROGRAMS})
-    set(_APM_PREV_ENABLE_PROGRAMS_CACHE TRUE)
-    set(_APM_PREV_ENABLE_PROGRAMS "${CACHE{ENABLE_PROGRAMS}}")
-  elseif(DEFINED ENABLE_PROGRAMS)
-    set(_APM_PREV_ENABLE_PROGRAMS_DEFINED TRUE)
-    set(_APM_PREV_ENABLE_PROGRAMS "${ENABLE_PROGRAMS}")
-  endif()
+message(STATUS "Configuring bundled libcurl with BoringSSL")
 
-  set(_APM_PREV_BUILD_SHARED_LIBS_CACHE FALSE)
-  set(_APM_PREV_BUILD_SHARED_LIBS_DEFINED FALSE)
-  if(DEFINED CACHE{BUILD_SHARED_LIBS})
-    set(_APM_PREV_BUILD_SHARED_LIBS_CACHE TRUE)
-    set(_APM_PREV_BUILD_SHARED_LIBS "${CACHE{BUILD_SHARED_LIBS}}")
-  elseif(DEFINED BUILD_SHARED_LIBS)
-    set(_APM_PREV_BUILD_SHARED_LIBS_DEFINED TRUE)
-    set(_APM_PREV_BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS}")
-  endif()
-
-  set(ENABLE_TESTING OFF)
-  set(ENABLE_PROGRAMS OFF)
-  set(BUILD_SHARED_LIBS OFF)
-  set(MBEDTLS_FATAL_WARNINGS OFF)
-  set(DISABLE_PACKAGE_CONFIG_AND_INSTALL OFF)
-
-  set(_APM_MBEDTLS_PATCH "${CMAKE_SOURCE_DIR}/cmake/patches/mbedtls-disable-tls13.patch")
-
-  FetchContent_Declare(
-    mbedtls
-    URL https://github.com/Mbed-TLS/mbedtls/releases/download/v3.6.0/mbedtls-3.6.0.tar.bz2
-    URL_HASH SHA256=3ecf94fcfdaacafb757786a01b7538a61750ebd85c4b024f56ff8ba1490fcd38
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-    PATCH_COMMAND ${CMAKE_COMMAND} -E chdir <SOURCE_DIR>
-                  patch -p1 -N -i "${_APM_MBEDTLS_PATCH}"
-  )
-  FetchContent_MakeAvailable(mbedtls)
-  set(_APM_MBEDTLS_LIBDIR "${mbedtls_BINARY_DIR}/library")
-  set(MBEDTLS_INCLUDE_DIRS "${mbedtls_SOURCE_DIR}/include" CACHE PATH "Bundled mbedTLS includes" FORCE)
-  set(MBEDTLS_LIBRARY "${_APM_MBEDTLS_LIBDIR}/libmbedtls.a" CACHE FILEPATH "Bundled mbedtls library" FORCE)
-  set(MBEDX509_LIBRARY "${_APM_MBEDTLS_LIBDIR}/libmbedx509.a" CACHE FILEPATH "Bundled mbedx509 library" FORCE)
-  set(MBEDCRYPTO_LIBRARY "${_APM_MBEDTLS_LIBDIR}/libmbedcrypto.a" CACHE FILEPATH "Bundled mbedcrypto library" FORCE)
-  set(MBEDTLS_LIBRARIES "${MBEDTLS_LIBRARY};${MBEDX509_LIBRARY};${MBEDCRYPTO_LIBRARY}" CACHE STRING "Bundled mbedTLS libraries" FORCE)
-  if(NOT APM_BUNDLED_TLS_LIBS)
-    set(APM_BUNDLED_TLS_LIBS ${MBEDTLS_LIBRARIES})
-  endif()
-
-  if(_APM_PREV_ENABLE_TESTING_CACHE)
-    set(ENABLE_TESTING "${_APM_PREV_ENABLE_TESTING}" CACHE BOOL "" FORCE)
-  elseif(_APM_PREV_ENABLE_TESTING_DEFINED)
-    set(ENABLE_TESTING "${_APM_PREV_ENABLE_TESTING}")
-  else()
-    unset(ENABLE_TESTING CACHE)
-  endif()
-
-  if(_APM_PREV_ENABLE_PROGRAMS_CACHE)
-    set(ENABLE_PROGRAMS "${_APM_PREV_ENABLE_PROGRAMS}" CACHE BOOL "" FORCE)
-  elseif(_APM_PREV_ENABLE_PROGRAMS_DEFINED)
-    set(ENABLE_PROGRAMS "${_APM_PREV_ENABLE_PROGRAMS}")
-  else()
-    unset(ENABLE_PROGRAMS CACHE)
-  endif()
-
-  if(_APM_PREV_BUILD_SHARED_LIBS_CACHE)
-    set(BUILD_SHARED_LIBS "${_APM_PREV_BUILD_SHARED_LIBS}" CACHE BOOL "" FORCE)
-  elseif(_APM_PREV_BUILD_SHARED_LIBS_DEFINED)
-    set(BUILD_SHARED_LIBS "${_APM_PREV_BUILD_SHARED_LIBS}")
-  else()
-    unset(BUILD_SHARED_LIBS CACHE)
-  endif()
-
-  unset(_APM_PREV_ENABLE_TESTING_CACHE)
-  unset(_APM_PREV_ENABLE_TESTING)
-  unset(_APM_PREV_ENABLE_TESTING_DEFINED)
-  unset(_APM_PREV_ENABLE_PROGRAMS_CACHE)
-  unset(_APM_PREV_ENABLE_PROGRAMS)
-  unset(_APM_PREV_ENABLE_PROGRAMS_DEFINED)
-  unset(_APM_PREV_BUILD_SHARED_LIBS_CACHE)
-  unset(_APM_PREV_BUILD_SHARED_LIBS)
-  unset(_APM_PREV_BUILD_SHARED_LIBS_DEFINED)
-  unset(_APM_MBEDTLS_LIBDIR)
+set(_APM_PREV_ENABLE_TESTING_CACHE FALSE)
+set(_APM_PREV_ENABLE_TESTING_DEFINED FALSE)
+if(DEFINED CACHE{ENABLE_TESTING})
+  set(_APM_PREV_ENABLE_TESTING_CACHE TRUE)
+  set(_APM_PREV_ENABLE_TESTING "${CACHE{ENABLE_TESTING}}")
+elseif(DEFINED ENABLE_TESTING)
+  set(_APM_PREV_ENABLE_TESTING_DEFINED TRUE)
+  set(_APM_PREV_ENABLE_TESTING "${ENABLE_TESTING}")
 endif()
 
-
-# ======================================================
-# BoringSSL/OpenSSL
-# ======================================================
-set(_APM_BORINGSSL_ROOT "${CMAKE_SOURCE_DIR}/prebuilt/boringssl")
-set(_APM_BORINGSSL_INCLUDE_DIR "${_APM_BORINGSSL_ROOT}/include")
-set(_APM_BORINGSSL_LIBDIR "")
-
-if(ANDROID)
-  if(NOT DEFINED ANDROID_ABI OR ANDROID_ABI STREQUAL "")
-    message(FATAL_ERROR "ANDROID_ABI must be defined for Android builds so the correct prebuilt BoringSSL archive can be selected.")
-  endif()
-
-  set(_APM_BORINGSSL_LIBDIR "${_APM_BORINGSSL_ROOT}/build-${ANDROID_ABI}")
-  if(NOT EXISTS "${_APM_BORINGSSL_LIBDIR}/libssl.a"
-      OR NOT EXISTS "${_APM_BORINGSSL_LIBDIR}/libcrypto.a"
-      OR NOT EXISTS "${_APM_BORINGSSL_INCLUDE_DIR}")
-    message(FATAL_ERROR
-      "Prebuilt BoringSSL for Android ABI ${ANDROID_ABI} was not found.\n"
-      "Expected:\n"
-      "  ${_APM_BORINGSSL_LIBDIR}/libssl.a\n"
-      "  ${_APM_BORINGSSL_LIBDIR}/libcrypto.a\n"
-      "  ${_APM_BORINGSSL_INCLUDE_DIR}/\n")
-  endif()
-
-  message(STATUS "Using prebuilt BoringSSL for ${ANDROID_ABI} from ${_APM_BORINGSSL_LIBDIR}")
-  set(OPENSSL_SSL_LIBRARY "${_APM_BORINGSSL_LIBDIR}/libssl.a" CACHE FILEPATH "Prebuilt BoringSSL libssl" FORCE)
-  set(OPENSSL_CRYPTO_LIBRARY "${_APM_BORINGSSL_LIBDIR}/libcrypto.a" CACHE FILEPATH "Prebuilt BoringSSL libcrypto" FORCE)
-  include_directories(SYSTEM "${_APM_BORINGSSL_INCLUDE_DIR}")
+set(_APM_PREV_ENABLE_PROGRAMS_CACHE FALSE)
+set(_APM_PREV_ENABLE_PROGRAMS_DEFINED FALSE)
+if(DEFINED CACHE{ENABLE_PROGRAMS})
+  set(_APM_PREV_ENABLE_PROGRAMS_CACHE TRUE)
+  set(_APM_PREV_ENABLE_PROGRAMS "${CACHE{ENABLE_PROGRAMS}}")
+elseif(DEFINED ENABLE_PROGRAMS)
+  set(_APM_PREV_ENABLE_PROGRAMS_DEFINED TRUE)
+  set(_APM_PREV_ENABLE_PROGRAMS "${ENABLE_PROGRAMS}")
 endif()
 
-if(NOT OPENSSL_SSL_LIBRARY OR NOT OPENSSL_CRYPTO_LIBRARY)
-  find_library(OPENSSL_SSL_LIBRARY NAMES ssl)
-  find_library(OPENSSL_CRYPTO_LIBRARY NAMES crypto)
+set(_APM_PREV_BUILD_SHARED_LIBS_CACHE FALSE)
+set(_APM_PREV_BUILD_SHARED_LIBS_DEFINED FALSE)
+if(DEFINED CACHE{BUILD_SHARED_LIBS})
+  set(_APM_PREV_BUILD_SHARED_LIBS_CACHE TRUE)
+  set(_APM_PREV_BUILD_SHARED_LIBS "${CACHE{BUILD_SHARED_LIBS}}")
+elseif(DEFINED BUILD_SHARED_LIBS)
+  set(_APM_PREV_BUILD_SHARED_LIBS_DEFINED TRUE)
+  set(_APM_PREV_BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS}")
 endif()
 
-if((NOT OPENSSL_SSL_LIBRARY OR NOT OPENSSL_CRYPTO_LIBRARY)
-    AND EXISTS "${_APM_BORINGSSL_ROOT}/libssl.a"
-    AND EXISTS "${_APM_BORINGSSL_ROOT}/libcrypto.a")
-  # Legacy flat prebuilt layout fallback.
-  message(STATUS "Using prebuilt BoringSSL from ${_APM_BORINGSSL_ROOT}")
-  set(OPENSSL_SSL_LIBRARY "${_APM_BORINGSSL_ROOT}/libssl.a" CACHE FILEPATH "Prebuilt BoringSSL libssl" FORCE)
-  set(OPENSSL_CRYPTO_LIBRARY "${_APM_BORINGSSL_ROOT}/libcrypto.a" CACHE FILEPATH "Prebuilt BoringSSL libcrypto" FORCE)
-  if(EXISTS "${_APM_BORINGSSL_INCLUDE_DIR}")
-    include_directories(SYSTEM "${_APM_BORINGSSL_INCLUDE_DIR}")
-  endif()
+set(ENABLE_TESTING OFF)
+set(ENABLE_PROGRAMS OFF)
+set(BUILD_SHARED_LIBS OFF)
+set(BUILD_CURL_EXE OFF)
+set(BUILD_LIBCURL_DOCS OFF)
+set(BUILD_MISC_DOCS OFF)
+set(ENABLE_ARES OFF)
+set(ENABLE_THREADED_RESOLVER OFF)
+set(HTTP_ONLY ON)
+set(CURL_USE_OPENSSL ON)
+set(CURL_ZLIB ON)
+set(CURL_BROTLI OFF)
+set(CURL_ZSTD OFF)
+set(CURL_DISABLE_INSTALL ON)
+set(CURL_DISABLE_LDAP ON)
+set(CURL_DISABLE_LDAPS ON)
+set(CURL_DISABLE_RTSP ON)
+set(CURL_DISABLE_DICT ON)
+set(CURL_DISABLE_GOPHER ON)
+set(CURL_DISABLE_IMAP ON)
+set(CURL_DISABLE_POP3 ON)
+set(CURL_DISABLE_SMTP ON)
+set(CURL_DISABLE_TELNET ON)
+set(CURL_DISABLE_TFTP ON)
+set(CURL_DISABLE_FTP ON)
+set(CURL_DISABLE_SMB ON)
+set(CURL_DISABLE_MQTT ON)
+
+FetchContent_Declare(
+  curl
+  URL https://curl.se/download/curl-8.7.1.tar.xz
+  URL_HASH SHA256=6fea2aac6a4610fbd0400afb0bcddbe7258a64c63f1f68e5855ebc0c659710cd
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+FetchContent_MakeAvailable(curl)
+
+if(NOT TARGET CURL::libcurl AND TARGET libcurl)
+  add_library(CURL::libcurl ALIAS libcurl)
 endif()
-if(NOT OPENSSL_SSL_LIBRARY OR NOT OPENSSL_CRYPTO_LIBRARY)
-  message(FATAL_ERROR 
-    "OpenSSL/BoringSSL libraries not found.\n"
-    "\n"
-    "To build BoringSSL for this project:\n"
-    "  1. Clone BoringSSL:\n"
-    "       git clone https://github.com/google/boringssl.git\n"
-    "       cd boringssl\n"
-    "\n"
-    "  2. Build BoringSSL:\n"
-    "       cmake -DCMAKE_BUILD_TYPE=Release .. -B build\n"
-    "       cmake --build build -j$(nproc)\n"
-    "\n"
-    "  3. Copy the built libraries to the prebuilt directory.\n"
-    "     Android builds expect ABI-specific archives under:\n"
-    "       ${CMAKE_SOURCE_DIR}/prebuilt/boringssl/build-${ANDROID_ABI}\n"
-    "     with shared headers under:\n"
-    "       ${CMAKE_SOURCE_DIR}/prebuilt/boringssl/include\n"
-    "\n"
-    "  4. Re-run CMake to detect the prebuilt libraries.\n"
-    "\n"
-    "Alternatively, install system OpenSSL development packages (e.g., libssl-dev).")
+
+if(NOT TARGET CURL::libcurl)
+  message(FATAL_ERROR "Bundled libcurl was configured, but target CURL::libcurl is unavailable.")
 endif()
+
+if(_APM_PREV_ENABLE_TESTING_CACHE)
+  set(ENABLE_TESTING "${_APM_PREV_ENABLE_TESTING}" CACHE BOOL "" FORCE)
+elseif(_APM_PREV_ENABLE_TESTING_DEFINED)
+  set(ENABLE_TESTING "${_APM_PREV_ENABLE_TESTING}")
+else()
+  unset(ENABLE_TESTING CACHE)
+endif()
+
+if(_APM_PREV_ENABLE_PROGRAMS_CACHE)
+  set(ENABLE_PROGRAMS "${_APM_PREV_ENABLE_PROGRAMS}" CACHE BOOL "" FORCE)
+elseif(_APM_PREV_ENABLE_PROGRAMS_DEFINED)
+  set(ENABLE_PROGRAMS "${_APM_PREV_ENABLE_PROGRAMS}")
+else()
+  unset(ENABLE_PROGRAMS CACHE)
+endif()
+
+if(_APM_PREV_BUILD_SHARED_LIBS_CACHE)
+  set(BUILD_SHARED_LIBS "${_APM_PREV_BUILD_SHARED_LIBS}" CACHE BOOL "" FORCE)
+elseif(_APM_PREV_BUILD_SHARED_LIBS_DEFINED)
+  set(BUILD_SHARED_LIBS "${_APM_PREV_BUILD_SHARED_LIBS}")
+else()
+  unset(BUILD_SHARED_LIBS CACHE)
+endif()
+
+unset(_APM_PREV_ENABLE_TESTING_CACHE)
+unset(_APM_PREV_ENABLE_TESTING)
+unset(_APM_PREV_ENABLE_TESTING_DEFINED)
+unset(_APM_PREV_ENABLE_PROGRAMS_CACHE)
+unset(_APM_PREV_ENABLE_PROGRAMS)
+unset(_APM_PREV_ENABLE_PROGRAMS_DEFINED)
+unset(_APM_PREV_BUILD_SHARED_LIBS_CACHE)
+unset(_APM_PREV_BUILD_SHARED_LIBS)
+unset(_APM_PREV_BUILD_SHARED_LIBS_DEFINED)
+unset(_apm_boringssl_expected)
+unset(_apm_boringssl_hint)
 
 
 # ======================================================
@@ -504,7 +364,6 @@ set(APM_CLIENT_SOURCES
 
     src/util/fs.cpp
     src/util/process_lock.cpp
-    src/util/crypto/sha256.cpp
 )
 
 add_executable(apm ${APM_CLIENT_SOURCES})
@@ -517,8 +376,6 @@ target_include_directories(apm PRIVATE
     src/util/include
     src/util/crypto
     src/apm/commands/include
-    $<IF:$<BOOL:${ANDROID}>,, /usr/include>
-    src/thirdparty/include
     include
 )
 
@@ -527,7 +384,6 @@ target_link_libraries(apm PRIVATE
     ZLIB::ZLIB
     ${OPENSSL_SSL_LIBRARY}
     ${OPENSSL_CRYPTO_LIBRARY}
-    ${APM_BUNDLED_TLS_LIBS}
 )
 
 # ======================================================
@@ -539,7 +395,6 @@ set(APM_DAEMON_SOURCES
     src/core/config.cpp
     src/apm/transport.cpp
     src/apm/ipc_client.cpp
-    src/apmd/request_dispatcher.cpp
     src/apmd/protocol.cpp
     src/apmd/install_manager.cpp
     src/apmd/export_path.cpp
@@ -566,7 +421,6 @@ set(APM_DAEMON_SOURCES
 
     src/util/fs.cpp
     src/util/process_lock.cpp
-    src/util/crypto/sha256.cpp
 
     src/apmd/security_manager.cpp
 )
@@ -581,8 +435,6 @@ target_include_directories(apmd PRIVATE
     src/util/include
     src/util/crypto
     src/apm/commands/include
-    $<IF:$<BOOL:${ANDROID}>,, /usr/include>
-    src/thirdparty/include
     include
 )
 
@@ -592,7 +444,6 @@ target_link_libraries(apmd PRIVATE
     ZLIB::ZLIB
     ${OPENSSL_SSL_LIBRARY}
     ${OPENSSL_CRYPTO_LIBRARY}
-    ${APM_BUNDLED_TLS_LIBS}
 )
 
 set(AMSD_DAEMON_SOURCES
@@ -623,8 +474,6 @@ target_include_directories(amsd PRIVATE
     src/core/include
     src/util/include
     src/util/crypto
-    $<IF:$<BOOL:${ANDROID}>,, /usr/include>
-    src/thirdparty/include
     include
 )
 
@@ -633,23 +482,4 @@ target_link_libraries(amsd PRIVATE
     ZLIB::ZLIB
     ${OPENSSL_SSL_LIBRARY}
     ${OPENSSL_CRYPTO_LIBRARY}
-    ${APM_BUNDLED_TLS_LIBS}
 )
-
-if(TARGET mbedcrypto)
-  add_dependencies(apm mbedcrypto)
-  add_dependencies(apmd mbedcrypto)
-  add_dependencies(amsd mbedcrypto)
-endif()
-
-if(TARGET mbedx509)
-  add_dependencies(apm mbedx509)
-  add_dependencies(apmd mbedx509)
-  add_dependencies(amsd mbedx509)
-endif()
-
-if(TARGET mbedtls)
-  add_dependencies(apm mbedtls)
-  add_dependencies(apmd mbedtls)
-  add_dependencies(amsd mbedtls)
-endif()

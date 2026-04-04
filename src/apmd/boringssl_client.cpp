@@ -53,10 +53,10 @@ constexpr unsigned int kPbkdf2Iterations = 200000;
 
 CryptoEngine::CryptoEngine() : m_masterKeyLoaded(false) {}
 
-std::string CryptoEngine::formatOpenSslError() const {
+std::string CryptoEngine::formatCryptoError() const {
   unsigned long err = ERR_get_error();
   if (err == 0)
-    return "OpenSSL error";
+    return "BoringSSL error";
 
   char buf[256] = {0};
   ERR_error_string_n(err, buf, sizeof(buf));
@@ -71,7 +71,7 @@ bool CryptoEngine::randomBytes(std::size_t count, std::vector<uint8_t> &out,
 
   if (RAND_bytes(out.data(), static_cast<int>(out.size())) != 1) {
     if (errorMsg)
-      *errorMsg = "Unable to generate random bytes: " + formatOpenSslError();
+      *errorMsg = "Unable to generate random bytes: " + formatCryptoError();
     return false;
   }
 
@@ -161,7 +161,7 @@ bool CryptoEngine::encrypt(const std::vector<uint8_t> &plaintext,
       EVP_EncryptInit_ex(ctx.get(), nullptr, nullptr, m_masterKey.data(),
                          ivOut.data()) != 1) {
     if (errorMsg)
-      *errorMsg = "Failed to initialize AES-GCM: " + formatOpenSslError();
+      *errorMsg = "Failed to initialize AES-GCM: " + formatCryptoError();
     return false;
   }
 
@@ -173,7 +173,7 @@ bool CryptoEngine::encrypt(const std::vector<uint8_t> &plaintext,
                           plaintext.data(),
                           static_cast<int>(plaintext.size())) != 1) {
       if (errorMsg)
-        *errorMsg = "AES-GCM encryption failed: " + formatOpenSslError();
+        *errorMsg = "AES-GCM encryption failed: " + formatCryptoError();
       return false;
     }
     totalLen = outLen;
@@ -183,7 +183,7 @@ bool CryptoEngine::encrypt(const std::vector<uint8_t> &plaintext,
           ctx.get(), ciphertextOut.data() + static_cast<std::size_t>(totalLen),
           &outLen) != 1) {
     if (errorMsg)
-      *errorMsg = "AES-GCM finalize failed: " + formatOpenSslError();
+      *errorMsg = "AES-GCM finalize failed: " + formatCryptoError();
     return false;
   }
 
@@ -194,7 +194,7 @@ bool CryptoEngine::encrypt(const std::vector<uint8_t> &plaintext,
                           static_cast<int>(tagOut.size()),
                           tagOut.data()) != 1) {
     if (errorMsg)
-      *errorMsg = "Failed to retrieve AES-GCM tag: " + formatOpenSslError();
+      *errorMsg = "Failed to retrieve AES-GCM tag: " + formatCryptoError();
     return false;
   }
 
@@ -236,7 +236,7 @@ bool CryptoEngine::decrypt(const std::vector<uint8_t> &iv,
       EVP_DecryptInit_ex(ctx.get(), nullptr, nullptr, m_masterKey.data(),
                          iv.data()) != 1) {
     if (errorMsg)
-      *errorMsg = "Failed to initialize AES-GCM: " + formatOpenSslError();
+      *errorMsg = "Failed to initialize AES-GCM: " + formatCryptoError();
     return false;
   }
 
@@ -248,7 +248,7 @@ bool CryptoEngine::decrypt(const std::vector<uint8_t> &iv,
                           ciphertext.data(),
                           static_cast<int>(ciphertext.size())) != 1) {
       if (errorMsg)
-        *errorMsg = "AES-GCM decryption failed: " + formatOpenSslError();
+        *errorMsg = "AES-GCM decryption failed: " + formatCryptoError();
       plaintextOut.clear();
       return false;
     }
@@ -259,7 +259,7 @@ bool CryptoEngine::decrypt(const std::vector<uint8_t> &iv,
                           static_cast<int>(tag.size()),
                           const_cast<uint8_t *>(tag.data())) != 1) {
     if (errorMsg)
-      *errorMsg = "Failed to set AES-GCM tag: " + formatOpenSslError();
+      *errorMsg = "Failed to set AES-GCM tag: " + formatCryptoError();
     plaintextOut.clear();
     return false;
   }
@@ -268,7 +268,7 @@ bool CryptoEngine::decrypt(const std::vector<uint8_t> &iv,
           ctx.get(), plaintextOut.data() + static_cast<std::size_t>(totalLen),
           &outLen) != 1) {
     if (errorMsg)
-      *errorMsg = "AES-GCM authentication failed: " + formatOpenSslError();
+      *errorMsg = "AES-GCM authentication failed: " + formatCryptoError();
     plaintextOut.clear();
     return false;
   }
@@ -288,7 +288,7 @@ bool CryptoEngine::derivePasswordKey(const std::string &secret,
                         static_cast<int>(derivedOut.size()),
                         derivedOut.data()) != 1) {
     if (errorMsg)
-      *errorMsg = "PBKDF2 derivation failed: " + formatOpenSslError();
+      *errorMsg = "PBKDF2 derivation failed: " + formatCryptoError();
     return false;
   }
 
@@ -309,7 +309,7 @@ bool CryptoEngine::deriveKeyMaterial(std::vector<uint8_t> &materialOut,
             materialOut.data(), &outLen) ||
       outLen != materialOut.size()) {
     if (errorMsg)
-      *errorMsg = "HMAC derivation failed: " + formatOpenSslError();
+      *errorMsg = "HMAC derivation failed: " + formatCryptoError();
     materialOut.clear();
     return false;
   }

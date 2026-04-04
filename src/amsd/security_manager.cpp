@@ -48,10 +48,10 @@ namespace apm::amsd {
 
 namespace {
 
-std::string formatOpenSslError() {
+std::string formatCryptoError() {
   unsigned long err = ERR_get_error();
   if (err == 0)
-    return "OpenSSL error";
+    return "BoringSSL error";
 
   char buf[256] = {0};
   ERR_error_string_n(err, buf, sizeof(buf));
@@ -85,7 +85,7 @@ bool SecurityManager::deriveHmac(const apm::security::SessionState &state,
             payload.size(), mac.data(), &macLen) ||
       macLen != mac.size()) {
     if (errorMsg)
-      *errorMsg = "Session HMAC failed: " + formatOpenSslError();
+      *errorMsg = "Session HMAC failed: " + formatCryptoError();
     return false;
   }
 

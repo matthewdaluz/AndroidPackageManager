@@ -70,7 +70,7 @@ public:
 private:
   bool loadMasterKey(std::string *errorMsg);
   bool writeMasterKey(const std::vector<uint8_t> &key, std::string *errorMsg);
-  std::string formatOpenSslError() const;
+  std::string formatCryptoError() const;
 
   std::vector<uint8_t> m_masterKey;
   bool m_masterKeyLoaded;

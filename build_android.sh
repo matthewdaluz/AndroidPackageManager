@@ -224,6 +224,22 @@ parse_args() {
 
 build_emulator() {
   local build_dir="${DEFAULT_BUILD_DIR}"
+  local host_boringssl_dir="${BORINGSSL_PREBUILT_DIR}/build-x86_64"
+
+  if [[ ! -f "${host_boringssl_dir}/libssl.a" \
+     || ! -f "${host_boringssl_dir}/libcrypto.a" \
+     || ! -f "${BORINGSSL_PREBUILT_DIR}/include/openssl/base.h" ]]; then
+    echo ""
+    echo "BoringSSL prebuilts for emulator builds are missing."
+    echo "Expected files:"
+    echo "  ${host_boringssl_dir}/libssl.a"
+    echo "  ${host_boringssl_dir}/libcrypto.a"
+    echo "  ${BORINGSSL_PREBUILT_DIR}/include/openssl/base.h"
+    echo ""
+    echo "Provide native BoringSSL prebuilts under prebuilt/boringssl before"
+    echo "running emulator builds."
+    exit 1
+  fi
 
   echo "Cleaning build directory ${build_dir}..."
   rm -rf "${build_dir}"
@@ -232,7 +248,7 @@ build_emulator() {
   echo ""
   echo "Configuring for Emulator Mode:"
   echo "  Target    = Native x86_64 Linux"
-  echo "  Mode      = Emulator (no Android NDK)"
+  echo "  Mode      = Emulator (bundled curl + prebuilt BoringSSL)"
   echo "  Build Dir = ${build_dir}"
   echo ""
 

@@ -75,8 +75,7 @@ Emulator mode roots:
 ```bash
 sudo apt update
 sudo apt install -y \
-  build-essential cmake pkg-config git patch \
-  zlib1g-dev libcurl4-openssl-dev libssl-dev \
+  build-essential cmake pkg-config git \
   ninja-build soong clang clangd sdkmanager
 ```
 
@@ -86,8 +85,7 @@ Fedora:
 
 ```bash
 sudo dnf install -y \
-  @development-tools cmake pkgconf-pkg-config git patch \
-  zlib-devel libcurl-devel openssl-devel \
+  @development-tools cmake pkgconf-pkg-config git \
   ninja-build clang clang-tools-extra
 ```
 
@@ -95,10 +93,21 @@ Arch Linux:
 
 ```bash
 sudo pacman -S --needed \
-  base-devel cmake pkgconf git patch zlib curl openssl ninja clang
+  base-devel cmake pkgconf git ninja clang
 ```
 
 Note: package names for `soong` and `sdkmanager` vary by distro/repo.
+
+### BoringSSL prebuilts (required for all builds)
+
+APM now builds against bundled `libcurl` plus repository-staged BoringSSL prebuilts only.
+
+- Android builds require `prebuilt/boringssl/build-<abi>/libssl.a`
+- Android builds require `prebuilt/boringssl/build-<abi>/libcrypto.a`
+- Host/emulator builds require `prebuilt/boringssl/build-x86_64/` or `prebuilt/boringssl/build-x86/`
+- All builds require `prebuilt/boringssl/include/openssl/base.h`
+
+Use [boringssl-tools/compile-for-all-abi/README.md](/home/matthew/Documents/Projects/AndroidPackageManager/boringssl-tools/compile-for-all-abi/README.md) for the Android multi-ABI helper flow.
 
 ### Android SDK/NDK components (required)
 
@@ -131,6 +140,8 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DAPM_EMULATOR_MODE=ON
 cmake --build build -j$(nproc)
 ```
 
+This build mode uses bundled `libcurl` and the host BoringSSL prebuilts staged under `prebuilt/boringssl/`.
+
 Run daemons with `--emulator` when built in emulator mode.
 
 ### 2) Android Build (NDK)
@@ -143,6 +154,7 @@ Notes:
 
 - Script enforces API level >= 29.
 - Detects NDK from `ANDROID_NDK_ROOT`/`ANDROID_NDK_HOME` or `$ANDROID_SDK_ROOT/ndk`.
+- Requires staged Android BoringSSL prebuilts under `prebuilt/boringssl/build-<abi>/`.
 - Includes an `x86_64 (Emulator Mode)` option.
 - Uses the `Ninja` generator (same default generator used by VSCode CMake Tools) to avoid generator mismatch in `build/`.
 

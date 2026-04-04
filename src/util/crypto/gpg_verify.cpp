@@ -39,6 +39,7 @@
 #include <sstream>
 #include <vector>
 
+#include <openssl/base.h>
 #include <openssl/bio.h>
 #include <openssl/bn.h>
 #include <openssl/err.h>
@@ -47,72 +48,6 @@
 #include <openssl/rsa.h>
 #include <openssl/sha.h>
 #include <openssl/x509.h>
-
-// Compatibility shim: some systems (OpenSSL builds) do not provide BoringSSL's
-// <openssl/base.h> and therefore do not define bssl::UniquePtr; implement a
-// minimal replacement here so the code can compile against OpenSSL as well.
-#ifndef OPENSSL_HEADER_BASE_H
-namespace bssl {
-
-template <typename T> struct Deleter;
-
-// Specialize deleters for the OpenSSL types used in this file.
-template <> struct Deleter<BIO> {
-  static void Free(BIO *p) { BIO_free(p); }
-};
-template <> struct Deleter<EVP_PKEY> {
-  static void Free(EVP_PKEY *p) { EVP_PKEY_free(p); }
-};
-template <> struct Deleter<RSA> {
-  static void Free(RSA *p) { RSA_free(p); }
-};
-template <> struct Deleter<BIGNUM> {
-  static void Free(BIGNUM *p) { BN_free(p); }
-};
-template <> struct Deleter<EVP_MD_CTX> {
-  static void Free(EVP_MD_CTX *p) { EVP_MD_CTX_free(p); }
-};
-
-// Minimal UniquePtr implementation with move semantics and the operations
-// used by this translation unit (get, release, reset, operator->, bool).
-template <typename T> class UniquePtr {
-public:
-  UniquePtr() noexcept : ptr_(nullptr) {}
-  explicit UniquePtr(T *p) noexcept : ptr_(p) {}
-  UniquePtr(UniquePtr &&o) noexcept : ptr_(o.ptr_) { o.ptr_ = nullptr; }
-  UniquePtr &operator=(UniquePtr &&o) noexcept {
-    if (this != &o) {
-      reset(o.ptr_);
-      o.ptr_ = nullptr;
-    }
-    return *this;
-  }
-
-  UniquePtr(const UniquePtr &) = delete;
-  UniquePtr &operator=(const UniquePtr &) = delete;
-
-  ~UniquePtr() { reset(); }
-
-  T *get() const noexcept { return ptr_; }
-  T *release() noexcept {
-    T *p = ptr_;
-    ptr_ = nullptr;
-    return p;
-  }
-  void reset(T *p = nullptr) noexcept {
-    if (ptr_)
-      Deleter<T>::Free(ptr_);
-    ptr_ = p;
-  }
-
-  T *operator->() const noexcept { return ptr_; }
-  explicit operator bool() const noexcept { return ptr_ != nullptr; }
-
-private:
-  T *ptr_;
-};
-} // namespace bssl
-#endif // OPENSSL_HEADER_BASE_H
 
 namespace apm::crypto {
 
@@ -138,10 +73,10 @@ struct ParsedSignature {
   std::vector<uint8_t> signatureMpi;
 };
 
-std::string formatOpenSslError() {
+std::string formatCryptoError() {
   unsigned long err = ERR_get_error();
   if (err == 0)
-    return "OpenSSL error";
+    return "BoringSSL error";
 
   char buf[256] = {0};
   ERR_error_string_n(err, buf, sizeof(buf));
@@ -700,7 +635,7 @@ bool buildKeyFromBlob(const std::vector<uint8_t> &blob, LoadedKey &keyOut,
     BN_free(nRaw);
     BN_free(eRaw);
     if (errorMsg)
-      *errorMsg = "Failed to import RSA key: " + formatOpenSslError();
+      *errorMsg = "Failed to import RSA key: " + formatCryptoError();
     return false;
   }
 
@@ -722,16 +657,15 @@ bool buildKeyFromBlob(const std::vector<uint8_t> &blob, LoadedKey &keyOut,
   bssl::UniquePtr<EVP_PKEY> pkey(EVP_PKEY_new());
   if (!pkey) {
     if (errorMsg)
-      *errorMsg = "Failed to allocate EVP_PKEY: " + formatOpenSslError();
+      *errorMsg = "Failed to allocate EVP_PKEY: " + formatCryptoError();
     return false;
   }
 
-  // Use set1 to be compatible with BoringSSL and OpenSSL. This increments
-  // the RSA reference count; we then release our UniquePtr to avoid
-  // double-free.
+  // set1 increments the RSA reference count; we then release our UniquePtr to
+  // avoid double-free under BoringSSL's ownership rules.
   if (EVP_PKEY_set1_RSA(pkey.get(), rsa.get()) != 1) {
     if (errorMsg)
-      *errorMsg = "Failed to set up RSA key: " + formatOpenSslError();
+      *errorMsg = "Failed to set up RSA key: " + formatCryptoError();
     return false;
   }
   rsa.reset();
@@ -801,7 +735,7 @@ bool hashSignedData(const ParsedSignature &sig, const std::string &dataPath,
 
   if (EVP_DigestInit_ex(ctx.get(), EVP_sha256(), nullptr) != 1) {
     if (errorMsg)
-      *errorMsg = "SHA256 init failed: " + formatOpenSslError();
+      *errorMsg = "SHA256 init failed: " + formatCryptoError();
     return false;
   }
 
@@ -821,7 +755,7 @@ bool hashSignedData(const ParsedSignature &sig, const std::string &dataPath,
                            reinterpret_cast<const unsigned char *>(buf.data()),
                            static_cast<std::size_t>(got)) != 1) {
         if (errorMsg)
-          *errorMsg = "SHA256 update failed: " + formatOpenSslError();
+          *errorMsg = "SHA256 update failed: " + formatCryptoError();
         return false;
       }
     }
@@ -847,7 +781,7 @@ bool hashSignedData(const ParsedSignature &sig, const std::string &dataPath,
 
   if (EVP_DigestUpdate(ctx.get(), header.data(), header.size()) != 1) {
     if (errorMsg)
-      *errorMsg = "SHA256 header update failed: " + formatOpenSslError();
+      *errorMsg = "SHA256 header update failed: " + formatCryptoError();
     return false;
   }
 
@@ -861,14 +795,14 @@ bool hashSignedData(const ParsedSignature &sig, const std::string &dataPath,
 
   if (EVP_DigestUpdate(ctx.get(), trailer, sizeof(trailer)) != 1) {
     if (errorMsg)
-      *errorMsg = "SHA256 trailer update failed: " + formatOpenSslError();
+      *errorMsg = "SHA256 trailer update failed: " + formatCryptoError();
     return false;
   }
 
   unsigned int outLen = 0;
   if (EVP_DigestFinal_ex(ctx.get(), digest.data(), &outLen) != 1) {
     if (errorMsg)
-      *errorMsg = "SHA256 finalize failed: " + formatOpenSslError();
+      *errorMsg = "SHA256 finalize failed: " + formatCryptoError();
     return false;
   }
 
@@ -908,7 +842,7 @@ bool verifyWithKey(LoadedKey &key, const std::vector<uint8_t> &digest,
       recovered.data(), const_cast<RSA *>(rsa), RSA_PKCS1_PADDING);
   if (recLen <= 0) {
     if (errorMsg)
-      *errorMsg = "RSA_public_decrypt failed: " + formatOpenSslError();
+      *errorMsg = "RSA_public_decrypt failed: " + formatCryptoError();
     return false;
   }
 
@@ -962,7 +896,7 @@ static bool hashSignedBuffer(const ParsedSignature &sig,
 
   if (EVP_DigestInit_ex(ctx.get(), EVP_sha256(), nullptr) != 1) {
     if (errorMsg)
-      *errorMsg = "SHA256 init failed: " + formatOpenSslError();
+      *errorMsg = "SHA256 init failed: " + formatCryptoError();
     return false;
   }
 
@@ -970,7 +904,7 @@ static bool hashSignedBuffer(const ParsedSignature &sig,
     if (EVP_DigestUpdate(ctx.get(), canonicalText.data(),
                          canonicalText.size()) != 1) {
       if (errorMsg)
-        *errorMsg = "SHA256 update failed: " + formatOpenSslError();
+        *errorMsg = "SHA256 update failed: " + formatCryptoError();
       return false;
     }
   }
@@ -989,7 +923,7 @@ static bool hashSignedBuffer(const ParsedSignature &sig,
 
   if (EVP_DigestUpdate(ctx.get(), header.data(), header.size()) != 1) {
     if (errorMsg)
-      *errorMsg = "SHA256 header update failed: " + formatOpenSslError();
+      *errorMsg = "SHA256 header update failed: " + formatCryptoError();
     return false;
   }
 
@@ -1003,14 +937,14 @@ static bool hashSignedBuffer(const ParsedSignature &sig,
 
   if (EVP_DigestUpdate(ctx.get(), trailer, sizeof(trailer)) != 1) {
     if (errorMsg)
-      *errorMsg = "SHA256 trailer update failed: " + formatOpenSslError();
+      *errorMsg = "SHA256 trailer update failed: " + formatCryptoError();
     return false;
   }
 
   unsigned int outLen = 0;
   if (EVP_DigestFinal_ex(ctx.get(), digest.data(), &outLen) != 1) {
     if (errorMsg)
-      *errorMsg = "SHA256 finalize failed: " + formatOpenSslError();
+      *errorMsg = "SHA256 finalize failed: " + formatCryptoError();
     return false;
   }
 
