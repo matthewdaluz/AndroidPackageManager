@@ -14,6 +14,7 @@ on post-fs-data
     mkdir /data/apm/cache 0775 root shell
     mkdir /data/apm/lists 0775 root shell
     mkdir /data/apm/keys 0775 root shell
+    mkdir /data/apm/logs 0775 root shell
     mkdir /data/apm/pkgs 0775 root shell
     mkdir /data/apm/sources 0775 root shell
     mkdir /data/apm/sources/sources.list.d 0775 root shell

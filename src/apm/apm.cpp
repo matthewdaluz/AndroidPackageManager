@@ -44,15 +44,18 @@
 #include <cctype>
 #include <cerrno>
 #include <chrono>
+#include <ctime>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <dirent.h>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <sys/stat.h>
+#include <thread>
 #include <unistd.h>
 #include <unordered_map>
 #include <utility>
@@ -64,6 +67,15 @@ namespace {
 static constexpr const char *kApmVersion = "2.0.0b - Open Beta [Initial Release]";
 static constexpr const char *kApmBuildDate =
     "March 28th, 2026. - 12:00 AM Eastern Time.";
+static constexpr const char *kLogExportDir = "/storage/emulated/0";
+
+enum class LogTarget { Apm, Ams };
+
+struct LogCommandOptions {
+  LogTarget target = LogTarget::Apm;
+  bool exportFile = false;
+  bool showHelp = false;
+};
   
 // -----------------------------------------------------------------------------
 // Progress formatting + helper utilities
@@ -304,6 +316,223 @@ static std::uint64_t currentUnixTimestamp() {
   using namespace std::chrono;
   return static_cast<std::uint64_t>(
       duration_cast<seconds>(system_clock::now().time_since_epoch()).count());
+}
+
+static const char *logTargetLabel(LogTarget target) {
+  return target == LogTarget::Apm ? "APM daemon" : "AMS daemon";
+}
+
+static std::string logFileName(LogTarget target) {
+  return target == LogTarget::Apm ? "apmd.log" : "amsd.log";
+}
+
+static std::string resolveDaemonLogPath(LogTarget target) {
+  if (target == LogTarget::Apm) {
+    return apm::fs::joinPath(apm::config::getLogsDir(), logFileName(target));
+  }
+  return apm::fs::joinPath(apm::config::getModuleLogsDir(),
+                           logFileName(target));
+}
+
+static bool parseLogTargetName(const std::string &value, LogTarget &targetOut) {
+  if (value == "apm" || value == "apmd") {
+    targetOut = LogTarget::Apm;
+    return true;
+  }
+  if (value == "ams" || value == "amsd") {
+    targetOut = LogTarget::Ams;
+    return true;
+  }
+  return false;
+}
+
+static bool selectLogTarget(LogTarget requested, bool &targetSet,
+                            LogTarget &targetOut, std::string *errorMsg) {
+  if (targetSet && targetOut != requested) {
+    if (errorMsg) {
+      *errorMsg =
+          "choose only one daemon target (--apm or --ams) for 'apm log'";
+    }
+    return false;
+  }
+  targetSet = true;
+  targetOut = requested;
+  return true;
+}
+
+static void printLogUsage() {
+  std::cout << "Usage:\n"
+            << "  apm log [--apm|--ams] [--export]\n"
+            << "  apm log [apm|ams] [--export]\n"
+            << "\n"
+            << "Defaults to the APM daemon log.\n"
+            << "Use --export to copy the selected daemon log to "
+            << kLogExportDir << ".\n";
+}
+
+static bool parseLogCommandArgs(int argc, char **argv, LogCommandOptions &out,
+                                std::string *errorMsg) {
+  bool targetSet = false;
+
+  for (int idx = 0; idx < argc; ++idx) {
+    std::string arg = argv[idx];
+    if (arg == "--help" || arg == "-h") {
+      out.showHelp = true;
+      continue;
+    }
+    if (arg == "--export") {
+      out.exportFile = true;
+      continue;
+    }
+    if (arg == "--apm") {
+      if (!selectLogTarget(LogTarget::Apm, targetSet, out.target, errorMsg))
+        return false;
+      continue;
+    }
+    if (arg == "--ams") {
+      if (!selectLogTarget(LogTarget::Ams, targetSet, out.target, errorMsg))
+        return false;
+      continue;
+    }
+    if (arg == "--daemon") {
+      if (idx + 1 >= argc) {
+        if (errorMsg)
+          *errorMsg = "missing value after '--daemon'";
+        return false;
+      }
+      LogTarget parsed = LogTarget::Apm;
+      const std::string value = argv[++idx];
+      if (!parseLogTargetName(value, parsed)) {
+        if (errorMsg)
+          *errorMsg = "unknown daemon for 'apm log': " + value;
+        return false;
+      }
+      if (!selectLogTarget(parsed, targetSet, out.target, errorMsg))
+        return false;
+      continue;
+    }
+    if (arg.rfind("--daemon=", 0) == 0) {
+      LogTarget parsed = LogTarget::Apm;
+      const std::string value = arg.substr(std::strlen("--daemon="));
+      if (!parseLogTargetName(value, parsed)) {
+        if (errorMsg)
+          *errorMsg = "unknown daemon for 'apm log': " + value;
+        return false;
+      }
+      if (!selectLogTarget(parsed, targetSet, out.target, errorMsg))
+        return false;
+      continue;
+    }
+
+    LogTarget parsed = LogTarget::Apm;
+    if (parseLogTargetName(arg, parsed)) {
+      if (!selectLogTarget(parsed, targetSet, out.target, errorMsg))
+        return false;
+      continue;
+    }
+
+    if (errorMsg)
+      *errorMsg = "unknown option for 'apm log': " + arg;
+    return false;
+  }
+
+  return true;
+}
+
+static std::string buildLogExportPath(LogTarget target) {
+  std::time_t now = std::time(nullptr);
+  std::tm tm {};
+#if defined(_POSIX_VERSION)
+  ::localtime_r(&now, &tm);
+#else
+  std::tm *tmp = std::localtime(&now);
+  if (tmp)
+    tm = *tmp;
+#endif
+
+  std::ostringstream name;
+  name << (target == LogTarget::Apm ? "apmd" : "amsd") << "-"
+       << std::put_time(&tm, "%Y%m%d-%H%M%S") << ".log";
+  return apm::fs::joinPath(kLogExportDir, name.str());
+}
+
+static bool copyFileToPath(const std::string &src, const std::string &dst,
+                           std::string *errorMsg) {
+  std::ifstream in(src, std::ios::binary);
+  if (!in.is_open()) {
+    if (errorMsg)
+      *errorMsg = "failed to open source log: " + src;
+    return false;
+  }
+
+  auto slash = dst.find_last_of('/');
+  if (slash != std::string::npos) {
+    std::string parent = dst.substr(0, slash);
+    if (!parent.empty() && !apm::fs::createDirs(parent)) {
+      if (errorMsg)
+        *errorMsg = "failed to create export directory: " + parent;
+      return false;
+    }
+  }
+
+  std::ofstream out(dst, std::ios::binary | std::ios::trunc);
+  if (!out.is_open()) {
+    if (errorMsg)
+      *errorMsg = "failed to open export path: " + dst;
+    return false;
+  }
+
+  out << in.rdbuf();
+  if (!out.good()) {
+    if (errorMsg)
+      *errorMsg = "failed while writing export file: " + dst;
+    return false;
+  }
+
+  return true;
+}
+
+static bool writeLogRange(const std::string &path, off_t offset, off_t size,
+                          std::string *errorMsg) {
+  if (size <= offset)
+    return true;
+
+  std::ifstream in(path, std::ios::binary);
+  if (!in.is_open()) {
+    if (errorMsg)
+      *errorMsg = "failed to open log file: " + path;
+    return false;
+  }
+
+  in.seekg(offset, std::ios::beg);
+  if (!in.good()) {
+    if (errorMsg)
+      *errorMsg = "failed to seek log file: " + path;
+    return false;
+  }
+
+  char buf[4096];
+  off_t remaining = size - offset;
+  while (remaining > 0) {
+    std::streamsize chunk = remaining > static_cast<off_t>(sizeof(buf))
+                                ? static_cast<std::streamsize>(sizeof(buf))
+                                : static_cast<std::streamsize>(remaining);
+    in.read(buf, chunk);
+    std::streamsize got = in.gcount();
+    if (got <= 0)
+      break;
+    std::cout.write(buf, got);
+    remaining -= static_cast<off_t>(got);
+  }
+
+  if (!in.good() && !in.eof()) {
+    if (errorMsg)
+      *errorMsg = "failed while reading log file: " + path;
+    return false;
+  }
+
+  std::cout.flush();
+  return true;
 }
 
 // -----------------------------------------------------------------------------
@@ -911,6 +1140,7 @@ void printUsage() {
       << "  list                        Show installed packages\n"
       << "  info <pkg>                  Show detailed package information\n"
       << "  search <pattern>            Search available repo packages\n"
+      << "  log [--ams] [--export]      View or export daemon logs\n"
       << "  version                     Show APM version and build date\n"
       << "  key-add <file.asc|.gpg>     Import a trusted public key\n"
       << "  sig-cache show              Show cached .deb signature verifications\n"
@@ -1891,6 +2121,83 @@ int cmdSigCacheClear() {
   return 0;
 }
 
+int cmdLog(int argc, char **argv) {
+  LogCommandOptions options;
+  std::string parseErr;
+  if (!parseLogCommandArgs(argc, argv, options, &parseErr)) {
+    std::cerr << "apm log: " << parseErr << "\n";
+    printLogUsage();
+    return 1;
+  }
+
+  if (options.showHelp) {
+    printLogUsage();
+    return 0;
+  }
+
+  const std::string logPath = resolveDaemonLogPath(options.target);
+  if (options.exportFile) {
+    if (!apm::fs::isFile(logPath)) {
+      std::cerr << "apm log: log file not found: " << logPath << "\n";
+      return 1;
+    }
+
+    const std::string exportPath = buildLogExportPath(options.target);
+    std::string copyErr;
+    if (!copyFileToPath(logPath, exportPath, &copyErr)) {
+      std::cerr << "apm log: " << copyErr << "\n";
+      return 1;
+    }
+
+    std::cout << "Exported " << logTargetLabel(options.target) << " log to "
+              << exportPath << "\n";
+    return 0;
+  }
+
+  std::cout << "Following " << logTargetLabel(options.target) << " log at "
+            << logPath << "\n";
+  std::cout << "Press Ctrl-C to stop.\n";
+
+  bool fileSeen = false;
+  bool waitingShown = false;
+  ino_t currentInode = 0;
+  off_t currentOffset = 0;
+
+  while (true) {
+    struct stat st {};
+    if (::stat(logPath.c_str(), &st) != 0) {
+      if (!waitingShown) {
+        std::cerr << "apm log: waiting for " << logTargetLabel(options.target)
+                  << " log to appear...\n";
+        waitingShown = true;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(500));
+      continue;
+    }
+
+    if (!fileSeen) {
+      fileSeen = true;
+      currentInode = st.st_ino;
+      currentOffset = 0;
+    } else if (st.st_ino != currentInode || st.st_size < currentOffset) {
+      std::cout << "\n[log restarted]\n";
+      currentInode = st.st_ino;
+      currentOffset = 0;
+    }
+
+    waitingShown = false;
+
+    std::string readErr;
+    if (!writeLogRange(logPath, currentOffset, st.st_size, &readErr)) {
+      std::cerr << "\napm log: " << readErr << "\n";
+      return 1;
+    }
+    currentOffset = st.st_size;
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+  }
+}
+
 } // namespace
 
 //
@@ -1926,7 +2233,8 @@ int main(int argc, char **argv) {
   apm::config::setEmulatorMode(emulatorMode);
 
   // Quiet CLI: write only errors by default, no stderr mirroring.
-  apm::logger::setLogFile("apm-cli.log");
+  apm::logger::setLogFile(
+      apm::fs::joinPath(apm::config::getLogsDir(), "apm.log"));
   apm::logger::setDebugControlFile(apm::config::getDebugFlagFile());
   apm::logger::setMinLogLevel(apm::logger::Level::Error);
   apm::logger::enableStderr(false);
@@ -2079,6 +2387,10 @@ int main(int argc, char **argv) {
   if (cmd == "search") {
     int remaining = argc - i;
     return cmdSearchLocal(remaining, argv + i);
+  }
+  if (cmd == "log") {
+    int remaining = argc - i;
+    return cmdLog(remaining, argv + i);
   }
   if (cmd == "version")
     return cmdVersion();

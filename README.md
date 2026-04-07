@@ -312,7 +312,7 @@ Current implementation detail: the bind-backend path is the primary overlay path
 ## Logging
 
 - `apmd`: `/data/apm/logs/apmd.log`
-- `amsd`: `/data/ams/amsd.log`
+- `amsd`: `/data/ams/logs/amsd.log`
 - Module logs: `/data/ams/logs/<module>.log`
 
 ## Known Limitations

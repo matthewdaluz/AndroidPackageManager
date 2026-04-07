@@ -126,7 +126,7 @@ inline constexpr const char *GLOBAL_PROFILE_SOURCED_MARK =
 inline constexpr const char *CACHE_DIR = "/data/apm/cache";
 inline constexpr const char *LISTS_DIR = "/data/apm/lists";
 inline constexpr const char *PKGS_DIR = "/data/apm/pkgs";
-inline constexpr const char *LOGS_DIR = "/data/local/tmp/apm/runtime/logs";
+inline constexpr const char *LOGS_DIR = "/data/apm/logs";
 inline constexpr const char *MANUAL_PACKAGES_DIR =
     "/data/local/tmp/apm/runtime/manual-packages";
 inline constexpr const char *APM_BIN_DIR = "/data/local/tmp/apm/bin";
@@ -153,8 +153,7 @@ inline constexpr const char *TERMUX_TMP_DIR =
     "/data/local/tmp/apm/runtime/installed/termux/tmp";
 
 inline constexpr const char *MODULES_DIR = "/data/ams/modules";
-inline constexpr const char *MODULE_LOGS_DIR =
-    "/data/local/tmp/apm/runtime/ams/logs";
+inline constexpr const char *MODULE_LOGS_DIR = "/data/ams/logs";
 inline constexpr const char *MODULE_RUNTIME_DIR = "/data/ams/.runtime";
 inline constexpr const char *MODULE_RUNTIME_UPPER_DIR =
     "/data/ams/.runtime/upper";

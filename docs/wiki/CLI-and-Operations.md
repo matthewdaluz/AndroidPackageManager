@@ -103,5 +103,5 @@ Daemon-side reset removes installed payloads, security data, lists, modules, and
 ## Logs to Check
 
 - `/data/apm/logs/apmd.log`
-- `/data/ams/amsd.log`
+- `/data/ams/logs/amsd.log`
 - `/data/ams/logs/<module>.log`

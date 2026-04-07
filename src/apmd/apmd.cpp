@@ -55,8 +55,11 @@ constexpr const char *kCurrentStagingInstalledDir = "/data/local/tmp/apm/install
 constexpr const char *kLegacyManualPackagesDir = "/data/apm/manual-packages";
 constexpr const char *kCurrentStagingManualPackagesDir =
     "/data/local/tmp/apm/manual-packages";
+constexpr const char *kCurrentRuntimeLogsDir = "/data/local/tmp/apm/runtime/logs";
 constexpr const char *kLegacyLogsDir = "/data/apm/logs";
 constexpr const char *kCurrentStagingLogsDir = "/data/local/tmp/apm/logs";
+constexpr const char *kCurrentRuntimeModuleLogsDir =
+    "/data/local/tmp/apm/runtime/ams/logs";
 constexpr const char *kLegacyModuleLogsDir = "/data/ams/logs";
 constexpr const char *kCurrentStagingModuleLogsDir = "/data/local/tmp/apm/ams/logs";
 constexpr const char *kLegacyTermuxPrefix = "/data/apm/installed/termux/usr";
@@ -383,8 +386,11 @@ void migrateShellAccessibleRuntime() {
                            apm::config::getManualPackagesDir());
   migrateDirectoryIfNeeded(kLegacyManualPackagesDir,
                            apm::config::getManualPackagesDir());
+  migrateDirectoryIfNeeded(kCurrentRuntimeLogsDir, apm::config::getLogsDir());
   migrateDirectoryIfNeeded(kCurrentStagingLogsDir, apm::config::getLogsDir());
   migrateDirectoryIfNeeded(kLegacyLogsDir, apm::config::getLogsDir());
+  migrateDirectoryIfNeeded(kCurrentRuntimeModuleLogsDir,
+                           apm::config::getModuleLogsDir());
   migrateDirectoryIfNeeded(kCurrentStagingModuleLogsDir,
                            apm::config::getModuleLogsDir());
   migrateDirectoryIfNeeded(kLegacyModuleLogsDir,

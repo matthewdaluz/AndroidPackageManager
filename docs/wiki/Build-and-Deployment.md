@@ -137,7 +137,7 @@ Canonical source used by flashable build script:
 
 2. Check daemon logs:
 - `/data/apm/logs/apmd.log`
-- `/data/ams/amsd.log`
+- `/data/ams/logs/amsd.log`
 
 3. Confirm CLI connectivity:
 

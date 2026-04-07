@@ -24,7 +24,7 @@ Check:
 Logs:
 
 - `/data/ams/logs/<module>.log`
-- `/data/ams/amsd.log`
+- `/data/ams/logs/amsd.log`
 
 ## Installed command not found in shell
 

@@ -3,6 +3,7 @@
 
 on post-fs-data
     mkdir /data/ams 0775 root shell
+    mkdir /data/ams/logs 0775 root shell
     mkdir /data/ams/modules 0775 root shell
     mkdir /data/ams/.runtime 0700 root root
     mkdir /data/ams/.runtime/upper 0700 root root

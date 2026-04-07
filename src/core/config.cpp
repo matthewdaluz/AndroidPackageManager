@@ -150,7 +150,7 @@ std::string getPkgsDir() {
 std::string getLogsDir() {
   if (g_emulatorMode)
     return buildEmulatorPath("logs");
-  return "/data/local/tmp/apm/runtime/logs";
+  return "/data/apm/logs";
 }
 
 std::string getDebugFlagFile() {
@@ -264,7 +264,7 @@ std::string getModulesDir() {
 std::string getModuleLogsDir() {
   if (g_emulatorMode)
     return buildEmulatorAmsPath("logs");
-  return "/data/local/tmp/apm/runtime/ams/logs";
+  return "/data/ams/logs";
 }
 
 std::string getModuleRuntimeDir() {
