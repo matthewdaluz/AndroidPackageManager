@@ -7,7 +7,7 @@
 - `apm ping`
 - `apm forgot-password`
 
-### Repository/package management
+### Package and repository operations
 
 - `apm update`
 - `apm install <pkg>`
@@ -15,8 +15,10 @@
 - `apm upgrade [pkgs...]`
 - `apm autoremove`
 - `apm package-install <file>`
+- `apm debuglogging <true|false>`
+- `apm factory-reset`
 
-### Module operations
+### AMS module operations
 
 - `apm module-list`
 - `apm module-install <zip>`
@@ -30,66 +32,168 @@
 - `apm apk-install <apk> --install-as-system`
 - `apm apk-uninstall <package>`
 
-### Security keys and cache
-
-- `apm key-add <file.asc|file.gpg>`
-- `apm sig-cache show`
-- `apm sig-cache clear`
-
-### Local info helpers
+### Local inspection and trust helpers
 
 - `apm list`
 - `apm info <pkg>`
 - `apm search <pattern>`
+- `apm log [--apm|--ams] [--export]`
 - `apm version`
+- `apm key-add <file.asc|file.gpg>`
+- `apm sig-cache show`
+- `apm sig-cache clear`
 - `apm help`
+
+## Authentication Boundary
+
+These commands require a valid session:
+
+- `update`
+- `install`
+- `remove`
+- `upgrade`
+- `autoremove`
+- `debuglogging`
+- `factory-reset`
+- `module-*`
+- `apk-*`
+
+These do not:
+
+- `ping`
+- `forgot-password`
+- `list`
+- `info`
+- `search`
+- `log`
+- `version`
+- `key-add`
+- `sig-cache`
+- `help`
+
+If no password/PIN exists yet, the first privileged command triggers setup and requires:
+
+- a password or PIN
+- exactly 3 security questions and answers
+
+Sessions expire after `180` seconds.
 
 ## Common Operational Flows
 
-### Initial setup and update
+### First-time setup and update
 
 ```bash
 apm ping
 apm update
 ```
 
-If no passpin is configured yet, privileged operations trigger setup flow.
+If security is not configured yet, `update` will trigger the initial password/PIN setup flow.
 
-### Install package
+### Install a repository package
 
 ```bash
 apm install <package>
 ```
 
-Current dependency resolver behavior is direct dependency focused (not full recursive SAT).
+Notes:
 
-### Install local archive
+- repository metadata must already exist locally from `apm update`
+- dependency resolution is direct, not a full SAT solver
+- dependencies installed only to satisfy another package are tracked as auto-installed
+
+### Remove a package
+
+```bash
+apm remove <package>
+```
+
+Behavior:
+
+- manual/local package installs are removed locally first
+- repo-backed installs are forwarded to `apmd`
+
+### Autoremove
+
+```bash
+apm autoremove
+```
+
+This removes packages marked as auto-installed that are no longer needed by installed packages of the same package family.
+
+### Install a local package payload
 
 ```bash
 apm package-install /path/to/file.deb
 ```
 
-Tar-style archives require `package-info.json`.
+Supported manual payloads:
 
-### Manage modules
+- `.deb`
+- tar-style archives including `.tar`, `.tar.gz`, `.tgz`, `.tar.xz`, `.txz`, `.gz`, and `.xz`
+
+Tarball/manual packages must contain `package-info.json` with install metadata including a target prefix.
+
+### Manage AMS modules
 
 ```bash
 apm module-install /path/to/module.zip
 apm module-list
+apm module-disable example-module
+apm module-enable example-module
+apm module-remove example-module
 ```
 
-### Install APK
+`module-install` enables the module immediately and rebuilds overlays as part of the install.
 
-User app:
+### Install APKs
+
+User app install:
 
 ```bash
 apm apk-install /path/to/app.apk
 ```
 
-System overlay app staging:
+System app staging:
 
 ```bash
 apm apk-install /path/to/app.apk --install-as-system
+```
+
+Notes:
+
+- normal APK installs use `pm install --user 0 -r`
+- system app staging requires `apmd` to be running as root
+- system app staging places `base.apk` into the `apm-system-apps` AMS overlay module
+- reboot is required before Android recognizes the staged system app
+
+### Inspect logs
+
+Follow the default `apmd` log:
+
+```bash
+apm log
+```
+
+Follow AMS:
+
+```bash
+apm log --ams
+```
+
+Export the selected daemon log:
+
+```bash
+apm log --ams --export
+```
+
+Exports are written to `/storage/emulated/0`.
+
+### Manage trusted keys and signature cache
+
+```bash
+apm key-add /path/to/repo-key.asc
+apm sig-cache show
+apm sig-cache clear
 ```
 
 ## Factory Reset
@@ -98,10 +202,34 @@ apm apk-install /path/to/app.apk --install-as-system
 apm factory-reset
 ```
 
-Daemon-side reset removes installed payloads, security data, lists, modules, and performs best-effort cleanup of system app overlays.
+The CLI prompts for confirmation first.
 
-## Logs to Check
+The daemon then attempts to:
+
+- remove installed runtime content under the current install root
+- clear generated shim binaries
+- remove manual package metadata
+- wipe password/PIN, session, and security-question data
+- delete the package status database
+- remove AMS modules
+- delete cached repository lists
+- uninstall system apps staged with `--install-as-system`
+
+It does not currently advertise a full wipe of:
+
+- trusted keys
+- repo source definitions
+- package download cache under `pkgs/`
+- general cache under `cache/`
+
+## Primary Logs
 
 - `/data/apm/logs/apmd.log`
 - `/data/ams/logs/amsd.log`
 - `/data/ams/logs/<module>.log`
+
+Useful supporting paths:
+
+- `/data/apm/debug.txt`
+- `/data/apm/pkgs/sig-cache.json`
+- `/data/apm/.security/session.bin`

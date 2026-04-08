@@ -1,17 +1,26 @@
 # Build and Deployment
 
+## Build System Overview
+
+Primary maintained build paths in the repo:
+
+- CMake for host/emulator and Android NDK builds
+- `build_android.sh` as the Android/emulator convenience wrapper
+- `Android.bp` for Soong/AOSP integration
+- `apm-flashable-new/build_recovery_zip.sh` for LineageOS Recovery flashables
+
 ## Prerequisites
 
-### Debian/Ubuntu packages (required)
+### Host tools
+
+Debian/Ubuntu:
 
 ```bash
 sudo apt update
 sudo apt install -y \
   build-essential cmake pkg-config git \
-  ninja-build soong clang clangd sdkmanager
+  ninja-build clang clangd
 ```
-
-### Other distro equivalents (recommended)
 
 Fedora:
 
@@ -28,124 +37,205 @@ sudo pacman -S --needed \
   base-devel cmake pkgconf git ninja clang
 ```
 
-Note: package names for `soong` and `sdkmanager` vary by distro/repo.
+### Android SDK / NDK
 
-### BoringSSL prebuilts (required for all builds)
-
-APM uses bundled `libcurl` with repository-staged BoringSSL prebuilts only.
-
-- Android builds require `prebuilt/boringssl/build-<abi>/libssl.a`
-- Android builds require `prebuilt/boringssl/build-<abi>/libcrypto.a`
-- Host/emulator builds require `prebuilt/boringssl/build-x86_64/` or `prebuilt/boringssl/build-x86/`
-- All builds require `prebuilt/boringssl/include/openssl/base.h`
-
-### Required Android SDK components
+Recommended SDK packages:
 
 ```bash
 sdkmanager --install \
   "build-tools;36.1.0" \
   "cmake;4.1.2" \
-  "ndk;r29" \
-  "tools;26.1.1"
+  "ndk;r29"
 ```
 
-### Recommended editor setup
+`build_android.sh` resolves the NDK from:
 
-Visual Studio Code is strongly recommended when modifying APM code. Install:
+- `ANDROID_NDK_ROOT`
+- `ANDROID_NDK_HOME`
+- `$ANDROID_SDK_ROOT/ndk/<latest>`
 
-- `C/C++`
-- `C/C++ DevTools`
-- `C/C++ Extension Pack`
-- `clangd`
-- `CMake Tools`
+The build requires Android API `29` or newer.
 
-## Build Modes
+### BoringSSL Prebuilts
 
-### Host emulator mode
+All builds expect staged BoringSSL prebuilts in `prebuilt/boringssl/`.
+
+Required layout:
+
+- `prebuilt/boringssl/include/openssl/base.h`
+- Android:
+  - `prebuilt/boringssl/build-arm64-v8a/libssl.a`
+  - `prebuilt/boringssl/build-arm64-v8a/libcrypto.a`
+  - same pattern for `armeabi-v7a`, `x86`, and `x86_64`
+- Host/emulator:
+  - `prebuilt/boringssl/build-x86_64/` or `build-x86/`
+
+`CMakeLists.txt` also fetches/builds zlib when a system copy is not available.
+
+## Android and Emulator Builds
+
+### Wrapper Script
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DAPM_EMULATOR_MODE=ON
-cmake --build build -j$(nproc)
+./build_android.sh
 ```
 
-This mode links against bundled `libcurl` and the host BoringSSL prebuilts in `prebuilt/boringssl/`.
+Supported flags:
 
-Run with emulator flag:
+- `--api <level>`
+- `--abi <abi>`
+- `--all`
+- `--emulator`
+
+Default behavior:
+
+- default API: `34`
+- default Android ABI comes from prompt or `APM_ANDROID_ABI`
+- Android outputs go to `build-<abi>/`
+- emulator output goes to `build/`
+- built binaries are stripped unless `APM_STRIP_BINARIES=0`
+- workspace `compile_commands.json` is linked or copied from the active build directory
+
+### Build a Specific Android ABI
+
+```bash
+./build_android.sh --api 34 --abi arm64-v8a
+```
+
+### Build All Android ABIs
+
+```bash
+./build_android.sh --all
+```
+
+### Build Emulator Mode
+
+```bash
+./build_android.sh --emulator
+```
+
+This produces native Linux `x86_64` binaries compiled with `APM_EMULATOR_MODE=ON`.
+
+Run emulator daemons with:
 
 ```bash
 ./build/apmd --emulator
 ./build/amsd --emulator
 ```
 
-### Android NDK mode
+## Direct CMake Emulator Build
 
 ```bash
-./build_android.sh
+cmake -S . -B build -G Ninja -DAPM_EMULATOR_MODE=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel "$(nproc)"
 ```
 
-Notes:
+## Soong / AOSP
 
-- API level minimum is 29.
-- Script supports ABI selection and detects NDK paths.
-- Script requires staged Android BoringSSL prebuilts under `prebuilt/boringssl/build-<abi>/`.
-
-### AOSP/Soong mode
-
-Use `Android.bp` targets:
+`Android.bp` defines these binaries:
 
 - `apm`
 - `apmd`
 - `amsd`
 
-## Deployment Options
+It also defines packaged `init.amsd.rc` and `init.apmd.rc` prebuilts.
 
-### Magisk module status
+## Recovery Flashable Build
 
-The Magisk version of APM is deprecated and no longer available.
+The maintained deployment path is the LineageOS Recovery flashable under `apm-flashable-new/`.
 
-### Lineage recovery flashable
-
-Use `apm-flashable-new/`:
+Build a ZIP:
 
 ```bash
 cd apm-flashable-new
 ./build_recovery_zip.sh
 ```
 
-Installer behavior:
+Useful options:
 
-- slot-aware target selection under `/mnt/system*`
-- payload copy into selected system root
-- installs binaries, init scripts, SELinux fragments, addon.d assets
+- `./build_recovery_zip.sh --abi arm64-v8a`
+- `./build_recovery_zip.sh --all`
+- `./build_recovery_zip.sh --api 34`
 
-## SELinux payload location
+Environment knobs:
 
-Canonical source used by flashable build script:
+- `APM_FORCE_REBUILD=1` by default
+- `APM_FORCE_REBUILD=0` to reuse existing built binaries
+- `APM_ANDROID_ABI` to preselect an ABI
+- `APM_ANDROID_API` to set the default API
+- `APM_SELINUX_SOURCE_DIR` to override the SELinux payload source directory
+
+Current flashable builder behavior:
+
+- rebuilds binaries from current source by default
+- copies `apm`, `apmd`, and `amsd` into the template
+- syncs SELinux payload from `selinux-contexting/`
+- preserves shell PATH boot hooks in `system/bin/`
+- emits `apm-lineage-recovery-YYYYMMDD-<abi>.zip`
+- verifies that critical payload entries are present in the final ZIP
+
+## Flashable Payload
+
+The flashable ships:
+
+- `/system/bin/apm`
+- `/system/bin/apmd`
+- `/system/bin/amsd`
+- `/system/bin/apm-sh-path`
+- `/system/bin/apm-bash-path`
+- `/system/etc/init/init.apmd.rc`
+- `/system/etc/init/init.amsd.rc`
+- `/system/etc/selinux/apm.cil`
+- `/system/etc/selinux/apm_file_contexts`
+- `/system/etc/selinux/apm_property_contexts`
+- `/system/etc/selinux/apm_service_contexts`
+- `/system/addon.d/30-apm.sh`
+
+The custom recovery installer is slot-aware and chooses its target from `/mnt/system*`.
+
+## Boot/Init Behavior in the Flashable
+
+`init.amsd.rc`:
+
+- prepares `/data/ams`
+- starts `amsd` in `post-fs-data`
+- restarts `amsd` again on `sys.boot_completed=1`
+
+`init.apmd.rc`:
+
+- exports boot-level fallback values for `ENV` and `BASH_ENV`
+- prepares `/data/apm` plus `/data/local/tmp/apm`
+- removes stale sockets and stale shim copies of `apm`, `apmd`, and `amsd`
+- starts `apmd` only after `amsd.ready=1`
+
+## SELinux Payload
+
+Canonical SELinux payload sources:
 
 - `selinux-contexting/apm.cil`
 - `selinux-contexting/apm_file_contexts`
 - `selinux-contexting/apm_property_contexts`
 - `selinux-contexting/apm_service_contexts`
 
+The policy reflects the current socket-based runtime and keeps the service-context file only for packaging compatibility.
+
 ## Verification Checklist After Deployment
 
-1. Confirm sockets exist:
-- `amsd`: `/data/ams/amsd.sock`
-1. Confirm `apmd` is listening:
-- Android: abstract socket `@apmd` (not visible in the filesystem)
-- Emulator: `$HOME/APMEmulator/data/apm/apmd.socket`
-
-2. Check daemon logs:
-- `/data/apm/logs/apmd.log`
-- `/data/ams/logs/amsd.log`
-
-3. Confirm CLI connectivity:
+1. Confirm `amsd` socket exists:
+   - `/data/ams/amsd.sock`
+2. Confirm `apmd` is reachable:
+   - Android uses abstract socket `@apmd`
+   - emulator uses `$HOME/APMEmulator/data/apm/apmd.socket`
+3. Confirm logs exist:
+   - `/data/apm/logs/apmd.log`
+   - `/data/ams/logs/amsd.log`
+4. Confirm CLI connectivity:
 
 ```bash
 apm ping
 ```
 
-4. Confirm module manager operations:
+5. Confirm module operations:
 
 ```bash
 apm module-list

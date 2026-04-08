@@ -2,99 +2,170 @@
 
 ## Scope
 
-AMS (APM Module System) is the module runtime used by APM for overlay-based system customization.
+AMS is the overlay/module runtime used by APM for Android system customization. It is centered on `ModuleManager`, with `amsd` owning the boot lifecycle and `apmd` reusing the same module APIs for explicit module commands.
 
-## Module Storage
+## Storage Layout
 
-Modules are stored in:
+Modules live under:
 
 - `/data/ams/modules/<module_name>`
 
-Module logs are stored in:
+Per-module logs live under:
 
 - `/data/ams/logs/<module_name>.log`
 
-Runtime staging:
+Shared daemon/runtime paths:
 
+- `/data/ams/logs/amsd.log`
 - `/data/ams/.runtime/upper`
 - `/data/ams/.runtime/work`
 - `/data/ams/.runtime/base`
+- `/data/ams/amsd.sock`
 
 ## Overlay Targets
 
-AMS targets three trees:
+AMS currently targets three trees:
 
 - `system`
 - `vendor`
 - `product`
 
-The manager discovers candidate mountpoints for `system` in this order:
+For `system`, the manager probes candidates in this order:
 
 1. `/system_root/system`
 2. `/system`
 3. `/`
 
-## Overlay Backend Behavior
+The first mounted/usable candidate becomes the overlay target for that boot attempt.
 
-Current `ModuleManager::applyOverlayForTarget()` attempts `applyBindMountBackendForTarget(...)` first and returns success immediately on that path.
+## Overlay Backend
 
-What this means in practice right now:
+The active backend is the bind-mount-based overlay path implemented through `applyBindMountBackendForTarget(...)`.
 
-- The bind backend is the active overlay path in normal flow.
-- Additional compatibility strategy chain exists in code after that return point, but is currently not reached on successful bind-backend path.
+High-level behavior:
+
+- ensure runtime scratch/base directories exist
+- build overlay layer stacks from enabled modules
+- refresh a base mirror for the selected target
+- mount/update the overlay view with bind-mount-backed staging
+- retry later if a partition is not mounted yet
+
+If boot-time overlay application cannot complete because target partitions are not ready, AMS starts a partition monitor and retries for a bounded period.
 
 ## Module Lifecycle
 
-Install flow (`module-install`):
+### Install
 
-1. unzip module zip (`unzip -oq`) into temporary directory
-2. accept flat root or one nested top-level directory
+`module-install` does the following:
+
+1. unzip the archive into a temporary cache directory
+2. accept either a flat archive root or one nested top-level folder
 3. require `module-info.json`
 4. require `overlay/`
-5. move module to `/data/ams/modules/<name>`
-6. create/update `state.json` and workdirs
-7. run `install.sh` once when `install-sh: true`
-8. rebuild overlays
-9. run lifecycle scripts when configured
+5. move the module to `/data/ams/modules/<name>`
+6. create `workdir/` plus target work subdirectories
+7. write `state.json` with `enabled=true`
+8. run `install.sh` if `install-sh: true`
+9. rebuild overlays immediately
+10. run lifecycle scripts declared in metadata
 
-Enable/disable/remove:
+If `install.sh` is required and fails, installation is rolled back:
 
-- mutate `state.json`
-- rebuild overlays
-- log results to module log
+- the module directory is removed
+- the module log is removed
+- overlays are rebuilt again best-effort
 
-## Script Hooks
+### Enable / Disable / Remove
 
-Based on `module-info.json` booleans:
+- enable:
+  - update `state.json`
+  - rebuild overlays
+  - run lifecycle scripts again
+- disable:
+  - update `state.json`
+  - rebuild overlays
+- remove:
+  - disable first if needed
+  - remove module directory and module log
+  - rebuild overlays
 
-- `post_fs_data: true` -> execute `post-fs-data.sh` in foreground
-- `service: true` -> execute `service.sh` in background
-- `install-sh: true` -> execute `install.sh` once during install
+## Module Metadata
 
-Scripts run via `/system/bin/sh` and append to module log.
+`module-info.json` currently recognizes:
 
-If `install-sh` is enabled and `install.sh` is missing or fails, module install
-fails and AMS rolls back the install by uninstalling the module automatically.
+- `name`
+- `version`
+- `author`
+- `description`
+- `mount`
+- `post_fs_data`
+- `service`
+- `install-sh`
 
-## Safe Mode
+`name` is required and must use only:
 
-`amsd` tracks boot risk with files under `/data/ams`:
+- `A-Z`
+- `a-z`
+- `0-9`
+- `.`
+- `_`
+- `-`
 
-- counter: `.amsd_boot_counter`
-- threshold: `.amsd_safe_mode_threshold` (default 3)
-- flag: `.amsd_safe_mode`
+## Lifecycle Scripts
 
-Behavior:
+Supported script hooks:
 
-- boot counter is incremented on daemon startup
-- if threshold is reached or safe-mode flag exists, overlays are skipped
-- when boot is considered successful (`sys.boot_completed=1`), counter is reset and safe-mode flag is cleared
+- `install.sh`
+  - runs during install when `install-sh: true`
+  - required when enabled
+  - failure aborts and rolls back install
+- `post-fs-data.sh`
+  - runs synchronously when `post_fs_data: true`
+- `service.sh`
+  - runs in the background when `service: true`
+
+Scripts run through `/system/bin/sh` and append output to the module log.
+
+## Safe Mode and Boot Tracking
+
+`amsd` tracks boot health with:
+
+- counter: `/data/ams/.amsd_boot_counter`
+- threshold: `/data/ams/.amsd_safe_mode_threshold`
+- flag: `/data/ams/.amsd_safe_mode`
+
+Current behavior:
+
+- increment the boot counter when `amsd` starts
+- if counter >= threshold, or the flag already exists, enter safe mode
+- in safe mode, overlays and startup scripts are skipped
+- when `sys.boot_completed=1`, reset the counter
+- if safe mode was active, clear the safe mode flag so modules can retry next boot
+
+Default safe-mode threshold is `3`.
+
+## `amsd` Boot Sequence
+
+At startup, `amsd`:
+
+1. waits for `/data` unless in emulator mode
+2. configures logging
+3. evaluates safe mode
+4. applies overlays if safe mode is not active
+5. starts the partition monitor if overlay application was incomplete
+6. runs enabled module startup scripts when overlays succeeded
+7. starts the AMS IPC server
+8. publishes `amsd.ready=1`
+9. watches `sys.boot_completed` to mark boot success
 
 ## AMS IPC
 
-`amsd` binds and listens on `/data/ams/amsd.sock` and sets mode `0666`.
+Socket:
 
-Supported dispatcher operations include:
+- Android: `/data/ams/amsd.sock`
+- Emulator: `$HOME/APMEmulator/ams/amsd.socket`
+
+Supported dispatcher operations:
 
 - `Ping`
 - `ModuleInstall`
@@ -103,4 +174,4 @@ Supported dispatcher operations include:
 - `ModuleRemove`
 - `ModuleList`
 
-All except `Ping` require a valid session token.
+Only `Ping` is available without a valid session token.

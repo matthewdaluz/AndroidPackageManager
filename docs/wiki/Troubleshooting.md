@@ -5,115 +5,182 @@
 Check:
 
 - `apmd` is running
-- Android runtime uses abstract socket `@apmd`, so there is no filesystem socket to inspect
+- Android uses abstract socket `@apmd`, so there is no filesystem socket to inspect
 - emulator mode uses `$HOME/APMEmulator/data/apm/apmd.socket`
-- `/data/apm/logs/apmd.log` for bind/listen errors
+- `/data/apm/logs/apmd.log` for bind/listen/auth errors
+
+## Privileged commands keep asking for authentication
+
+Check:
+
+- session lifetime is only `180` seconds
+- `/data/apm/.security/session.bin` exists and is readable
+- `/data/apm/.security/` still exists after resets or manual cleanup
+
+If setup was never completed, the first privileged command will ask you to create a password/PIN and exactly 3 security questions.
+
+## Forgot-password flow is locked out
+
+Wrong security answers trigger a 5 minute cooldown.
+
+State file:
+
+- `/data/apm/.security/reset-lockout.txt`
+
+## `apm update` fails
+
+Check:
+
+- source entries under `/data/apm/sources/sources.list` and `/data/apm/sources/sources.list.d/`
+- trusted keys under `/data/apm/keys`
+- `trusted=` and `deb-signatures=` options in the source definition
+- `/data/apm/logs/apmd.log` for Release, InRelease, checksum, or Packages download errors
+
+Remember:
+
+- `Packages.gz` and plain `Packages` are supported
+- `Packages.xz` is not used in the current Android path
+
+## Signature verification fails
+
+Release verification:
+
+- import the correct public key with `apm key-add`
+- inspect `trusted=` for the affected source
+
+Detached `.deb` verification:
+
+- inspect `deb-signatures=` for the source
+- inspect `/data/apm/pkgs/sig-cache.json`
+- clear stale cache entries if needed:
+
+```bash
+apm sig-cache clear
+```
+
+## `package-install` fails
+
+For local `.deb` installs:
+
+- confirm the file exists
+- confirm the archive is actually a readable Debian package
+
+For tar-style manual installs (`.tar`, `.tar.gz`, `.tgz`, `.tar.xz`, `.txz`, `.gz`, `.xz`):
+
+- confirm the archive contains exactly one intended package root
+- confirm `package-info.json` exists
+- confirm `package-info.json` includes `package` and `prefix`
+
+Manual package metadata is stored under:
+
+- `/data/local/tmp/apm/runtime/manual-packages`
+
+## Installed command is not found in a new shell
+
+Check the current runtime paths, not the older `/data/apm/bin` layout:
+
+- generated shims:
+  - `/data/local/tmp/apm/bin/<name>`
+- generated PATH files:
+  - `/data/local/tmp/apm/path/sh-path.sh`
+  - `/data/local/tmp/apm/path/bash-path.sh`
+- boot fallback hooks:
+  - `/system/bin/apm-sh-path`
+  - `/system/bin/apm-bash-path`
+
+Also check:
+
+- `/data/apm/logs/apmd.log` for `export_path` warnings
+- managed shell startup files for the APM hook block
+- a fresh shell session after install/remove operations
 
 ## `module-install` fails
 
 Check:
 
-- zip contains `module-info.json`
-- zip contains `overlay/`
-- module name contains only allowed chars (`[A-Za-z0-9._-]`)
-- if `module-info.json` sets `install-sh: true`, zip includes `install.sh`
-- verify `install.sh` exits with code `0`
-- note: if `install.sh` fails, AMS rolls back and uninstalls the module
-- `unzip` is available on device
+- the ZIP contains `module-info.json`
+- the ZIP contains `overlay/`
+- module name uses only `[A-Za-z0-9._-]`
+- if `install-sh: true`, `install.sh` exists
+- `install.sh` exits with status `0`
+- `unzip` is available on the device
 
 Logs:
 
 - `/data/ams/logs/<module>.log`
 - `/data/ams/logs/amsd.log`
 
-## Installed command not found in shell
+Remember:
 
-If a package installs successfully but `command -v <name>` fails in a new shell:
+- if `install.sh` fails, AMS rolls the install back automatically
 
-- confirm shim exists under `/data/apm/bin`:
-  - `ls -l /data/apm/bin/<name>`
-- open a fresh shell session (or `su` session) after install/remove actions
-- verify canonical PATH source files exist:
-  - `/data/apm/path/sh-path.sh`
-  - `/data/apm/path/bash-path.sh`
-- verify boot fallback hook scripts exist and are executable:
-  - `/system/bin/apm-sh-path`
-  - `/system/bin/apm-bash-path`
-- in a fresh shell, verify fallback env vars:
-  - `echo "$ENV"` should be `/system/bin/apm-sh-path`
-  - `echo "$BASH_ENV"` should be `/system/bin/apm-bash-path`
-- verify hook line exists exactly once in managed startup files that are present:
-  - each managed file should include the APM block that sets `APM_SHIM_DIR`
-    to `/data/apm/bin`, updates `PATH`, and sources the APM path script
-  - required targets:
-    - `/data/local/userinit.sh`
-    - `/data/local/tmp/.profile`
-    - `/data/local/tmp/.mkshrc`
-    - `/data/local/tmp/.bashrc`
-    - `/data/local/tmp/.bash_profile`
-  - best-effort targets (may be absent on some devices):
-    - `/data/.profile`
-    - `/data/.mkshrc`
-    - `/data/.bashrc`
-    - `/data/.bash_profile`
-- check `/data/apm/logs/apmd.log` for `export_path` hook install warnings
-
-You can force a hotload rebuild by installing/removing any package, then opening a fresh shell.
-
-## Overlays not applied at boot
+## Overlays are not applied
 
 Check:
 
-- safe mode files under `/data/ams/.amsd_*`
-- `amsd` log for overlay backend failures
-- module `state.json` (`enabled` true)
+- `/data/ams/.amsd_boot_counter`
+- `/data/ams/.amsd_safe_mode_threshold`
+- `/data/ams/.amsd_safe_mode`
+- the module `state.json` file
+- `/data/ams/logs/amsd.log`
 
-If safe mode is active, AMS intentionally skips overlay apply until boot success/flag clear logic completes.
+If a target partition was not mounted when `amsd` started, the partition monitor may retry later in the same boot. If safe mode is active, overlays are intentionally skipped.
 
-## Repository update/download failures
+## `apk-install --install-as-system` fails
 
 Check:
 
-- source entries in `/data/apm/sources/sources.list*`
-- trusted keys in `/data/apm/keys`
-- trust policy options (`trusted=`, `deb-signatures=`)
+- `apmd` is running as root
+- the AMS module skeleton `apm-system-apps` can be created under `/data/ams/modules/`
+- `/data/ams/modules/apm-system-apps/overlay/system/app/` is writable
 
-Also check `apmd` logs for Release and Packages verification messages.
+Also remember:
 
-## Signature verification failures
+- successful staging still requires a reboot before Android recognizes the APK as a system app
 
-Release signatures:
+## `apk-uninstall` did not fully remove a staged system app
 
-- ensure correct key imported via `apm key-add`
-- inspect `trusted=` source option
+The uninstall flow:
 
-`.deb` signatures:
+- tries `pm uninstall <package>`
+- falls back to `pm uninstall --user 0 <package>`
+- then does best-effort overlay cleanup
 
-- inspect `deb-signatures=` source option
-- clear stale cache if needed:
+Check:
 
-```bash
-apm sig-cache clear
-```
+- `/data/ams/modules/apm-system-apps/overlay/system/app/<package>`
+- `/data/apm/logs/apmd.log`
 
-## Forgot-password cooldown
+## Legacy module path block on startup
 
-On wrong security answers, reset attempts are locked for 5 minutes.
-
-State file:
-
-- `/data/apm/.security/reset-lockout.txt`
-
-## Legacy module path block
-
-`apmd` startup can fail if legacy module data exists under:
+`apmd` refuses to continue if legacy modules still exist under:
 
 - `/data/apm/modules`
 
-Current AMS expects modules under `/data/ams/modules`.
+Current AMS uses:
 
-## Factory reset behavior questions
+- `/data/ams/modules`
 
-`apm factory-reset` is destructive to APM/AMS runtime data.
+The supported cleanup path is a factory reset.
 
-It removes installed payloads, security data, lists, module trees, and does best-effort cleanup for system app overlays.
+## Factory reset left some data behind
+
+Current factory reset targets:
+
+- installed runtime content
+- generated shim binaries
+- manual package metadata
+- security data
+- package status DB
+- AMS modules
+- repository lists
+- system apps staged through `--install-as-system`
+
+It may leave behind:
+
+- source definitions
+- trusted keys
+- package download cache
+- general cache directories
+
+Check the resulting daemon message and `/data/apm/logs/apmd.log` for partial-failure details.

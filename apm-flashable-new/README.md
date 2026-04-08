@@ -1,68 +1,142 @@
-# APM LineageOS Recovery Flashable Template
+# APM LineageOS Recovery Flashable
 
-This folder is a fresh flashable-ZIP template for installing APM directly from **LineageOS Recovery**.
+This directory contains the maintained recovery deployment template for APM.
 
-The Magisk version of APM is deprecated and no longer available; this flashable package is the maintained deployment path.
+It is built for LineageOS Recovery and uses a custom slot-aware installer under `META-INF/com/google/android/update-binary`.
 
-## What It Installs
+## What the Flashable Contains
 
-- `apm`, `apmd`, `amsd` binaries
-- boot PATH fallback hooks:
-  - `system/bin/apm-sh-path`
-  - `system/bin/apm-bash-path`
-- init services:
-  - `system/etc/init/init.amsd.rc`
-  - `system/etc/init/init.apmd.rc`
-- SELinux payload:
-  - `system/etc/selinux/apm.cil`
-  - `system/etc/selinux/apm_file_contexts`
-  - `system/etc/selinux/apm_property_contexts`
-  - `system/etc/selinux/apm_service_contexts`
-- addon.d OTA survival script (`system/addon.d/30-apm.sh`)
+Core binaries:
 
-## Mount/Slot Selection Behavior
+- `system/bin/apm`
+- `system/bin/apmd`
+- `system/bin/amsd`
 
-Installer target selection is strictly based on mount points present under `/mnt` in recovery:
+Boot PATH fallback hooks:
 
-1. If only one of `/mnt/system`, `/mnt/system_a`, `/mnt/system_b` exists: install there.
-2. If multiple exist: choose active slot via `ro.boot.slot_suffix` / `ro.boot.slot` and install to matching `system_a` or `system_b`.
-3. If none exist: installation fails.
-4. Install path is the selected partition **root** (for example `/mnt/system/`).
-5. If recovery exposes top-level `bin`/`etc` as symlinks (loop-prone layout), installer auto-switches to the real writable root (`/mnt/system/system/` style) to avoid copy failures.
+- `system/bin/apm-sh-path`
+- `system/bin/apm-bash-path`
 
-## Daemon Startup Design
+Init services:
 
-- `amsd` starts in `post-fs-data` so overlays are prepared early.
-- `apmd` starts after `amsd.ready=1`.
-- Both are `class core` services.
-- Current template uses `u:r:su:s0` service labels as a boot-safety fallback.
-- AMSD socket path is `/data/ams/amsd.sock` (not `/dev/socket/amsd`).
-- `init.apmd.rc` exports:
+- `system/etc/init/init.apmd.rc`
+- `system/etc/init/init.amsd.rc`
+
+SELinux payload:
+
+- `system/etc/selinux/apm.cil`
+- `system/etc/selinux/apm_file_contexts`
+- `system/etc/selinux/apm_property_contexts`
+- `system/etc/selinux/apm_service_contexts`
+
+OTA survival:
+
+- generated `system/addon.d/30-apm.sh`
+
+Optional helper payload:
+
+- `system/xbin/*` from `prebuilt/xz/` when that directory exists
+
+## Install Strategy
+
+The custom recovery installer is slot-aware and looks for mount targets under:
+
+- `/mnt/system`
+- `/mnt/system_a`
+- `/mnt/system_b`
+
+Behavior:
+
+- if only one supported target exists, install there
+- if multiple exist, choose the active slot via `ro.boot.slot_suffix` or `ro.boot.slot`
+- fail if no supported `/mnt/system*` target is present
+
+## Init Behavior
+
+### `init.amsd.rc`
+
+- creates `/data/ams` runtime directories in `post-fs-data`
+- starts `amsd` early
+- uses `u:r:su:s0` as the current compatibility service label
+
+### `init.apmd.rc`
+
+- exports:
   - `ENV=/system/bin/apm-sh-path`
   - `BASH_ENV=/system/bin/apm-bash-path`
-  so new shell sessions can source APM PATH hooks at boot.
+- creates `/data/apm` and `/data/local/tmp/apm` runtime roots
+- removes stale shim copies of `apm`, `apmd`, and `amsd` from `/data/local/tmp/apm/bin`
+- removes stale `apmd` socket files
+- starts `apmd` only after `amsd.ready=1`
 
-## Access Model
+## Runtime Paths Expected by the Flashable
 
-Template is configured so APM runtime assets are reachable by `root`, `init`, and `shell` workflows:
+APM:
 
-- data paths under `/data/apm` and `/data/ams` are created with `root:shell` where appropriate
-- `amsd` socket is created `0666 root:shell`
-- `apmd` socket is chmod'd by daemon runtime (`0666` on Android mode)
+- `/data/apm`
+- `/data/local/tmp/apm`
 
-## Build ZIP
+AMS:
 
-From project root:
+- `/data/ams`
+
+The boot hook scripts pin `/data/local/tmp/apm/bin` onto `PATH` and source:
+
+- `/data/local/tmp/apm/path/sh-path.sh`
+- `/data/local/tmp/apm/path/bash-path.sh`
+
+when those generated files exist.
+
+## Build
+
+From this directory:
 
 ```bash
-cd apm-flashable-new
 ./build_recovery_zip.sh
 ```
 
-Output ZIP is created at project root as `apm-lineage-recovery-YYYYMMDD.zip`.
+Useful variants:
+
+```bash
+./build_recovery_zip.sh --abi arm64-v8a
+./build_recovery_zip.sh --all
+./build_recovery_zip.sh --api 34
+```
+
+Important current defaults:
+
+- `APM_FORCE_REBUILD=1`
+- default ABI: `arm64-v8a`
+- default API: `34`
+
+Outputs are written to the project root as:
+
+- `apm-lineage-recovery-YYYYMMDD-<abi>.zip`
+
+## Build Script Behavior
+
+`build_recovery_zip.sh` currently:
+
+- rebuilds missing binaries, or always rebuilds when `APM_FORCE_REBUILD=1`
+- copies `apm`, `apmd`, and `amsd` from `build-<abi>/`
+- syncs SELinux payload from `../selinux-contexting/` unless overridden
+- verifies critical ZIP contents after packaging
+
+Useful environment overrides:
+
+- `APM_FORCE_REBUILD=0`
+- `APM_ANDROID_ABI=<abi>`
+- `APM_ANDROID_API=<level>`
+- `APM_SELINUX_SOURCE_DIR=/custom/selinux/payload`
 
 ## Flash
 
-1. Boot to LineageOS Recovery
-2. Flash/sideload generated ZIP
-3. Reboot system
+1. Build the ZIP.
+2. Boot into LineageOS Recovery.
+3. Sideload or install the generated ZIP.
+4. Reboot Android.
+
+## Notes
+
+- Magisk packaging is deprecated and not the maintained path here.
+- The service labels intentionally stay conservative for recovery/boot compatibility while custom policy merge behavior varies by device.

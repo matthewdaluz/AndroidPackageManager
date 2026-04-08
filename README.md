@@ -1,207 +1,105 @@
 # APM - Android Package Manager
 
-APM is a GPLv3 package manager for Android with an APT-like workflow and Android-specific daemon tooling.
+APM is a GPL-3.0-or-later package manager stack for Android. It combines an APT-like package workflow, a privileged daemon, an Android module system, APK staging helpers, and shell PATH hotload support.
 
-Current CLI version string in source: `2.0.0b - Open Beta`.
+Current CLI version in source: `2.0.1b - Open Beta`
 
-## What APM Includes
+## Components
 
-- `apm`: CLI client.
-- `apmd`: main package daemon (install/update/remove/upgrade, APK workflows, AMS module operations).
-- `amsd`: AMS daemon (overlay application + module daemon IPC).
-- AMS (APM Module System): module format and runtime for system/vendor/product overlays.
+- `apm`: CLI client. It handles local read-only commands, manual package installs, log viewing/export, trusted-key import, and IPC requests to the daemon.
+- `apmd`: privileged package daemon. It handles repository updates, package install/remove/upgrade/autoremove, APK install/uninstall, security sessions, factory reset, and command shim generation.
+- `amsd`: AMS daemon. It applies overlays, runs enabled module scripts at boot, manages AMS safe mode, and exposes module IPC.
+- AMS: APM Module System. Modules live under `/data/ams/modules` and can overlay `system`, `vendor`, and `product`.
 
-## Architecture At A Glance
+## Runtime Architecture
 
-- Transport is UNIX socket based.
-- CLI requests go to `apmd` over the abstract UNIX socket `@apmd` on Android (emulator: `$HOME/APMEmulator/data/apm/apmd.socket`).
-- AMS daemon serves module IPC over `/data/ams/amsd.sock` (emulator: `$HOME/APMEmulator/ams/amsd.socket`).
-- Binder code exists in-tree as legacy/reference, but active runtime flow is socket-first.
+- Active transport is UNIX sockets, not Binder.
+- `apm -> apmd`
+  - Android: abstract socket `@apmd`
+  - Emulator mode: `$HOME/APMEmulator/data/apm/apmd.socket`
+- `client -> amsd`
+  - Android: `/data/ams/amsd.sock`
+  - Emulator mode: `$HOME/APMEmulator/ams/amsd.socket`
 
-## Repository Layout
+## Runtime Layout
 
-```text
-src/
-  apm/        CLI + IPC client
-  apmd/       Main daemon, package install logic, APK logic, auth/session, PATH hotload
-  amsd/       AMS daemon, module dispatcher, overlay startup/safe-mode handling
-  ams/        Module metadata + module manager
-  core/       Repo parsing, download/index handling, status DB, extraction, shared security utils
-  util/       Filesystem helpers + crypto helpers (SHA256/MD5/OpenPGP verify)
-  thirdparty/ Vendored headers
-```
+### Android
 
-## Runtime Paths (Android)
+Persistent APM data under `/data/apm`:
 
-APM root:
+- `cache`
+- `keys`
+- `lists`
+- `logs`
+- `pkgs`
+- `sandbox/{state,env,mounts}`
+- `sources/sources.list`
+- `sources/sources.list.d/`
+- `status`
+- `.security/`
+- `debug.txt`
 
-- `/data/apm/installed`
-- `/data/apm/installed/commands`
-- `/data/apm/installed/dependencies`
-- `/data/apm/installed/termux`
-- `/data/apm/bin`
-- `/data/apm/cache`
-- `/data/apm/pkgs`
-- `/data/apm/lists`
-- `/data/apm/status`
-- `/data/apm/sources` and `/data/apm/sources/sources.list.d`
-- `/data/apm/manual-packages`
-- `/data/apm/keys`
-- `/data/apm/path`
-- `/data/apm/.security`
-- `/data/apm/logs`
-- Android runtime uses abstract socket `@apmd`
+Shell-accessible runtime content under `/data/local/tmp/apm`:
 
-AMS root:
+- `runtime/installed/`
+- `runtime/installed/commands/`
+- `runtime/installed/dependencies/`
+- `runtime/installed/termux/`
+- `runtime/manual-packages/`
+- `bin/`
+- `path/`
+- `logs/`
 
-- `/data/ams/modules`
-- `/data/ams/logs`
-- `/data/ams/.runtime`
-- `/data/ams/.runtime/upper`
-- `/data/ams/.runtime/work`
-- `/data/ams/.runtime/base`
-- `/data/ams/amsd.sock`
-- Safe-mode files: `/data/ams/.amsd_boot_counter`, `/data/ams/.amsd_safe_mode_threshold`, `/data/ams/.amsd_safe_mode`
+AMS data under `/data/ams`:
 
-Emulator mode roots:
+- `modules/`
+- `logs/`
+- `.runtime/{upper,work,base}`
+- `amsd.sock`
+- `.amsd_boot_counter`
+- `.amsd_safe_mode_threshold`
+- `.amsd_safe_mode`
 
-- `$HOME/APMEmulator/data/apm`
-- `$HOME/APMEmulator/ams`
+### Emulator Mode
 
-## Build Prerequisites
+- APM root: `$HOME/APMEmulator/data/apm`
+- AMS root: `$HOME/APMEmulator/ams`
 
-### Debian/Ubuntu packages (required)
+The CLI auto-detects emulator mode by looking for the emulator `apmd.socket`.
 
-```bash
-sudo apt update
-sudo apt install -y \
-  build-essential cmake pkg-config git \
-  ninja-build soong clang clangd sdkmanager
-```
+## Package and Repository Behavior
 
-### Other distro equivalents (recommended)
-
-Fedora:
-
-```bash
-sudo dnf install -y \
-  @development-tools cmake pkgconf-pkg-config git \
-  ninja-build clang clang-tools-extra
-```
-
-Arch Linux:
-
-```bash
-sudo pacman -S --needed \
-  base-devel cmake pkgconf git ninja clang
-```
-
-Note: package names for `soong` and `sdkmanager` vary by distro/repo.
-
-### BoringSSL prebuilts (required for all builds)
-
-APM now builds against bundled `libcurl` plus repository-staged BoringSSL prebuilts only.
-
-- Android builds require `prebuilt/boringssl/build-<abi>/libssl.a`
-- Android builds require `prebuilt/boringssl/build-<abi>/libcrypto.a`
-- Host/emulator builds require `prebuilt/boringssl/build-x86_64/` or `prebuilt/boringssl/build-x86/`
-- All builds require `prebuilt/boringssl/include/openssl/base.h`
-
-Use [boringssl-tools/compile-for-all-abi/README.md](/home/matthew/Documents/Projects/AndroidPackageManager/boringssl-tools/compile-for-all-abi/README.md) for the Android multi-ABI helper flow.
-
-### Android SDK/NDK components (required)
-
-```bash
-sdkmanager --install \
-  "build-tools;36.1.0" \
-  "cmake;4.1.2" \
-  "ndk;r29" \
-  "tools;26.1.1"
-```
-
-### Recommended editor setup
-
-Visual Studio Code is strongly recommended for modifying APM source. Install:
-
-- `C/C++`
-- `C/C++ DevTools`
-- `C/C++ Extension Pack`
-- `clangd`
-- `CMake Tools`
-
-`./build_android.sh` now publishes `compile_commands.json` at the workspace root (linked or copied from `build/`) so VSCode/clangd can pick up generated compile flags without extra setup.
-
-## Build
-
-### 1) Host Emulator Build
-
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DAPM_EMULATOR_MODE=ON
-cmake --build build -j$(nproc)
-```
-
-This build mode uses bundled `libcurl` and the host BoringSSL prebuilts staged under `prebuilt/boringssl/`.
-
-Run daemons with `--emulator` when built in emulator mode.
-
-### 2) Android Build (NDK)
-
-```bash
-./build_android.sh
-```
-
-Notes:
-
-- Script enforces API level >= 29.
-- Detects NDK from `ANDROID_NDK_ROOT`/`ANDROID_NDK_HOME` or `$ANDROID_SDK_ROOT/ndk`.
-- Requires staged Android BoringSSL prebuilts under `prebuilt/boringssl/build-<abi>/`.
-- Includes an `x86_64 (Emulator Mode)` option.
-- Uses the `Ninja` generator (same default generator used by VSCode CMake Tools) to avoid generator mismatch in `build/`.
-
-### 3) AOSP/Soong
-
-Use `Android.bp` (`apm`, `apmd`, `amsd` targets).
-
-## Deploy
-
-### Magisk Module Status
-
-The Magisk version of APM is deprecated and no longer available.
-
-### Recovery Flashable
-
-`apm-flashable-new/` contains a slot-aware Lineage Recovery installer and SELinux payload.
-
-## Repositories And Trust Policies
-
-APM reads `deb` entries from:
-
-- `/data/apm/sources/sources.list`
-- `/data/apm/sources/sources.list.d/*.list`
-
-Supported options in bracket blocks include:
-
-- `arch=` / `architectures=`
-- `trusted=`
-- `deb-signatures=`
+- Sources are read from:
+  - `/data/apm/sources/sources.list`
+  - `/data/apm/sources/sources.list.d/*.list`
+- Supported source options:
+  - `arch=` / `architectures=`
+  - `trusted=`
+  - `deb-signatures=`
+- Release metadata flow:
+  - Prefer `InRelease`
+  - Fall back to `Release` + `Release.gpg`
+- `Packages.gz` and plain `Packages` are supported.
+- `Packages.xz` is intentionally disabled in the current Android path.
+- Termux-style repositories are auto-detected and architecture-mapped when needed.
 
 Trust behavior:
 
-- `trusted=yes` skips Release signature verification.
-- `trusted=required` requires valid Release signature.
-- Default (`trusted` not set) attempts verification and can continue unverified on failure.
+- `trusted=yes|true|1`: skip Release signature verification
+- `trusted=required`: require Release signature verification
+- default: try verification and continue unverified on failure
 
-Package signature behavior:
+Detached `.deb` signature behavior:
 
-- `deb-signatures=required`: `.deb` detached signature required and must verify.
-- `deb-signatures=optional`: attempts verify if signature exists; install may continue when missing/invalid.
-- `deb-signatures=disabled`: no package-level detached signature enforcement.
+- `deb-signatures=required`: package install fails if detached verification fails or no signature is available
+- `deb-signatures=optional`: verification is attempted when possible, but install can continue
+- `deb-signatures=disabled`: skip detached package signature checks
 
-`Packages.gz` and plain `Packages` are used. `Packages.xz` is intentionally disabled in current Android path.
+Detached package signature results are cached in `/data/apm/pkgs/sig-cache.json`.
 
-## CLI Commands
+## CLI Surface
 
-Daemon-backed:
+Daemon-backed commands:
 
 - `apm ping`
 - `apm update`
@@ -209,6 +107,7 @@ Daemon-backed:
 - `apm remove <pkg>`
 - `apm upgrade [pkgs...]`
 - `apm autoremove`
+- `apm debuglogging <true|false>`
 - `apm factory-reset`
 - `apm forgot-password`
 - `apm module-list`
@@ -219,123 +118,166 @@ Daemon-backed:
 - `apm apk-install <apk> [--install-as-system]`
 - `apm apk-uninstall <package>`
 
-Local/offline helpers:
+Local/offline commands:
 
 - `apm list`
 - `apm info <pkg>`
 - `apm search <pattern>`
 - `apm package-install <file>`
+- `apm log [--apm|--ams] [--export]`
+- `apm version`
 - `apm key-add <file.asc|file.gpg>`
 - `apm sig-cache show`
 - `apm sig-cache clear`
-- `apm version`
 - `apm help`
+
+Notes:
+
+- `package-install` supports local `.deb` files plus tar-style archives such as `.tar`, `.tar.gz`, `.tgz`, `.tar.xz`, `.txz`, `.gz`, and `.xz`.
+- Tarball/manual packages must contain `package-info.json`.
+- `remove` first checks whether the target is a manual package and removes it locally before falling back to daemon-backed package removal.
+- `log --export` writes a timestamped copy to `/storage/emulated/0`.
+- `apk-install --install-as-system` stages the APK into the AMS-backed `apm-system-apps` overlay module and requires a reboot for Android to see it as a system app.
 
 ## Security Model
 
-- First privileged flow sets or unlocks a password/PIN.
-- Exactly 3 security questions are required on initial setup.
-- Master key at `/data/apm/.security/masterkey.bin`.
-- Password/PIN and security answers are stored encrypted.
-- PBKDF2-HMAC-SHA256 uses 200,000 iterations.
-- Session token is persisted with HMAC integrity and 180-second expiry.
-- Forgot-password wrong answers trigger a 5-minute cooldown lockout.
-- `amsd` validates session tokens against the same session material.
+- Privileged operations require an authenticated session.
+- Session-free requests:
+  - `Ping`
+  - `Authenticate`
+  - `ForgotPassword`
+- Session-required requests:
+  - update/install/remove/upgrade/autoremove
+  - APK operations
+  - module lifecycle operations
+  - factory reset
+  - debug logging toggle
+- First privileged use triggers password/PIN setup if none exists.
+- Initial setup requires exactly 3 security questions.
+- Password/PIN and security-question data are encrypted with AES-256-GCM.
+- User-secret derivation uses PBKDF2-HMAC-SHA256 with `200000` iterations.
+- Session tokens are HMAC-protected and expire after `180` seconds.
+- Failed forgot-password answer verification triggers a `5` minute cooldown.
 
-## Package And APK Notes
+## Build Prerequisites
 
-Package install behavior:
+### Debian/Ubuntu
 
-- Dependency resolver is currently direct dependency oriented (not full recursive SAT solver).
-- SHA256 verification is preferred, with MD5 fallback when metadata provides it.
-- Signature verification cache stored at `/data/apm/pkgs/sig-cache.json`.
+```bash
+sudo apt update
+sudo apt install -y \
+  build-essential cmake pkg-config git \
+  ninja-build clang clangd
+```
 
-Manual package install:
+### Fedora
 
-- Supports `.deb` and archive suffixes `.tar.gz`, `.tgz`, `.tar.xz`, `.txz`, `.tar`, `.gz`, `.xz`.
-- Tar-based manual packages require `package-info.json`.
+```bash
+sudo dnf install -y \
+  @development-tools cmake pkgconf-pkg-config git \
+  ninja-build clang clang-tools-extra
+```
 
-APK workflows:
+### Arch Linux
 
-- User app install uses staged `pm install --user 0 -r` flow.
-- `--install-as-system` stages APK into AMS module `apm-system-apps` under `overlay/system/app/.../base.apk`.
+```bash
+sudo pacman -S --needed \
+  base-devel cmake pkgconf git ninja clang
+```
 
-## AMS Overview
+### Android SDK / NDK
 
-AMS modules live in `/data/ams/modules/<module_name>`.
+`build_android.sh` expects an Android SDK plus an NDK reachable via `ANDROID_NDK_ROOT`, `ANDROID_NDK_HOME`, or `$ANDROID_SDK_ROOT/ndk`.
 
-Expected module files:
+Recommended SDK components:
 
-- `module-info.json` (required)
-- `overlay/` (required)
-- `overlay/system`, `overlay/vendor`, `overlay/product` (optional subtrees)
-- `install.sh` (optional, required when `install-sh` is `true`)
-- `post-fs-data.sh` (optional)
-- `service.sh` (optional)
+```bash
+sdkmanager --install \
+  "build-tools;36.1.0" \
+  "cmake;4.1.2" \
+  "ndk;r29"
+```
 
-`module-info.json` fields in current parser:
+### BoringSSL Prebuilts
 
-- `name` (required)
-- `version`
-- `author`
-- `description`
-- `mount` (default `true`)
-- `post_fs_data` (default `false`)
-- `service` (default `false`)
-- `install-sh` (default `false`)
+All CMake builds use repository-staged BoringSSL prebuilts:
 
-`state.json` fields:
+- Android: `prebuilt/boringssl/build-<abi>/libssl.a`
+- Android: `prebuilt/boringssl/build-<abi>/libcrypto.a`
+- Host/emulator: `prebuilt/boringssl/build-x86_64/` or `build-x86/`
+- Headers: `prebuilt/boringssl/include/openssl/base.h`
 
-- `enabled`
-- `installed_at`
-- `updated_at`
-- `last_error`
+See `boringssl-tools/compile-for-all-abi/README.md` for the Android helper flow.
 
-Install expectations:
+## Build
 
-- ZIP extraction uses `unzip -oq`.
-- Either flat module root or single nested top directory is accepted.
-- `overlay/` directory must exist.
-- If `install-sh` is `true`, `install.sh` is required and runs once during
-  `module-install`.
-- If `install.sh` fails, `module-install` fails and AMS automatically rolls
-  back by uninstalling the module.
+### Android / NDK
 
-Overlay targets:
+```bash
+./build_android.sh
+```
 
-- `system`
-- `vendor`
-- `product`
+Helpful flags:
 
-Current implementation detail: the bind-backend path is the primary overlay path reached during `applyOverlayForTarget()`.
+- `./build_android.sh --abi arm64-v8a`
+- `./build_android.sh --all`
+- `./build_android.sh --emulator`
+- `./build_android.sh --api 34`
 
-## Logging
+Behavior:
 
-- `apmd`: `/data/apm/logs/apmd.log`
-- `amsd`: `/data/ams/logs/amsd.log`
-- Module logs: `/data/ams/logs/<module>.log`
+- API level must be `29` or newer
+- Android builds go to `build-<abi>/`
+- Emulator builds go to `build/`
+- `compile_commands.json` is published at the workspace root
 
-## Known Limitations
+### Host Emulator Build
 
-- Dependency resolution is direct-dependency oriented (not a full recursive SAT resolver).
-- `Packages.xz` indexes are intentionally disabled in the current Android path.
-- Binder paths remain in source as legacy/reference; active runtime uses UNIX sockets.
-- `apmd` startup aborts if legacy modules are detected under `/data/apm/modules`.
+```bash
+cmake -S . -B build -G Ninja -DAPM_EMULATOR_MODE=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel "$(nproc)"
+```
 
-## Documentation (Wiki Drafts In Repo)
+Run emulator binaries with `--emulator`:
 
-Wiki-ready markdown pages are in `docs/wiki/`:
+```bash
+./build/apmd --emulator
+./build/amsd --emulator
+```
+
+### AOSP / Soong
+
+`Android.bp` defines `apm`, `apmd`, and `amsd` targets.
+
+## Deployment
+
+### Recovery Flashable
+
+`apm-flashable-new/` contains the maintained recovery deployment path.
+
+Build it with:
+
+```bash
+cd apm-flashable-new
+./build_recovery_zip.sh
+```
+
+The flashable builder:
+
+- rebuilds binaries by default with `APM_FORCE_REBUILD=1`
+- supports `--abi`, `--all`, and `--api`
+- syncs SELinux payload from `selinux-contexting/`
+- emits `apm-lineage-recovery-YYYYMMDD-<abi>.zip`
+
+Magisk packaging is deprecated and no longer maintained here.
+
+## Documentation
 
 - `docs/wiki/Home.md`
 - `docs/wiki/APM-Architecture.md`
 - `docs/wiki/AMS-Architecture.md`
-- `docs/wiki/AMS-Module-Development.md`
 - `docs/wiki/CLI-and-Operations.md`
 - `docs/wiki/Build-and-Deployment.md`
+- `docs/wiki/AMS-Module-Development.md`
 - `docs/wiki/Troubleshooting.md`
-
-These are intended to be copied into GitHub Wiki pages.
-
-## License
-
-GNU GPL v3.0 or later.
+- `.deb-signature-verification-flow.md`

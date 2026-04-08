@@ -1,17 +1,17 @@
 # AMS Module Development
 
-This page documents the current AMS module format accepted by `ModuleManager`.
+This page describes the module format currently accepted by `ModuleManager`.
 
-## Required Structure
+## Minimum Archive Structure
 
-Minimum module zip content:
+Required contents:
 
 ```text
 module-info.json
 overlay/
 ```
 
-Optional subtrees and scripts:
+Optional contents:
 
 ```text
 overlay/system/
@@ -22,26 +22,49 @@ post-fs-data.sh
 service.sh
 ```
 
-`overlay/` must exist, even if only one target subtree is used.
+`overlay/` must exist even if only one target subtree is populated.
 
-## `module-info.json` Schema
+## Accepted ZIP Layouts
+
+The installer accepts either:
+
+- a flat archive root where `module-info.json` is at archive root
+- one nested top-level folder that contains the real module root
+
+Anything more complex is not auto-detected.
+
+## `module-info.json`
 
 Recognized fields:
 
-- `name` (required)
+- `name` required
 - `version`
 - `author`
 - `description`
-- `mount` (bool, default `true`)
-- `post_fs_data` (bool, default `false`)
-- `service` (bool, default `false`)
-- `install-sh` (bool, default `false`)
+- `mount` boolean, default `true`
+- `post_fs_data` boolean, default `false`
+- `service` boolean, default `false`
+- `install-sh` boolean, default `false`
 
-Name validation:
+Notes:
 
-- allowed chars: `a-z`, `A-Z`, `0-9`, `-`, `_`, `.`
+- booleans can be JSON booleans or `"true"` / `"false"` strings
+- unsupported JSON value types are not accepted by the lightweight parser
 
-## Example Module
+### Name Rules
+
+Allowed characters:
+
+- `a-z`
+- `A-Z`
+- `0-9`
+- `.`
+- `_`
+- `-`
+
+If `name` is missing or contains unsupported characters, install fails.
+
+## Example
 
 `module-info.json`:
 
@@ -71,18 +94,15 @@ example-fonts/
 
 ## Packaging
 
-From inside module root:
+From inside the module root:
 
 ```bash
 zip -r ../example-fonts.zip .
 ```
 
-Accepted zip layouts:
+## Installation and Lifecycle
 
-- flat root (`module-info.json` at archive root)
-- single nested top-level folder containing module root
-
-## Installation
+Install:
 
 ```bash
 apm module-install /path/to/example-fonts.zip
@@ -92,33 +112,59 @@ Other lifecycle commands:
 
 ```bash
 apm module-list
-apm module-enable example-fonts
 apm module-disable example-fonts
+apm module-enable example-fonts
 apm module-remove example-fonts
 ```
 
-## Script Behavior
+Important current behavior:
 
-- `install.sh` runs once during `module-install` when `install-sh` is true.
-- If `install-sh` is true, `install.sh` must exist and exit with status `0`.
-- On `install.sh` failure, install fails and AMS automatically rolls back by
-  uninstalling the module.
-- `post-fs-data.sh` runs synchronously when `post_fs_data` is true.
-- `service.sh` runs in background when `service` is true.
-- Script output is appended to `/data/ams/logs/<module>.log`.
+- install writes `state.json` with `enabled=true`
+- overlays are rebuilt as part of install
+- successful install may immediately trigger lifecycle scripts
 
-## State File
+## Script Hooks
 
-AMS writes `state.json` in module root with fields:
+### `install.sh`
+
+- only runs when `install-sh: true`
+- must exist when enabled
+- runs during install
+- failure aborts install and triggers rollback
+
+### `post-fs-data.sh`
+
+- runs synchronously when `post_fs_data: true`
+
+### `service.sh`
+
+- runs in the background when `service: true`
+
+All scripts run through `/system/bin/sh`.
+
+Script output is appended to:
+
+- `/data/ams/logs/<module>.log`
+
+## Generated State
+
+AMS writes `state.json` in the module root with:
 
 - `enabled`
 - `installed_at`
 - `updated_at`
 - `last_error`
 
+It also creates:
+
+- `workdir/system/`
+- `workdir/vendor/`
+- `workdir/product/`
+
 ## Practical Tips
 
-- Keep top-level overlay entries additive and predictable.
-- Validate module name early before packaging.
-- Check `/data/ams/logs/<module>.log` after each install/enable cycle.
-- Reboot once after major overlay changes if target partitions were not yet mounted when module was enabled.
+- keep overlays additive and easy to reason about
+- test each target subtree independently
+- if using `install-sh`, make it idempotent and fail loudly
+- check `/data/ams/logs/<module>.log` after install or enable
+- if boot-time partitions were not ready when you enabled a module, `amsd` may need a reboot or partition-monitor retry window before the overlay fully appears
