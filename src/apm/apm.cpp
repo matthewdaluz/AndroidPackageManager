@@ -64,9 +64,13 @@
 namespace {
 
 // Editable CLI metadata.
-static constexpr const char *kApmVersion = "2.0.0b - Open Beta [Initial Release]";
+static constexpr const char *kApmVersion = "2.0.1b - Open Beta";
 static constexpr const char *kApmBuildDate =
-    "March 28th, 2026. - 12:00 AM Eastern Time.";
+    "April 7th, 2026. - 9:35 PM Eastern Time.";
+static constexpr const char *kApmCopyright =
+    "Copyright (C) 2026 RedHead Industries";
+static constexpr const char *kApmLicense =
+    "License: GNU GPL v3 or later (GPL-3.0-or-later)";
 static constexpr const char *kLogExportDir = "/storage/emulated/0";
 
 enum class LogTarget { Apm, Ams };
@@ -1189,7 +1193,7 @@ void printUsage() {
       << "  info <pkg>                  Show detailed package information\n"
       << "  search <pattern>            Search available repo packages\n"
       << "  log [--ams] [--export]      View or export daemon logs\n"
-      << "  version                     Show APM version and build date\n"
+      << "  version                     Show APM version, build, and license info\n"
       << "  key-add <file.asc|.gpg>     Import a trusted public key\n"
       << "  sig-cache show              Show cached .deb signature verifications\n"
       << "  sig-cache clear             Clear the signature cache\n"
@@ -2070,7 +2074,13 @@ int cmdVersion() {
   if (apm::config::isEmulatorMode())
     std::cout << " (Emulator Mode)";
 #endif
-  std::cout << "\n";
+  std::cout << "\n"
+            << kApmCopyright << "\n"
+            << kApmLicense << "\n"
+            << "Free software: you may redistribute and modify it.\n"
+            << "Distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;\n"
+            << "without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n"
+            << "See LICENSE for details.\n";
   return 0;
 }
 
