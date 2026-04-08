@@ -48,7 +48,8 @@ enum class RequestType {
   ModuleEnable,
   ModuleDisable,
   ModuleRemove,
-  FactoryReset
+  FactoryReset,
+  DebugLogging
 };
 
 struct Request {
@@ -71,6 +72,7 @@ struct Request {
 
   std::string modulePath;
   std::string moduleName;
+  bool debugLoggingEnabled = false;
 
   std::unordered_map<std::string, std::string> rawFields;
 };

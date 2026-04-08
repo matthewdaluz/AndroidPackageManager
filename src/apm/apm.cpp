@@ -242,6 +242,21 @@ static std::string toLower(std::string s) {
   return s;
 }
 
+static bool parseBooleanArg(const std::string &value, bool &out) {
+  const std::string lower = toLower(value);
+  if (lower == "1" || lower == "true" || lower == "yes" || lower == "on" ||
+      lower == "enable" || lower == "enabled") {
+    out = true;
+    return true;
+  }
+  if (lower == "0" || lower == "false" || lower == "no" || lower == "off" ||
+      lower == "disable" || lower == "disabled") {
+    out = false;
+    return true;
+  }
+  return false;
+}
+
 static bool endsWithIgnoreCase(const std::string &value,
                                const std::string &suffix) {
   if (suffix.size() > value.size())
@@ -326,12 +341,44 @@ static std::string logFileName(LogTarget target) {
   return target == LogTarget::Apm ? "apmd.log" : "amsd.log";
 }
 
-static std::string resolveDaemonLogPath(LogTarget target) {
-  if (target == LogTarget::Apm) {
-    return apm::fs::joinPath(apm::config::getLogsDir(), logFileName(target));
+static std::vector<std::string> candidateDaemonLogPaths(LogTarget target) {
+  std::vector<std::string> paths;
+  const std::string fileName = logFileName(target);
+
+  const std::string shellPath =
+      apm::fs::joinPath(apm::config::getShellLogsDir(), fileName);
+  if (!shellPath.empty()) {
+    paths.push_back(shellPath);
   }
-  return apm::fs::joinPath(apm::config::getModuleLogsDir(),
-                           logFileName(target));
+
+  std::string primaryPath;
+  if (target == LogTarget::Apm) {
+    primaryPath = apm::fs::joinPath(apm::config::getLogsDir(), fileName);
+  } else {
+    primaryPath = apm::fs::joinPath(apm::config::getModuleLogsDir(), fileName);
+  }
+
+  if (!primaryPath.empty() &&
+      std::find(paths.begin(), paths.end(), primaryPath) == paths.end()) {
+    paths.push_back(primaryPath);
+  }
+
+  return paths;
+}
+
+static std::string resolveDaemonLogPath(LogTarget target) {
+  const auto candidates = candidateDaemonLogPaths(target);
+  for (const auto &path : candidates) {
+    if (apm::fs::isFile(path)) {
+      return path;
+    }
+  }
+
+  if (!candidates.empty()) {
+    return candidates.front();
+  }
+
+  return {};
 }
 
 static bool parseLogTargetName(const std::string &value, LogTarget &targetOut) {
@@ -718,7 +765,7 @@ static bool requiresAuthSession(const std::string &cmd) {
          cmd == "module-list" || cmd == "module-enable" ||
          cmd == "module-disable" || cmd == "module-remove" ||
          cmd == "apk-install" || cmd == "apk-uninstall" ||
-         cmd == "factory-reset";
+         cmd == "factory-reset" || cmd == "debuglogging";
 }
 
 static bool ensureManualSlotAvailable(const std::string &pkgName,
@@ -1124,6 +1171,7 @@ void printUsage() {
       << "  remove <pkg>                Remove an installed package\n"
       << "  upgrade [pkgs...]           Upgrade all or selected packages\n"
       << "  autoremove                  Remove unused auto-installed deps\n"
+      << "  debuglogging <true|false>   Enable or disable daemon debug logging\n"
       << "  factory-reset               Reset APM data and installed content\n"
       << "  forgot-password             Recover access with security "
          "questions\n"
@@ -1695,6 +1743,37 @@ int cmdAutoremove(const std::string &sessionToken) {
 
   std::cout << (resp.success ? "Autoremove succeeded: " : "Autoremove failed: ")
             << resp.message << "\n";
+  return resp.success ? 0 : 1;
+}
+
+int cmdDebugLogging(const std::string &sessionToken, const std::string &value) {
+  bool enabled = false;
+  if (!parseBooleanArg(value, enabled)) {
+    std::cerr << "apm: invalid value for 'debuglogging': " << value << "\n"
+              << "Use one of: true, false, on, off, enable, disable\n";
+    return 1;
+  }
+
+  apm::ipc::Request req;
+  req.type = apm::ipc::RequestType::DebugLogging;
+  req.id = "debuglogging-1";
+  req.debugLoggingEnabled = enabled;
+  attachSession(req, sessionToken);
+
+  apm::ipc::Response resp;
+  std::string err;
+
+  if (!apm::ipc::sendRequestAuto(req, resp, &err)) {
+    std::cerr << "Error: " << err << "\n";
+    return 1;
+  }
+
+  std::cout << (resp.success ? "" : "Failed: ")
+            << (resp.message.empty()
+                    ? (enabled ? "Debug logging enabled."
+                               : "Debug logging disabled.")
+                    : resp.message)
+            << "\n";
   return resp.success ? 0 : 1;
 }
 
@@ -2365,6 +2444,18 @@ int main(int argc, char **argv) {
 
   if (cmd == "autoremove")
     return cmdAutoremove(sessionToken);
+
+  if (cmd == "debuglogging") {
+    if (i >= argc) {
+      std::cerr << "apm: 'debuglogging' requires true or false\n";
+      return 1;
+    }
+    if (i + 1 != argc) {
+      std::cerr << "apm: 'debuglogging' accepts exactly one value\n";
+      return 1;
+    }
+    return cmdDebugLogging(sessionToken, argv[i]);
+  }
 
   if (cmd == "factory-reset")
     return cmdFactoryReset(sessionToken);

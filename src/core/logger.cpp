@@ -197,14 +197,13 @@ static Level effectiveMinLevelLocked() {
   return g_minLevel;
 }
 
-static void ensureLogDirExists() {
-  // Extract parent directory
-  auto pos = g_logFile.find_last_of('/');
+static void ensureLogDirExists(const std::string &path) {
+  auto pos = path.find_last_of('/');
   if (pos == std::string::npos) {
     return;
   }
 
-  std::string parent = g_logFile.substr(0, pos);
+  std::string parent = path.substr(0, pos);
   if (!parent.empty()) {
     apm::fs::createDirs(parent);
   }
@@ -215,20 +214,58 @@ static bool hasPrefix(const std::string &value, const std::string &prefix) {
          value.compare(0, prefix.size(), prefix) == 0;
 }
 
-static void ensureShellReadableLogFile() {
+static std::string baseName(const std::string &path) {
+  if (path.empty())
+    return {};
+
+  const auto slash = path.find_last_of('/');
+  if (slash == std::string::npos)
+    return path;
+  if (slash + 1 >= path.size())
+    return {};
+  return path.substr(slash + 1);
+}
+
+static std::string mirrorLogFilePath(const std::string &path) {
+  const std::string name = baseName(path);
+  if (name.empty())
+    return {};
+
+  const std::string mirrorDir = apm::config::getShellLogsDir();
+  if (mirrorDir.empty())
+    return {};
+
+  return apm::fs::joinPath(mirrorDir, name);
+}
+
+static void ensureShellReadableLogFile(const std::string &path) {
   if (apm::config::isEmulatorMode()) {
     return;
   }
 
-  if (!hasPrefix(g_logFile, "/data/local/tmp/apm/")) {
+  if (!hasPrefix(path, "/data/local/tmp/apm/")) {
     return;
   }
 
   struct group *shellGroup = ::getgrnam("shell");
   if (shellGroup) {
-    ::chown(g_logFile.c_str(), 0, shellGroup->gr_gid);
+    ::chown(path.c_str(), 0, shellGroup->gr_gid);
   }
-  ::chmod(g_logFile.c_str(), 0664);
+  ::chmod(path.c_str(), 0664);
+}
+
+static void updateDebugStateFromCurrentFileLocked(bool enabled) {
+  g_debugEnabled = enabled;
+  g_debugFileKnown = true;
+
+  struct stat st {};
+  if (!g_debugControlFile.empty() && ::stat(g_debugControlFile.c_str(), &st) == 0) {
+    g_debugMTime = st.st_mtime;
+    g_debugFileSize = st.st_size;
+  } else {
+    g_debugMTime = 0;
+    g_debugFileSize = enabled ? 5 : 6;
+  }
 }
 
 // ---------------------------------------------------------------------
@@ -257,6 +294,47 @@ void setDebugControlFile(const std::string &path) {
   g_debugMTime = 0;
   g_debugFileSize = -1;
   refreshDebugModeFromFileLocked();
+}
+
+bool setDebugEnabled(bool enabled, std::string *errorMsg) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  ensureDebugControlPathResolvedLocked();
+
+  if (g_debugControlFile.empty()) {
+    if (errorMsg)
+      *errorMsg = "Debug control file is not configured";
+    return false;
+  }
+
+  const auto slash = g_debugControlFile.find_last_of('/');
+  if (slash != std::string::npos) {
+    const std::string parent = g_debugControlFile.substr(0, slash);
+    if (!parent.empty() && !apm::fs::createDirs(parent)) {
+      if (errorMsg)
+        *errorMsg = "Failed to create debug control directory: " + parent;
+      return false;
+    }
+  }
+
+  const std::string content = enabled ? "true\n" : "false\n";
+  std::ofstream out(g_debugControlFile,
+                    std::ios::out | std::ios::trunc | std::ios::binary);
+  if (!out.is_open()) {
+    if (errorMsg)
+      *errorMsg = "Failed to open debug control file: " + g_debugControlFile;
+    return false;
+  }
+
+  out.write(content.data(), static_cast<std::streamsize>(content.size()));
+  out.flush();
+  if (!out.good()) {
+    if (errorMsg)
+      *errorMsg = "Failed to write debug control file: " + g_debugControlFile;
+    return false;
+  }
+
+  updateDebugStateFromCurrentFileLocked(enabled);
+  return true;
 }
 
 // Control which severity and above should be persisted.
@@ -298,15 +376,26 @@ void log(Level level, const std::string &message) {
 
   const std::string out = line.str();
 
-  // Write to log file
-  ensureLogDirExists();
+  ensureLogDirExists(g_logFile);
   {
     std::ofstream file(g_logFile,
                        std::ios::out | std::ios::app | std::ios::binary);
     if (file.is_open()) {
       file.write(out.data(), static_cast<std::streamsize>(out.size()));
       file.flush();
-      ensureShellReadableLogFile();
+      ensureShellReadableLogFile(g_logFile);
+    }
+  }
+
+  const std::string mirrorFile = mirrorLogFilePath(g_logFile);
+  if (!mirrorFile.empty() && mirrorFile != g_logFile) {
+    ensureLogDirExists(mirrorFile);
+    std::ofstream file(mirrorFile,
+                       std::ios::out | std::ios::app | std::ios::binary);
+    if (file.is_open()) {
+      file.write(out.data(), static_cast<std::streamsize>(out.size()));
+      file.flush();
+      ensureShellReadableLogFile(mirrorFile);
     }
   }
 

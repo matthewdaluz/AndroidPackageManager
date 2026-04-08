@@ -61,6 +61,7 @@ std::string getCacheDir();
 std::string getListsDir();
 std::string getPkgsDir();
 std::string getLogsDir();
+std::string getShellLogsDir();
 std::string getDebugFlagFile();
 std::string getManualPackagesDir();
 std::string getApmBinDir();
@@ -127,6 +128,7 @@ inline constexpr const char *CACHE_DIR = "/data/apm/cache";
 inline constexpr const char *LISTS_DIR = "/data/apm/lists";
 inline constexpr const char *PKGS_DIR = "/data/apm/pkgs";
 inline constexpr const char *LOGS_DIR = "/data/apm/logs";
+inline constexpr const char *SHELL_LOGS_DIR = "/data/local/tmp/apm/logs";
 inline constexpr const char *MANUAL_PACKAGES_DIR =
     "/data/local/tmp/apm/runtime/manual-packages";
 inline constexpr const char *APM_BIN_DIR = "/data/local/tmp/apm/bin";

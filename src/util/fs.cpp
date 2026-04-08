@@ -72,6 +72,9 @@ bool createDir(const std::string &path, unsigned int mode) {
 
   // Try to create the directory
   if (::mkdir(path.c_str(), static_cast<mode_t>(mode)) == 0) {
+    // mkdir is still filtered through the process umask, so normalize the final
+    // mode explicitly when we create a new directory.
+    ::chmod(path.c_str(), static_cast<mode_t>(mode));
     return true;
   }
 

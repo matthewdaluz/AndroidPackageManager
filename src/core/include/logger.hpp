@@ -40,6 +40,9 @@ void setLogFile(const std::string &path);
 // Configure the file that controls global debug logging (true/false).
 void setDebugControlFile(const std::string &path);
 
+// Persist and immediately apply the global debug logging state.
+bool setDebugEnabled(bool enabled, std::string *errorMsg = nullptr);
+
 // Set minimum level to actually write.
 // Messages below this level will be discarded.
 void setMinLogLevel(Level level);

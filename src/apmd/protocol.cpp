@@ -57,6 +57,28 @@ static inline void trim(std::string &s) {
           s.end());
 }
 
+static bool parseBoolFieldValue(std::string value, bool &out) {
+  trim(value);
+  std::transform(value.begin(), value.end(), value.begin(),
+                 [](unsigned char c) {
+                   return static_cast<char>(std::tolower(c));
+                 });
+
+  if (value == "1" || value == "true" || value == "yes" ||
+      value == "on") {
+    out = true;
+    return true;
+  }
+
+  if (value == "0" || value == "false" || value == "no" ||
+      value == "off") {
+    out = false;
+    return true;
+  }
+
+  return false;
+}
+
 // Escape line-delimiter-sensitive characters so values can be safely serialized
 // into single-line key:value frames.
 static std::string escapeFieldValue(const std::string &value) {
@@ -199,6 +221,8 @@ RequestType parseType(const std::string &sRaw) {
     return RequestType::ModuleRemove;
   if (s == "FACTORY_RESET")
     return RequestType::FactoryReset;
+  if (s == "DEBUG_LOGGING")
+    return RequestType::DebugLogging;
 
   return RequestType::Unknown;
 }
@@ -238,6 +262,8 @@ std::string typeToString(RequestType t) {
     return "MODULE_REMOVE";
   case RequestType::FactoryReset:
     return "FACTORY_RESET";
+  case RequestType::DebugLogging:
+    return "DEBUG_LOGGING";
   default:
     return "UNKNOWN";
   }
@@ -343,6 +369,21 @@ bool parseRequest(const std::string &raw, Request &out, std::string *errorMsg) {
     }
   }
 
+  if (out.type == RequestType::DebugLogging) {
+    const std::string enabled = get("enabled");
+    if (enabled.empty()) {
+      if (errorMsg)
+        *errorMsg = "Missing 'enabled' field";
+      return false;
+    }
+
+    if (!parseBoolFieldValue(enabled, out.debugLoggingEnabled)) {
+      if (errorMsg)
+        *errorMsg = "Invalid 'enabled' field: " + enabled;
+      return false;
+    }
+  }
+
   return true;
 }
 
@@ -384,12 +425,16 @@ std::string serializeRequest(const Request &req) {
   if (!req.moduleName.empty())
     out << "module:" << escapeFieldValue(req.moduleName) << "\n";
 
+  if (req.type == RequestType::DebugLogging) {
+    out << "enabled:" << (req.debugLoggingEnabled ? "true" : "false") << "\n";
+  }
+
   for (const auto &kv : req.rawFields) {
     if (kv.first == "type" || kv.first == "id" || kv.first == "package" ||
         kv.first == "session" || kv.first == "apkPath" ||
         kv.first == "installAsSystem" || kv.first == "module_path" ||
         kv.first == "module" || kv.first == "auth_action" ||
-        kv.first == "auth_secret")
+        kv.first == "auth_secret" || kv.first == "enabled")
       continue;
     out << kv.first << ":" << escapeFieldValue(kv.second) << "\n";
   }

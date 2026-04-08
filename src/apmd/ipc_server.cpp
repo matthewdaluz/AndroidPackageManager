@@ -949,6 +949,24 @@ void IpcServer::handleClient(int clientFd) {
     break;
   }
 
+  case RequestType::DebugLogging: {
+    apm::logger::info(std::string("IpcServer: DebugLogging request -> ") +
+                      (req.debugLoggingEnabled ? "enable" : "disable"));
+
+    std::string err;
+    if (!apm::logger::setDebugEnabled(req.debugLoggingEnabled, &err)) {
+      resp.success = false;
+      resp.message = err.empty() ? "Failed to update debug logging" : err;
+      break;
+    }
+
+    resp.success = true;
+    resp.message = std::string("Debug logging ") +
+                   (req.debugLoggingEnabled ? "enabled." : "disabled.");
+    resp.rawFields["enabled"] = req.debugLoggingEnabled ? "true" : "false";
+    break;
+  }
+
   default: {
     resp.success = false;
     resp.message = "Unsupported request type";

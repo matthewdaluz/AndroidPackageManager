@@ -52,6 +52,7 @@
 #include <cerrno>
 #include <cstring>
 #include <fstream>
+#include <grp.h>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -114,6 +115,78 @@ static inline void rtrimLocal(std::string &s) {
           s.end());
 }
 static inline void trimLocal(std::string &s) { ltrimLocal(s); rtrimLocal(s); }
+
+static bool lookupShellGroup(gid_t &gidOut) {
+  errno = 0;
+  struct group *shellGroup = ::getgrnam("shell");
+  if (!shellGroup) {
+    return false;
+  }
+  gidOut = shellGroup->gr_gid;
+  return true;
+}
+
+static void normalizeShellReadableTree(const std::string &path) {
+  struct stat st{};
+  if (::lstat(path.c_str(), &st) != 0) {
+    return;
+  }
+
+  gid_t shellGid = 0;
+  const bool haveShellGid = lookupShellGroup(shellGid);
+
+  if (S_ISDIR(st.st_mode)) {
+    if (haveShellGid) {
+      ::chown(path.c_str(), 0, shellGid);
+    }
+    mode_t mode = st.st_mode & 07777;
+    mode |= S_IRGRP | S_IXGRP;
+    if ((mode & S_IWUSR) != 0) {
+      mode |= S_IWGRP;
+    }
+    ::chmod(path.c_str(), mode);
+
+    for (const auto &entry : apm::fs::listDir(path, true)) {
+      if (entry == "." || entry == "..") {
+        continue;
+      }
+      normalizeShellReadableTree(apm::fs::joinPath(path, entry));
+    }
+    return;
+  }
+
+  if (S_ISREG(st.st_mode)) {
+    if (haveShellGid) {
+      ::chown(path.c_str(), 0, shellGid);
+    }
+    mode_t mode = st.st_mode & 07777;
+    if ((mode & S_IRUSR) != 0) {
+      mode |= S_IRGRP;
+    }
+    if ((mode & S_IWUSR) != 0) {
+      mode |= S_IWGRP;
+    }
+    if ((mode & S_IXUSR) != 0) {
+      mode |= S_IXGRP;
+    }
+    ::chmod(path.c_str(), mode);
+  }
+}
+
+static bool ensureDirectoryMode(const std::string &path, mode_t mode) {
+  const mode_t normalizedMode = (mode & 07777) != 0 ? (mode & 07777) : 0755;
+  if (!apm::fs::createDirs(path, static_cast<unsigned int>(normalizedMode))) {
+    return false;
+  }
+
+  if (::chmod(path.c_str(), normalizedMode) != 0) {
+    apm::logger::warn("install_manager: chmod failed for directory " + path +
+                      ": " + std::strerror(errno));
+    return false;
+  }
+
+  return true;
+}
 
 // Validate a downloaded .deb against checksums provided in Packages.
 // Prefers SHA256; if that mismatches and an MD5sum is present, fallback to MD5.
@@ -546,7 +619,7 @@ static void removeDirRecursive(const std::string &path) {
 static bool ensureTermuxRuntimeDirs() {
   bool ok = true;
   auto mk = [&](const std::string &path) {
-    ok = apm::fs::createDirs(path) && ok;
+    ok = ensureDirectoryMode(path, 0755) && ok;
   };
 
   mk(apm::config::getTermuxRoot());
@@ -671,7 +744,7 @@ static bool copySymlink(const std::string &src, const std::string &dst) {
 static bool copyTermuxTree(const std::string &srcDir, const std::string &dstDir,
                            const std::string &relativeBase,
                            std::vector<std::string> &installedPaths) {
-  if (!apm::fs::createDirs(dstDir)) {
+  if (!ensureDirectoryMode(dstDir, 0755)) {
     apm::logger::warn("install_manager: failed to create Termux dest " +
                       dstDir);
     return false;
@@ -701,6 +774,10 @@ static bool copyTermuxTree(const std::string &srcDir, const std::string &dstDir,
 
     if (S_ISDIR(st.st_mode)) {
       if (!copyTermuxTree(srcPath, dstPath, relPath, installedPaths)) {
+        ::closedir(dir);
+        return false;
+      }
+      if (!ensureDirectoryMode(dstPath, st.st_mode & 07777)) {
         ::closedir(dir);
         return false;
       }
@@ -831,6 +908,10 @@ static bool rewriteTermuxPathsDuringExtraction(
       *errorMsg = "Failed to rewrite Termux paths during extraction";
     return false;
   }
+
+  // Match apmd startup behavior immediately so newly installed Termux
+  // commands are shell-accessible without waiting for a reboot.
+  normalizeShellReadableTree(apm::config::getTermuxRoot());
 
   if (!writeTermuxManifest(installRoot, installedPaths)) {
     if (errorMsg)

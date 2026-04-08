@@ -153,6 +153,12 @@ std::string getLogsDir() {
   return "/data/apm/logs";
 }
 
+std::string getShellLogsDir() {
+  if (g_emulatorMode)
+    return buildEmulatorPath("logs-shell");
+  return "/data/local/tmp/apm/logs";
+}
+
 std::string getDebugFlagFile() {
   if (g_emulatorMode)
     return buildEmulatorPath("debug.txt");
