@@ -37,7 +37,8 @@
 - `apm list`
 - `apm info <pkg>`
 - `apm search <pattern>`
-- `apm log [--apm|--ams] [--export]`
+- `apm log [--apm|--ams|--module <name>|<module>] [--export|--clear]`
+- `apm log --clear-all`
 - `apm version`
 - `apm key-add <file.asc|file.gpg>`
 - `apm sig-cache show`
@@ -180,13 +181,32 @@ Follow AMS:
 apm log --ams
 ```
 
-Export the selected daemon log:
+Export the selected log:
 
 ```bash
 apm log --ams --export
 ```
 
 Exports are written to `/storage/emulated/0`.
+Log clearing is daemon-backed and requires an authenticated session.
+
+Clear the selected daemon log:
+
+```bash
+apm log --ams --clear
+```
+
+Clear a module log:
+
+```bash
+apm log example-module --clear
+```
+
+Clear all daemon and module logs:
+
+```bash
+apm log --clear-all
+```
 
 ### Manage trusted keys and signature cache
 

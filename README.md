@@ -124,7 +124,8 @@ Local/offline commands:
 - `apm info <pkg>`
 - `apm search <pattern>`
 - `apm package-install <file>`
-- `apm log [--apm|--ams] [--export]`
+- `apm log [--apm|--ams|--module <name>|<module>] [--export|--clear]`
+- `apm log --clear-all`
 - `apm version`
 - `apm key-add <file.asc|file.gpg>`
 - `apm sig-cache show`
@@ -137,6 +138,8 @@ Notes:
 - Tarball/manual packages must contain `package-info.json`.
 - `remove` first checks whether the target is a manual package and removes it locally before falling back to daemon-backed package removal.
 - `log --export` writes a timestamped copy to `/storage/emulated/0`.
+- `log --export` and live log following are local read operations.
+- `log --clear` and `log --clear-all` are daemon-backed operations and require an authenticated session because they delete privileged log files.
 - `apk-install --install-as-system` stages the APK into the AMS-backed `apm-system-apps` overlay module and requires a reboot for Android to see it as a system app.
 
 ## Security Model

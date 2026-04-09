@@ -52,7 +52,8 @@ enum class RequestType {
   ModuleDisable,
   ModuleRemove,
   FactoryReset,
-  DebugLogging
+  DebugLogging,
+  LogClear
 };
 
 struct Request {

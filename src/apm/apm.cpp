@@ -75,9 +75,19 @@ static constexpr const char *kLogExportDir = "/storage/emulated/0";
 
 enum class LogTarget { Apm, Ams };
 
+enum class LogSelectionKind { Daemon, Module };
+
+struct LogSelection {
+  LogSelectionKind kind = LogSelectionKind::Daemon;
+  LogTarget daemon = LogTarget::Apm;
+  std::string moduleName;
+};
+
 struct LogCommandOptions {
-  LogTarget target = LogTarget::Apm;
+  LogSelection selection;
   bool exportFile = false;
+  bool clearFile = false;
+  bool clearAll = false;
   bool showHelp = false;
 };
   
@@ -341,19 +351,37 @@ static const char *logTargetLabel(LogTarget target) {
   return target == LogTarget::Apm ? "APM daemon" : "AMS daemon";
 }
 
-static std::string logFileName(LogTarget target) {
+static std::string logSelectionLabel(const LogSelection &selection) {
+  if (selection.kind == LogSelectionKind::Module) {
+    return "module '" + selection.moduleName + "'";
+  }
+  return logTargetLabel(selection.daemon);
+}
+
+static std::string daemonLogFileName(LogTarget target) {
   return target == LogTarget::Apm ? "apmd.log" : "amsd.log";
+}
+
+static std::string moduleLogFileName(const std::string &moduleName) {
+  return moduleName + ".log";
+}
+
+static void appendUniqueLogPath(const std::string &path,
+                                std::vector<std::string> &paths) {
+  if (path.empty())
+    return;
+  if (std::find(paths.begin(), paths.end(), path) == paths.end()) {
+    paths.push_back(path);
+  }
 }
 
 static std::vector<std::string> candidateDaemonLogPaths(LogTarget target) {
   std::vector<std::string> paths;
-  const std::string fileName = logFileName(target);
+  const std::string fileName = daemonLogFileName(target);
 
   const std::string shellPath =
       apm::fs::joinPath(apm::config::getShellLogsDir(), fileName);
-  if (!shellPath.empty()) {
-    paths.push_back(shellPath);
-  }
+  appendUniqueLogPath(shellPath, paths);
 
   std::string primaryPath;
   if (target == LogTarget::Apm) {
@@ -361,17 +389,42 @@ static std::vector<std::string> candidateDaemonLogPaths(LogTarget target) {
   } else {
     primaryPath = apm::fs::joinPath(apm::config::getModuleLogsDir(), fileName);
   }
-
-  if (!primaryPath.empty() &&
-      std::find(paths.begin(), paths.end(), primaryPath) == paths.end()) {
-    paths.push_back(primaryPath);
-  }
+  appendUniqueLogPath(primaryPath, paths);
 
   return paths;
 }
 
-static std::string resolveDaemonLogPath(LogTarget target) {
-  const auto candidates = candidateDaemonLogPaths(target);
+static bool isValidModuleLogName(const std::string &moduleName,
+                                 std::string *errorMsg) {
+  if (moduleName.empty()) {
+    if (errorMsg)
+      *errorMsg = "module name cannot be empty";
+    return false;
+  }
+  if (moduleName == "." || moduleName == ".." ||
+      moduleName.find('/') != std::string::npos ||
+      moduleName.find('\\') != std::string::npos) {
+    if (errorMsg)
+      *errorMsg = "invalid module name for 'apm log': " + moduleName;
+    return false;
+  }
+  return true;
+}
+
+static std::vector<std::string> candidateLogPaths(
+    const LogSelection &selection) {
+  if (selection.kind == LogSelectionKind::Module) {
+    std::vector<std::string> paths;
+    appendUniqueLogPath(apm::fs::joinPath(apm::config::getModuleLogsDir(),
+                                          moduleLogFileName(selection.moduleName)),
+                        paths);
+    return paths;
+  }
+  return candidateDaemonLogPaths(selection.daemon);
+}
+
+static std::string resolveLogPath(const LogSelection &selection) {
+  const auto candidates = candidateLogPaths(selection);
   for (const auto &path : candidates) {
     if (apm::fs::isFile(path)) {
       return path;
@@ -397,28 +450,61 @@ static bool parseLogTargetName(const std::string &value, LogTarget &targetOut) {
   return false;
 }
 
-static bool selectLogTarget(LogTarget requested, bool &targetSet,
-                            LogTarget &targetOut, std::string *errorMsg) {
-  if (targetSet && targetOut != requested) {
+static bool selectDaemonLogTarget(LogTarget requested, bool &targetSet,
+                                  LogSelection &selection,
+                                  std::string *errorMsg) {
+  if (targetSet &&
+      (selection.kind != LogSelectionKind::Daemon ||
+       selection.daemon != requested)) {
     if (errorMsg) {
       *errorMsg =
-          "choose only one daemon target (--apm or --ams) for 'apm log'";
+          "choose only one log target (--apm, --ams, or a module name) for "
+          "'apm log'";
     }
     return false;
   }
   targetSet = true;
-  targetOut = requested;
+  selection.kind = LogSelectionKind::Daemon;
+  selection.daemon = requested;
+  selection.moduleName.clear();
+  return true;
+}
+
+static bool selectModuleLogTarget(const std::string &requested,
+                                  bool &targetSet, LogSelection &selection,
+                                  std::string *errorMsg) {
+  if (!isValidModuleLogName(requested, errorMsg))
+    return false;
+
+  if (targetSet &&
+      (selection.kind != LogSelectionKind::Module ||
+       selection.moduleName != requested)) {
+    if (errorMsg) {
+      *errorMsg =
+          "choose only one log target (--apm, --ams, or a module name) for "
+          "'apm log'";
+    }
+    return false;
+  }
+
+  targetSet = true;
+  selection.kind = LogSelectionKind::Module;
+  selection.moduleName = requested;
   return true;
 }
 
 static void printLogUsage() {
   std::cout << "Usage:\n"
-            << "  apm log [--apm|--ams] [--export]\n"
-            << "  apm log [apm|ams] [--export]\n"
+            << "  apm log [--apm|--ams|--module <name>|<module>] "
+               "[--export|--clear]\n"
+            << "  apm log --clear-all\n"
             << "\n"
             << "Defaults to the APM daemon log.\n"
-            << "Use --export to copy the selected daemon log to "
-            << kLogExportDir << ".\n";
+            << "Use --export to copy the selected log to "
+            << kLogExportDir << ".\n"
+            << "Use --clear to delete the selected log, or --clear-all to "
+               "delete all daemon and module logs.\n"
+            << "Clearing logs requires an authenticated daemon session.\n";
 }
 
 static bool parseLogCommandArgs(int argc, char **argv, LogCommandOptions &out,
@@ -435,13 +521,40 @@ static bool parseLogCommandArgs(int argc, char **argv, LogCommandOptions &out,
       out.exportFile = true;
       continue;
     }
+    if (arg == "--clear") {
+      out.clearFile = true;
+      continue;
+    }
+    if (arg == "--clear-all") {
+      out.clearAll = true;
+      continue;
+    }
     if (arg == "--apm") {
-      if (!selectLogTarget(LogTarget::Apm, targetSet, out.target, errorMsg))
+      if (!selectDaemonLogTarget(LogTarget::Apm, targetSet, out.selection,
+                                 errorMsg))
         return false;
       continue;
     }
     if (arg == "--ams") {
-      if (!selectLogTarget(LogTarget::Ams, targetSet, out.target, errorMsg))
+      if (!selectDaemonLogTarget(LogTarget::Ams, targetSet, out.selection,
+                                 errorMsg))
+        return false;
+      continue;
+    }
+    if (arg == "--module") {
+      if (idx + 1 >= argc) {
+        if (errorMsg)
+          *errorMsg = "missing value after '--module'";
+        return false;
+      }
+      if (!selectModuleLogTarget(argv[++idx], targetSet, out.selection,
+                                 errorMsg))
+        return false;
+      continue;
+    }
+    if (arg.rfind("--module=", 0) == 0) {
+      if (!selectModuleLogTarget(arg.substr(std::strlen("--module=")), targetSet,
+                                 out.selection, errorMsg))
         return false;
       continue;
     }
@@ -458,7 +571,7 @@ static bool parseLogCommandArgs(int argc, char **argv, LogCommandOptions &out,
           *errorMsg = "unknown daemon for 'apm log': " + value;
         return false;
       }
-      if (!selectLogTarget(parsed, targetSet, out.target, errorMsg))
+      if (!selectDaemonLogTarget(parsed, targetSet, out.selection, errorMsg))
         return false;
       continue;
     }
@@ -470,14 +583,20 @@ static bool parseLogCommandArgs(int argc, char **argv, LogCommandOptions &out,
           *errorMsg = "unknown daemon for 'apm log': " + value;
         return false;
       }
-      if (!selectLogTarget(parsed, targetSet, out.target, errorMsg))
+      if (!selectDaemonLogTarget(parsed, targetSet, out.selection, errorMsg))
         return false;
       continue;
     }
 
     LogTarget parsed = LogTarget::Apm;
     if (parseLogTargetName(arg, parsed)) {
-      if (!selectLogTarget(parsed, targetSet, out.target, errorMsg))
+      if (!selectDaemonLogTarget(parsed, targetSet, out.selection, errorMsg))
+        return false;
+      continue;
+    }
+
+    if (!arg.empty() && arg[0] != '-') {
+      if (!selectModuleLogTarget(arg, targetSet, out.selection, errorMsg))
         return false;
       continue;
     }
@@ -487,10 +606,29 @@ static bool parseLogCommandArgs(int argc, char **argv, LogCommandOptions &out,
     return false;
   }
 
+  const int actionCount = (out.exportFile ? 1 : 0) + (out.clearFile ? 1 : 0) +
+                          (out.clearAll ? 1 : 0);
+  if (actionCount > 1) {
+    if (errorMsg) {
+      *errorMsg =
+          "choose only one action (--export, --clear, or --clear-all) for "
+          "'apm log'";
+    }
+    return false;
+  }
+
+  if (out.clearAll && targetSet) {
+    if (errorMsg) {
+      *errorMsg = "'--clear-all' cannot be combined with --apm, --ams, or a "
+                  "module name";
+    }
+    return false;
+  }
+
   return true;
 }
 
-static std::string buildLogExportPath(LogTarget target) {
+static std::string buildLogExportPath(const LogSelection &selection) {
   std::time_t now = std::time(nullptr);
   std::tm tm {};
 #if defined(_POSIX_VERSION)
@@ -502,9 +640,19 @@ static std::string buildLogExportPath(LogTarget target) {
 #endif
 
   std::ostringstream name;
-  name << (target == LogTarget::Apm ? "apmd" : "amsd") << "-"
-       << std::put_time(&tm, "%Y%m%d-%H%M%S") << ".log";
+  if (selection.kind == LogSelectionKind::Module) {
+    name << selection.moduleName;
+  } else {
+    name << (selection.daemon == LogTarget::Apm ? "apmd" : "amsd");
+  }
+  name << "-" << std::put_time(&tm, "%Y%m%d-%H%M%S") << ".log";
   return apm::fs::joinPath(kLogExportDir, name.str());
+}
+
+static std::string logSelectionWireTarget(const LogSelection &selection) {
+  if (selection.kind == LogSelectionKind::Module)
+    return "module";
+  return selection.daemon == LogTarget::Apm ? "apm" : "ams";
 }
 
 static bool copyFileToPath(const std::string &src, const std::string &dst,
@@ -1192,7 +1340,7 @@ void printUsage() {
       << "  list                        Show installed packages\n"
       << "  info <pkg>                  Show detailed package information\n"
       << "  search <pattern>            Search available repo packages\n"
-      << "  log [--ams] [--export]      View or export daemon logs\n"
+      << "  log [...]                   View, export, or clear logs\n"
       << "  version                     Show APM version, build, and license info\n"
       << "  key-add <file.asc|.gpg>     Import a trusted public key\n"
       << "  sig-cache show              Show cached .deb signature verifications\n"
@@ -2129,6 +2277,39 @@ int cmdSigCacheClear() {
   return 0;
 }
 
+static int cmdLogClear(const LogCommandOptions &options) {
+  std::string sessionToken;
+  if (!ensureAuthenticatedSession(sessionToken))
+    return 1;
+
+  apm::ipc::Request req;
+  req.type = apm::ipc::RequestType::LogClear;
+  req.id = options.clearAll ? "log-clear-all-1" : "log-clear-1";
+  attachSession(req, sessionToken);
+
+  if (options.clearAll) {
+    req.rawFields["clear_all"] = "true";
+  } else {
+    req.rawFields["log_target"] = logSelectionWireTarget(options.selection);
+    if (options.selection.kind == LogSelectionKind::Module)
+      req.moduleName = options.selection.moduleName;
+  }
+
+  apm::ipc::Response resp;
+  std::string err;
+  if (!apm::ipc::sendRequestAuto(req, resp, &err)) {
+    std::cerr << "Error: " << err << "\n";
+    return 1;
+  }
+
+  std::cout << (resp.message.empty()
+                    ? (resp.success ? "Log clear completed." :
+                                      "Log clear failed.")
+                    : resp.message)
+            << "\n";
+  return resp.success ? 0 : 1;
+}
+
 int cmdLog(int argc, char **argv) {
   LogCommandOptions options;
   std::string parseErr;
@@ -2143,27 +2324,34 @@ int cmdLog(int argc, char **argv) {
     return 0;
   }
 
-  const std::string logPath = resolveDaemonLogPath(options.target);
+  if (options.clearFile) {
+    return cmdLogClear(options);
+  }
+  if (options.clearAll)
+    return cmdLogClear(options);
+
+  const std::string logPath = resolveLogPath(options.selection);
+
   if (options.exportFile) {
     if (!apm::fs::isFile(logPath)) {
       std::cerr << "apm log: log file not found: " << logPath << "\n";
       return 1;
     }
 
-    const std::string exportPath = buildLogExportPath(options.target);
+    const std::string exportPath = buildLogExportPath(options.selection);
     std::string copyErr;
     if (!copyFileToPath(logPath, exportPath, &copyErr)) {
       std::cerr << "apm log: " << copyErr << "\n";
       return 1;
     }
 
-    std::cout << "Exported " << logTargetLabel(options.target) << " log to "
-              << exportPath << "\n";
+    std::cout << "Exported " << logSelectionLabel(options.selection)
+              << " log to " << exportPath << "\n";
     return 0;
   }
 
-  std::cout << "Following " << logTargetLabel(options.target) << " log at "
-            << logPath << "\n";
+  std::cout << "Following " << logSelectionLabel(options.selection)
+            << " log at " << logPath << "\n";
   std::cout << "Press Ctrl-C to stop.\n";
 
   bool fileSeen = false;
@@ -2175,7 +2363,8 @@ int cmdLog(int argc, char **argv) {
     struct stat st {};
     if (::stat(logPath.c_str(), &st) != 0) {
       if (!waitingShown) {
-        std::cerr << "apm log: waiting for " << logTargetLabel(options.target)
+        std::cerr << "apm log: waiting for "
+                  << logSelectionLabel(options.selection)
                   << " log to appear...\n";
         waitingShown = true;
       }

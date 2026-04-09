@@ -29,6 +29,7 @@
 #include "include/apk_installer.hpp"
 #include "export_path.hpp"
 #include "factory_reset.hpp"
+#include "fs.hpp"
 #include "install_manager.hpp"
 #include "logger.hpp"
 #include "protocol.hpp"
@@ -57,6 +58,8 @@ namespace {
 
 constexpr std::size_t kMaxRequestBytes = 64 * 1024;
 constexpr const char *kLogFileTag = "ipc_server.cpp";
+
+enum class LogClearTarget { Apm, Ams, Module, All };
 
 bool isAbstractSocketName(const std::string &socketPath) {
   return !socketPath.empty() && socketPath.front() == '@';
@@ -96,6 +99,127 @@ void ensurePathAccess(const std::string &path, mode_t mode) {
     apm::logger::warn(std::string(kLogFileTag) + ": chmod(" + path +
                       ") failed: " + std::strerror(errno));
   }
+}
+
+bool parseLogClearTarget(const Request &req, LogClearTarget &targetOut,
+                         std::string &moduleNameOut, std::string *errorMsg) {
+  moduleNameOut.clear();
+
+  auto clearAllIt = req.rawFields.find("clear_all");
+  if (clearAllIt != req.rawFields.end()) {
+    const std::string &value = clearAllIt->second;
+    if (value == "1" || value == "true" || value == "yes" || value == "on") {
+      targetOut = LogClearTarget::All;
+      return true;
+    }
+  }
+
+  auto targetIt = req.rawFields.find("log_target");
+  const std::string target =
+      targetIt == req.rawFields.end() ? std::string() : targetIt->second;
+  if (target == "apm" || target == "apmd") {
+    targetOut = LogClearTarget::Apm;
+    return true;
+  }
+  if (target == "ams" || target == "amsd") {
+    targetOut = LogClearTarget::Ams;
+    return true;
+  }
+  if (target == "module") {
+    const std::string moduleName = req.moduleName;
+    if (moduleName.empty()) {
+      if (errorMsg)
+        *errorMsg = "module name missing";
+      return false;
+    }
+    if (moduleName == "." || moduleName == ".." ||
+        moduleName.find('/') != std::string::npos ||
+        moduleName.find('\\') != std::string::npos) {
+      if (errorMsg)
+        *errorMsg = "invalid module name";
+      return false;
+    }
+    moduleNameOut = moduleName;
+    targetOut = LogClearTarget::Module;
+    return true;
+  }
+
+  if (errorMsg)
+    *errorMsg = "invalid log clear target";
+  return false;
+}
+
+void appendUniquePath(const std::string &path, std::vector<std::string> &paths) {
+  if (path.empty())
+    return;
+  if (std::find(paths.begin(), paths.end(), path) == paths.end())
+    paths.push_back(path);
+}
+
+bool endsWith(const std::string &value, const std::string &suffix) {
+  return value.size() >= suffix.size() &&
+         value.compare(value.size() - suffix.size(), suffix.size(), suffix) ==
+             0;
+}
+
+void collectLogFilesInDir(const std::string &dir, std::vector<std::string> &paths) {
+  if (dir.empty() || !apm::fs::isDirectory(dir))
+    return;
+
+  for (const auto &entry : apm::fs::listDir(dir, false)) {
+    if (!endsWith(entry, ".log"))
+      continue;
+    const std::string path = apm::fs::joinPath(dir, entry);
+    if (!apm::fs::isFile(path))
+      continue;
+    appendUniquePath(path, paths);
+  }
+}
+
+std::vector<std::string> logPathsForTarget(LogClearTarget target,
+                                           const std::string &moduleName) {
+  std::vector<std::string> paths;
+  switch (target) {
+  case LogClearTarget::Apm:
+    appendUniquePath(
+        apm::fs::joinPath(apm::config::getLogsDir(), "apmd.log"), paths);
+    appendUniquePath(
+        apm::fs::joinPath(apm::config::getShellLogsDir(), "apmd.log"), paths);
+    break;
+  case LogClearTarget::Ams:
+    appendUniquePath(
+        apm::fs::joinPath(apm::config::getModuleLogsDir(), "amsd.log"), paths);
+    appendUniquePath(
+        apm::fs::joinPath(apm::config::getShellLogsDir(), "amsd.log"), paths);
+    break;
+  case LogClearTarget::Module:
+    appendUniquePath(apm::fs::joinPath(apm::config::getModuleLogsDir(),
+                                       moduleName + ".log"),
+                     paths);
+    break;
+  case LogClearTarget::All:
+    collectLogFilesInDir(apm::config::getLogsDir(), paths);
+    collectLogFilesInDir(apm::config::getShellLogsDir(), paths);
+    collectLogFilesInDir(apm::config::getModuleLogsDir(), paths);
+    break;
+  }
+  return paths;
+}
+
+bool clearLogFiles(const std::vector<std::string> &paths, std::size_t &removedCount,
+                   std::string *errorMsg) {
+  removedCount = 0;
+  for (const auto &path : paths) {
+    if (path.empty() || !apm::fs::pathExists(path))
+      continue;
+    if (!apm::fs::removeFile(path)) {
+      if (errorMsg)
+        *errorMsg = "failed to remove log file: " + path;
+      return false;
+    }
+    ++removedCount;
+  }
+  return true;
 }
 
 // Convert a repo update stage enum into a compact logging-friendly string.
@@ -428,12 +552,13 @@ static bool writeAll(int fd, const char *data, std::size_t len,
   return true;
 }
 
-void sendResponseMessage(int clientFd, Response resp) {
+void sendResponseMessage(int clientFd, Response resp,
+                         bool suppressLogging = false) {
   if (resp.status == ResponseStatus::Unknown) {
     resp.status = resp.success ? ResponseStatus::Ok : ResponseStatus::Error;
   }
   const bool debugEnabled = apm::logger::isDebugEnabled();
-  if (debugEnabled) {
+  if (debugEnabled && !suppressLogging) {
     apm::logger::debug(std::string(kLogFileTag) +
                        ": sendResponseMessage status=" +
                        (resp.success ? "ok" : "error") + " id='" + resp.id +
@@ -1258,6 +1383,51 @@ void IpcServer::handleClient(int clientFd) {
     break;
   }
 
+  case RequestType::LogClear: {
+    LogClearTarget target = LogClearTarget::Apm;
+    std::string moduleName;
+    std::string parseErr;
+    if (!parseLogClearTarget(req, target, moduleName, &parseErr)) {
+      resp.success = false;
+      resp.message = parseErr.empty() ? "Invalid log clear request" : parseErr;
+      break;
+    }
+
+    std::size_t removedCount = 0;
+    std::string clearErr;
+    if (!clearLogFiles(logPathsForTarget(target, moduleName), removedCount,
+                       &clearErr)) {
+      resp.success = false;
+      resp.message = clearErr.empty() ? "Failed to clear logs" : clearErr;
+      break;
+    }
+
+    resp.success = true;
+    resp.rawFields["removed_count"] = std::to_string(removedCount);
+    switch (target) {
+    case LogClearTarget::All:
+      resp.message = removedCount == 0 ? "No logs found to clear."
+                                       : "Cleared " +
+                                             std::to_string(removedCount) +
+                                             " log file(s).";
+      break;
+    case LogClearTarget::Apm:
+      resp.message = removedCount == 0 ? "No APM daemon log found to clear."
+                                       : "Cleared APM daemon log.";
+      break;
+    case LogClearTarget::Ams:
+      resp.message = removedCount == 0 ? "No AMS daemon log found to clear."
+                                       : "Cleared AMS daemon log.";
+      break;
+    case LogClearTarget::Module:
+      resp.message = removedCount == 0
+                         ? "No module '" + moduleName + "' log found to clear."
+                         : "Cleared module '" + moduleName + "' log.";
+      break;
+    }
+    break;
+  }
+
   default: {
     resp.success = false;
     resp.message = "Unsupported request type";
@@ -1265,14 +1435,16 @@ void IpcServer::handleClient(int clientFd) {
   }
   }
 
-  if (apm::logger::isDebugEnabled()) {
+  const bool suppressPostResponseLogging = req.type == RequestType::LogClear;
+  if (apm::logger::isDebugEnabled() && !suppressPostResponseLogging) {
     apm::logger::debug(std::string(kLogFileTag) +
                        ": completed request id='" + req.id +
                        "' success=" + (resp.success ? "true" : "false") +
                        " message='" + resp.message + "'");
   }
-  sendResponseMessage(clientFd, resp);
-  apm::logger::debug("IpcServer::handleClient: response sent");
+  sendResponseMessage(clientFd, resp, suppressPostResponseLogging);
+  if (!suppressPostResponseLogging)
+    apm::logger::debug("IpcServer::handleClient: response sent");
 }
 
 } // namespace apm::ipc

@@ -229,6 +229,8 @@ RequestType parseType(const std::string &sRaw) {
     return RequestType::FactoryReset;
   if (s == "DEBUG_LOGGING")
     return RequestType::DebugLogging;
+  if (s == "LOG_CLEAR")
+    return RequestType::LogClear;
 
   return RequestType::Unknown;
 }
@@ -276,6 +278,8 @@ std::string typeToString(RequestType t) {
     return "FACTORY_RESET";
   case RequestType::DebugLogging:
     return "DEBUG_LOGGING";
+  case RequestType::LogClear:
+    return "LOG_CLEAR";
   default:
     return "UNKNOWN";
   }
@@ -394,6 +398,10 @@ bool parseRequest(const std::string &raw, Request &out, std::string *errorMsg) {
         *errorMsg = "Invalid 'enabled' field: " + enabled;
       return false;
     }
+  }
+
+  if (out.type == RequestType::LogClear) {
+    out.moduleName = get("module");
   }
 
   return true;
