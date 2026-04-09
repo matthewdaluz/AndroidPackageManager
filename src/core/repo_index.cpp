@@ -40,8 +40,10 @@
 #include <chrono>
 #include <cstring>
 #include <fstream>
+#include <grp.h>
 #include <sstream>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <vector>
 #include <zlib.h>
 
@@ -50,6 +52,80 @@ namespace apm::repo {
 namespace {
 
 using Clock = std::chrono::steady_clock;
+
+bool lookupShellGroup(gid_t &gidOut) {
+  struct group *shellGroup = ::getgrnam("shell");
+  if (!shellGroup)
+    return false;
+  gidOut = shellGroup->gr_gid;
+  return true;
+}
+
+void normalizeShellReadableTree(const std::string &path) {
+  struct stat st{};
+  if (::lstat(path.c_str(), &st) != 0) {
+    return;
+  }
+
+  gid_t shellGid = 0;
+  const bool haveShellGid =
+      !apm::config::isEmulatorMode() && lookupShellGroup(shellGid);
+
+  if (S_ISDIR(st.st_mode)) {
+    if (haveShellGid) {
+      ::chown(path.c_str(), 0, shellGid);
+    }
+
+    mode_t mode = st.st_mode & 07777;
+    mode |= S_IRGRP | S_IXGRP;
+    if ((mode & S_IWUSR) != 0) {
+      mode |= S_IWGRP;
+    }
+    ::chmod(path.c_str(), mode);
+
+    for (const auto &entry : apm::fs::listDir(path, true)) {
+      if (entry == "." || entry == "..") {
+        continue;
+      }
+      normalizeShellReadableTree(apm::fs::joinPath(path, entry));
+    }
+    return;
+  }
+
+  if (S_ISREG(st.st_mode)) {
+    if (haveShellGid) {
+      ::chown(path.c_str(), 0, shellGid);
+    }
+
+    mode_t mode = st.st_mode & 07777;
+    if ((mode & S_IRUSR) != 0) {
+      mode |= S_IRGRP;
+    }
+    if ((mode & S_IWUSR) != 0) {
+      mode |= S_IWGRP;
+    }
+    if ((mode & S_IXUSR) != 0) {
+      mode |= S_IXGRP;
+    }
+    ::chmod(path.c_str(), mode);
+  }
+}
+
+void normalizeShellReadableRepoMetadata(const std::string &sourcesPath,
+                                        const std::string &listsDir) {
+  if (apm::fs::pathExists(listsDir)) {
+    normalizeShellReadableTree(listsDir);
+  }
+
+  if (apm::fs::isDirectory(sourcesPath)) {
+    normalizeShellReadableTree(sourcesPath);
+  }
+
+  const std::string trustedKeysDir = apm::config::getTrustedKeysDir();
+  if (apm::fs::pathExists(trustedKeysDir)) {
+    normalizeShellReadableTree(trustedKeysDir);
+  }
+}
 
 } // namespace
 
@@ -1581,6 +1657,7 @@ bool updateFromSourcesList(const std::string &sourcesPath,
   }
 
   if (ok == 0) {
+    normalizeShellReadableRepoMetadata(sourcesPath, listsDir);
     if (errorMsg) {
       *errorMsg = "No valid repo indices found in " + listsDir +
                   " – run 'apm update' and try again";
@@ -1591,6 +1668,7 @@ bool updateFromSourcesList(const std::string &sourcesPath,
 
   apm::logger::info("updateFromSourcesList: built " + std::to_string(ok) +
                     " repo index(es)");
+  normalizeShellReadableRepoMetadata(sourcesPath, listsDir);
   if (summaryMsg) {
     *summaryMsg = "Built " + std::to_string(ok) + " repo index(es)";
   }

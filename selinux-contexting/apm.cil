@@ -105,6 +105,8 @@
 
 ; Flashable compatibility mode may keep apmd running in the su domain.
 (allow su apm_data_file (dir (search open read write getattr add_name remove_name)))
+(allow su apm_data_file (file (create read write append open getattr setattr unlink rename lock ioctl)))
+(allow su apm_data_file (lnk_file (create read write getattr setattr unlink rename)))
 (allow su system_data_file (dir (search open read write getattr add_name remove_name)))
 (allow su apmd_socket (sock_file (create unlink write read open getattr setattr)))
 (typetransition su apm_data_file sock_file apmd_socket)
@@ -115,6 +117,12 @@
 (typetransition apmd apm_data_file dir apm_data_file)
 (typetransition apmd apm_data_file file apm_data_file)
 (typetransition apmd apm_data_file lnk_file apm_data_file)
+
+; Compatibility mode: apmd may be launched in the su domain.
+(typetransition su system_data_file dir apm_data_file "apm")
+(typetransition su apm_data_file dir apm_data_file)
+(typetransition su apm_data_file file apm_data_file)
+(typetransition su apm_data_file lnk_file apm_data_file)
 
 ; -----------------------------------------------------------------------------
 ; AMS data paths used by both daemons
@@ -127,12 +135,21 @@
 (allow amsd ams_data_file (file (create read write append open getattr setattr unlink rename lock ioctl)))
 (allow amsd ams_data_file (lnk_file (create read write getattr setattr unlink rename)))
 
+; Compatibility mode: amsd may also be launched in the su domain.
+(allow su ams_data_file (dir (create read write add_name remove_name search open getattr setattr rmdir mounton)))
+(allow su ams_data_file (file (create read write append open getattr setattr unlink rename lock ioctl)))
+(allow su ams_data_file (lnk_file (create read write getattr setattr unlink rename)))
+
 ; Auto-label /data/ams tree content when created by daemons
 (typetransition apmd system_data_file dir ams_data_file "ams")
 (typetransition amsd system_data_file dir ams_data_file "ams")
 (typetransition amsd ams_data_file dir ams_data_file)
 (typetransition amsd ams_data_file file ams_data_file)
 (typetransition amsd ams_data_file lnk_file ams_data_file)
+(typetransition su system_data_file dir ams_data_file "ams")
+(typetransition su ams_data_file dir ams_data_file)
+(typetransition su ams_data_file file ams_data_file)
+(typetransition su ams_data_file lnk_file ams_data_file)
 
 ; -----------------------------------------------------------------------------
 ; Access to parent data dirs used for hook/script staging
@@ -228,6 +245,10 @@
 
 ; root workflows typically run the CLI in the su domain.
 (allow su system_data_root_file (dir (search open read getattr)))
+(allow su apm_data_file (dir (search open read getattr)))
+(allow su apm_data_file (file (open read getattr execute execute_no_trans map ioctl)))
+(allow su apm_data_file (lnk_file (open read getattr)))
+(allow su apm_data_file (sock_file (open read write getattr)))
 (allow su ams_data_file (dir (search open read getattr)))
 (allow su ams_data_file (file (open read getattr)))
 (allow su ams_data_file (lnk_file (open read getattr)))

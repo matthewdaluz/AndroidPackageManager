@@ -1942,118 +1942,37 @@ int cmdModuleList(const std::string &sessionToken) {
 
 // List installed packages by reading the local status database directly.
 int cmdListLocal() {
-  apm::status::InstalledDb db;
-  std::string err;
+  apm::ipc::Request req;
+  req.type = apm::ipc::RequestType::List;
 
-  if (!apm::status::loadStatus(db, &err)) {
-    std::cerr << "apm list: failed to load status DB: " << err << "\n";
+  apm::ipc::Response resp;
+  std::string err;
+  if (!apm::ipc::sendRequestAuto(req, resp, &err)) {
+    std::cerr << "Error: " << err << "\n";
     return 1;
   }
 
-  if (db.empty()) {
-    std::cout << "No packages installed.\n";
-    return 0;
-  }
-
-  std::cout << "Installed packages:\n";
-  for (const auto &kv : db) {
-    const auto &pkg = kv.second;
-    std::cout << "  " << pkg.name;
-    if (!pkg.version.empty())
-      std::cout << " " << pkg.version;
-    if (!pkg.architecture.empty())
-      std::cout << " [" << pkg.architecture << "]";
-    if (pkg.autoInstalled)
-      std::cout << " (auto)";
-    std::cout << "\n";
-  }
-
-  return 0;
+  if (!resp.message.empty())
+    std::cout << resp.message << "\n";
+  return resp.success ? 0 : 1;
 }
 
 // Display local installation info plus candidate repo metadata for a package.
 int cmdInfoLocal(const std::string &name) {
-  using namespace apm;
+  apm::ipc::Request req;
+  req.type = apm::ipc::RequestType::Info;
+  req.packageName = name;
 
-  status::InstalledPackage inst;
-  bool isInstalled = status::isInstalled(name, &inst, nullptr);
-
-  std::cout << "Package: " << name << "\n";
-  std::cout << "Installed: " << (isInstalled ? "yes" : "no") << "\n";
-
-  if (isInstalled) {
-    if (!inst.version.empty())
-      std::cout << "Installed-Version: " << inst.version << "\n";
-    if (!inst.architecture.empty())
-      std::cout << "Architecture: " << inst.architecture << "\n";
-    if (!inst.installRoot.empty())
-      std::cout << "Installed-Root: " << inst.installRoot << "\n";
-    if (!inst.status.empty())
-      std::cout << "Status: " << inst.status << "\n";
-    if (inst.autoInstalled)
-      std::cout << "Auto-Installed: yes\n";
-    std::cout << "\n";
-  }
-
-  repo::RepoIndexList indices;
+  apm::ipc::Response resp;
   std::string err;
-
-  if (!repo::buildRepoIndices(config::getSourcesList(), config::getListsDir(),
-                              config::getDefaultArch(), indices, &err)) {
-    std::cout << "Repository info unavailable";
-    if (!err.empty())
-      std::cout << ": " << err;
-    std::cout << "\n";
-    return 0;
+  if (!apm::ipc::sendRequestAuto(req, resp, &err)) {
+    std::cerr << "Error: " << err << "\n";
+    return 1;
   }
 
-  const repo::PackageEntry *cand = nullptr;
-  for (const auto &idx : indices) {
-    auto *f = repo::findPackage(idx.packages, name, "");
-    if (f) {
-      cand = f;
-      break;
-    }
-  }
-
-  if (!cand) {
-    std::cout << "Not found in repositories.\n";
-    return 0;
-  }
-
-  std::cout << "Candidate-Version: " << cand->version << "\n";
-  if (!cand->architecture.empty())
-    std::cout << "Candidate-Architecture: " << cand->architecture << "\n";
-
-  if (!cand->repoUri.empty()) {
-    std::cout << "Repository: " << cand->repoUri;
-    if (!cand->repoDist.empty())
-      std::cout << " " << cand->repoDist;
-    if (!cand->repoComponent.empty())
-      std::cout << " " << cand->repoComponent;
-    std::cout << "\n";
-  }
-
-  if (isInstalled && inst.version != cand->version) {
-    std::cout << "Upgrade-Available: yes\n";
-    std::cout << "  Installed: " << inst.version << "\n";
-    std::cout << "  Candidate: " << cand->version << "\n";
-  }
-
-  std::cout << "\n=== Metadata ===\n";
-  for (const auto &kv : cand->rawFields) {
-    if (kv.first == "Description") {
-      std::cout << "Description: " << kv.second << "\n";
-      auto itLong = cand->rawFields.find("Description-long");
-      if (itLong != cand->rawFields.end())
-        std::cout << "\n" << itLong->second << "\n";
-      continue;
-    }
-    std::cout << kv.first << ": " << kv.second << "\n";
-  }
-
-  std::cout << "\n";
-  return 0;
+  if (!resp.message.empty())
+    std::cout << resp.message << "\n";
+  return resp.success ? 0 : 1;
 }
 
 // Perform a read-only search across cached repo indices from the CLI only path.

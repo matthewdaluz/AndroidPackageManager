@@ -30,11 +30,14 @@
 #include "fs.hpp"
 #include "logger.hpp"
 
+#include <grp.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <cctype>
+#include <cstring>
 #include <sstream>
 #include <unordered_map>
 #include <vector>
@@ -128,6 +131,34 @@ static bool parseBool(const std::string &raw) {
   for (auto &c : s)
     c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
   return (s == "1" || s == "yes" || s == "true");
+}
+
+static bool lookupShellGroup(gid_t &gidOut) {
+  struct group *shellGroup = ::getgrnam("shell");
+  if (!shellGroup)
+    return false;
+  gidOut = shellGroup->gr_gid;
+  return true;
+}
+
+static void normalizeShellReadableStatusFile(const std::string &path) {
+  if (path.empty() || !apm::fs::pathExists(path))
+    return;
+
+  if (!apm::config::isEmulatorMode()) {
+    gid_t shellGid = 0;
+    if (lookupShellGroup(shellGid)) {
+      if (::chown(path.c_str(), 0, shellGid) != 0) {
+        apm::logger::warn("status_db: chown failed for " + path + ": " +
+                          std::strerror(errno));
+      }
+    }
+  }
+
+  if (::chmod(path.c_str(), 0644) != 0) {
+    apm::logger::warn("status_db: chmod failed for " + path + ": " +
+                      std::strerror(errno));
+  }
 }
 
 // -------------------- stanza parser --------------------
@@ -339,6 +370,7 @@ bool writeStatusFile(const std::string &path, const InstalledDb &db,
 
   apm::logger::info("status_db: wrote " + std::to_string(db.size()) +
                     " entries to " + path);
+  normalizeShellReadableStatusFile(path);
   return true;
 }
 

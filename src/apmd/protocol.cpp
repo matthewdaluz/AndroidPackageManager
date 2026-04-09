@@ -195,6 +195,12 @@ RequestType parseType(const std::string &sRaw) {
     return RequestType::Authenticate;
   if (s == "FORGOT_PASSWORD")
     return RequestType::ForgotPassword;
+  if (s == "LIST")
+    return RequestType::List;
+  if (s == "INFO")
+    return RequestType::Info;
+  if (s == "SEARCH")
+    return RequestType::Search;
   if (s == "UPDATE")
     return RequestType::Update;
   if (s == "INSTALL")
@@ -236,6 +242,12 @@ std::string typeToString(RequestType t) {
     return "AUTHENTICATE";
   case RequestType::ForgotPassword:
     return "FORGOT_PASSWORD";
+  case RequestType::List:
+    return "LIST";
+  case RequestType::Info:
+    return "INFO";
+  case RequestType::Search:
+    return "SEARCH";
   case RequestType::Update:
     return "UPDATE";
   case RequestType::Install:
@@ -309,7 +321,7 @@ bool parseRequest(const std::string &raw, Request &out, std::string *errorMsg) {
   // Commands that require packageName
   // Install/Remove use packageName
   if (out.type == RequestType::Install || out.type == RequestType::Remove ||
-      out.type == RequestType::ApkUninstall) {
+      out.type == RequestType::ApkUninstall || out.type == RequestType::Info) {
 
     out.packageName = get("package");
     if (out.packageName.empty()) {

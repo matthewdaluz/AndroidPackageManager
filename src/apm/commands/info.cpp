@@ -44,11 +44,16 @@ int run_info(int argc, char **argv) {
 
   // ---------------- Installed info ----------------
   apm::status::InstalledPackage installed;
-  bool isInstalled = apm::status::isInstalled(name, &installed, nullptr);
+  std::string statusErr;
+  bool isInstalled = apm::status::isInstalled(name, &installed, &statusErr);
 
-  if (!isInstalled) {
+  if (!statusErr.empty()) {
+    std::cout << "Package: " << name << "\n";
+    std::cout << "Installed info unavailable: " << statusErr << "\n\n";
+  } else if (!isInstalled) {
     std::cout << "Package: " << name << "\n";
     std::cout << "Installed: no\n";
+    std::cout << "\n";
   } else {
     std::cout << "Package: " << installed.name << "\n";
     std::cout << "Installed: yes\n";

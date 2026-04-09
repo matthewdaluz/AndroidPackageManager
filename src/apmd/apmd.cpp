@@ -430,6 +430,26 @@ void migrateShellAccessibleRuntime() {
   if (!runtimeBase.empty() && apm::fs::pathExists(runtimeBase)) {
     normalizeShellReadableTree(runtimeBase);
   }
+
+  const std::vector<std::string> publicMetadataDirs = {
+      apm::config::getSourcesDir(),
+      apm::config::getListsDir(),
+      apm::config::getTrustedKeysDir(),
+  };
+  for (const auto &dir : publicMetadataDirs) {
+    if (dir.empty()) {
+      continue;
+    }
+    apm::fs::createDirs(dir);
+    if (apm::fs::pathExists(dir)) {
+      normalizeShellReadableTree(dir);
+    }
+  }
+
+  const std::string statusFile = apm::config::getStatusFile();
+  if (apm::fs::pathExists(statusFile)) {
+    normalizeShellReadableTree(statusFile);
+  }
 }
 
 } // namespace

@@ -26,28 +26,11 @@
 
 #include "search.hpp"
 
-#include "config.hpp"
-#include "repo_index.hpp"
+#include "protocol.hpp"
+#include "transport.hpp"
 
-#include <cctype>
 #include <iostream>
-#include <string>
-#include <unordered_set>
 #include <vector>
-
-namespace {
-
-// Simple lowercase helper for case-insensitive matching
-std::string toLower(const std::string &s) {
-  std::string out;
-  out.reserve(s.size());
-  for (unsigned char c : s) {
-    out.push_back(static_cast<char>(std::tolower(c)));
-  }
-  return out;
-}
-
-} // namespace
 
 namespace apm::cli {
 
@@ -59,83 +42,28 @@ int searchPackages(const std::vector<std::string> &patternsIn) {
     return 1;
   }
 
-  // Lowercase patterns
-  std::vector<std::string> patterns;
-  patterns.reserve(patternsIn.size());
-  for (const auto &p : patternsIn) {
-    patterns.push_back(toLower(p));
-  }
+  apm::ipc::Request req;
+  req.type = apm::ipc::RequestType::Search;
 
-  apm::repo::RepoIndexList indices;
+  std::string serializedPatterns;
+  for (std::size_t i = 0; i < patternsIn.size(); ++i) {
+    if (i > 0) {
+      serializedPatterns.push_back('\n');
+    }
+    serializedPatterns += patternsIn[i];
+  }
+  req.rawFields["patterns"] = serializedPatterns;
+
+  apm::ipc::Response resp;
   std::string err;
-  if (!apm::repo::buildRepoIndices(apm::config::getSourcesList(),
-                                   apm::config::getListsDir(),
-                                   apm::config::getDefaultArch(), indices, &err)) {
-    std::cerr << "apm search: failed to load repo indices";
-    if (!err.empty())
-      std::cerr << ": " << err;
-    std::cerr << "\n";
+  if (!apm::ipc::sendRequestAuto(req, resp, &err)) {
+    std::cerr << "Error: " << err << "\n";
     return 1;
   }
 
-  std::unordered_set<std::string> seen;
-  std::size_t matchCount = 0;
-
-  for (const auto &idx : indices) {
-    for (const auto &pkg : idx.packages) {
-
-      // Extract description from rawFields if present
-      std::string desc;
-      auto it = pkg.rawFields.find("Description");
-      if (it != pkg.rawFields.end()) {
-        desc = it->second;
-      }
-
-      // Build searchable text
-      std::string searchText = pkg.packageName;
-      if (!desc.empty()) {
-        searchText.push_back(' ');
-        searchText += desc;
-      }
-
-      std::string hay = toLower(searchText);
-
-      bool hit = false;
-      for (const auto &pat : patterns) {
-        if (hay.find(pat) != std::string::npos) {
-          hit = true;
-          break;
-        }
-      }
-
-      if (!hit)
-        continue;
-
-      // Avoid duplicates across repos
-      if (!seen.insert(pkg.packageName).second)
-        continue;
-
-      ++matchCount;
-
-      // Display result
-      std::cout << pkg.packageName;
-      if (!pkg.version.empty())
-        std::cout << " " << pkg.version;
-      if (!pkg.architecture.empty())
-        std::cout << " [" << pkg.architecture << "]";
-
-      if (!desc.empty())
-        std::cout << " - " << desc;
-
-      std::cout << "\n";
-    }
-  }
-
-  if (matchCount == 0) {
-    std::cout << "No packages found matching the given pattern(s).\n";
-  }
-
-  return 0;
+  if (!resp.message.empty())
+    std::cout << resp.message << "\n";
+  return resp.success ? 0 : 1;
 }
 
 } // namespace apm::cli

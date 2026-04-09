@@ -50,4 +50,6 @@ on property:amsd.ready=1
     start apmd
 
 on property:apm.restart=1
+    restorecon_recursive /data/local/tmp/apm
+    restorecon_recursive /data/apm
     restart apmd

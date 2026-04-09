@@ -33,7 +33,10 @@
 #include "logger.hpp"
 #include "protocol.hpp"
 #include "repo_index.hpp"
+#include "status_db.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <cerrno>
 #include <cstddef>
 #include <cstring>
@@ -43,6 +46,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
+#include <unordered_set>
 #include <unistd.h>
 #include <utility>
 #include <vector>
@@ -142,6 +146,262 @@ static std::string fileNameFromPath(const std::string &path) {
   if (pos == std::string::npos || pos + 1 >= path.size())
     return path;
   return path.substr(pos + 1);
+}
+
+static std::string formatInstalledFrom(const apm::status::InstalledPackage &pkg) {
+  std::ostringstream out;
+  out << pkg.repoUri;
+  if (!pkg.repoDist.empty()) {
+    out << " " << pkg.repoDist;
+  }
+  if (!pkg.repoComponent.empty()) {
+    out << " " << pkg.repoComponent;
+  }
+  return out.str();
+}
+
+static std::string formatRepoLocation(const apm::repo::PackageEntry &pkg) {
+  std::ostringstream out;
+  out << pkg.repoUri;
+  if (!pkg.repoDist.empty()) {
+    out << " " << pkg.repoDist;
+  }
+  if (!pkg.repoComponent.empty()) {
+    out << " " << pkg.repoComponent;
+  }
+  return out.str();
+}
+
+static std::string toLower(std::string value) {
+  std::transform(value.begin(), value.end(), value.begin(),
+                 [](unsigned char c) {
+                   return static_cast<char>(std::tolower(c));
+                 });
+  return value;
+}
+
+static std::vector<std::string> splitLines(const std::string &value) {
+  std::vector<std::string> out;
+  std::istringstream in(value);
+  std::string line;
+  while (std::getline(in, line)) {
+    if (!line.empty()) {
+      out.push_back(line);
+    }
+  }
+  return out;
+}
+
+static bool buildListResponseMessage(std::string &messageOut) {
+  apm::status::InstalledDb db;
+  std::string err;
+  if (!apm::status::loadStatus(db, &err)) {
+    messageOut = "apm list: failed to load status DB: " + err;
+    return false;
+  }
+
+  if (db.empty()) {
+    messageOut = "No packages installed.";
+    return true;
+  }
+
+  std::vector<std::string> names;
+  names.reserve(db.size());
+  for (const auto &kv : db) {
+    names.push_back(kv.first);
+  }
+  std::sort(names.begin(), names.end());
+
+  std::ostringstream out;
+  out << "Installed packages:\n";
+  for (const auto &name : names) {
+    const auto &pkg = db.at(name);
+    out << "  " << pkg.name;
+    if (!pkg.version.empty()) {
+      out << " " << pkg.version;
+    }
+    if (!pkg.architecture.empty()) {
+      out << " [" << pkg.architecture << "]";
+    }
+    if (pkg.autoInstalled) {
+      out << " (auto)";
+    }
+    out << "\n";
+  }
+
+  messageOut = out.str();
+  if (!messageOut.empty() && messageOut.back() == '\n') {
+    messageOut.pop_back();
+  }
+  return true;
+}
+
+static std::string buildInfoResponseMessage(const std::string &name) {
+  std::ostringstream out;
+  apm::status::InstalledPackage inst;
+  std::string statusErr;
+  const bool isInstalled = apm::status::isInstalled(name, &inst, &statusErr);
+
+  out << "Package: " << name << "\n";
+  if (!statusErr.empty()) {
+    out << "Installed info unavailable: " << statusErr << "\n\n";
+  } else {
+    out << "Installed: " << (isInstalled ? "yes" : "no") << "\n";
+    if (isInstalled) {
+      if (!inst.version.empty())
+        out << "Installed-Version: " << inst.version << "\n";
+      if (!inst.architecture.empty())
+        out << "Architecture: " << inst.architecture << "\n";
+      if (!inst.installRoot.empty())
+        out << "Installed-Root: " << inst.installRoot << "\n";
+      if (!inst.status.empty())
+        out << "Status: " << inst.status << "\n";
+      if (inst.autoInstalled)
+        out << "Auto-Installed: yes\n";
+      if (!inst.repoUri.empty())
+        out << "Installed-From: " << formatInstalledFrom(inst) << "\n";
+    }
+    out << "\n";
+  }
+
+  apm::repo::RepoIndexList indices;
+  std::string repoErr;
+  if (!apm::repo::buildRepoIndices(apm::config::getSourcesList(),
+                                   apm::config::getListsDir(),
+                                   apm::config::getDefaultArch(), indices,
+                                   &repoErr)) {
+    out << "Repository info unavailable";
+    if (!repoErr.empty())
+      out << ": " << repoErr;
+    return out.str();
+  }
+
+  const apm::repo::PackageEntry *cand = nullptr;
+  for (const auto &idx : indices) {
+    const auto *found = apm::repo::findPackage(idx.packages, name, "");
+    if (found) {
+      cand = found;
+      break;
+    }
+  }
+
+  if (!cand) {
+    out << "Not found in repositories.";
+    return out.str();
+  }
+
+  out << "Candidate-Version: " << cand->version << "\n";
+  if (!cand->architecture.empty())
+    out << "Candidate-Architecture: " << cand->architecture << "\n";
+  if (!cand->repoUri.empty())
+    out << "Repository: " << formatRepoLocation(*cand) << "\n";
+  if (!cand->filename.empty())
+    out << "Filename: " << cand->filename << "\n";
+
+  if (isInstalled && statusErr.empty() && !inst.version.empty() &&
+      !cand->version.empty() && inst.version != cand->version) {
+    out << "Upgrade-Available: yes\n";
+    out << "  Installed: " << inst.version << "\n";
+    out << "  Candidate: " << cand->version << "\n";
+  }
+
+  out << "\n=== Metadata ===\n";
+  for (const auto &kv : cand->rawFields) {
+    if (kv.first == "Description") {
+      out << "Description: " << kv.second << "\n";
+      auto itLong = cand->rawFields.find("Description-long");
+      if (itLong != cand->rawFields.end()) {
+        out << "\n" << itLong->second << "\n";
+      }
+      continue;
+    }
+    out << kv.first << ": " << kv.second << "\n";
+  }
+
+  return out.str();
+}
+
+static bool buildSearchResponseMessage(const std::vector<std::string> &patternsIn,
+                                       std::string &messageOut) {
+  if (patternsIn.empty()) {
+    messageOut = "apm: 'search' requires a pattern";
+    return false;
+  }
+
+  std::vector<std::string> patterns;
+  patterns.reserve(patternsIn.size());
+  for (const auto &pattern : patternsIn) {
+    patterns.push_back(toLower(pattern));
+  }
+
+  apm::repo::RepoIndexList indices;
+  std::string err;
+  if (!apm::repo::buildRepoIndices(apm::config::getSourcesList(),
+                                   apm::config::getListsDir(),
+                                   apm::config::getDefaultArch(), indices,
+                                   &err)) {
+    messageOut = "apm search: failed to load repo indices";
+    if (!err.empty()) {
+      messageOut += ": " + err;
+    }
+    return false;
+  }
+
+  std::unordered_set<std::string> seen;
+  std::size_t matchCount = 0;
+  std::ostringstream out;
+
+  for (const auto &idx : indices) {
+    for (const auto &pkg : idx.packages) {
+      std::string desc;
+      auto it = pkg.rawFields.find("Description");
+      if (it != pkg.rawFields.end()) {
+        desc = it->second;
+      }
+
+      std::string hay = toLower(pkg.packageName);
+      if (!desc.empty()) {
+        hay.push_back(' ');
+        hay += toLower(desc);
+      }
+
+      bool hit = false;
+      for (const auto &pattern : patterns) {
+        if (hay.find(pattern) != std::string::npos) {
+          hit = true;
+          break;
+        }
+      }
+
+      if (!hit || !seen.insert(pkg.packageName).second) {
+        continue;
+      }
+
+      ++matchCount;
+      out << pkg.packageName;
+      if (!pkg.version.empty()) {
+        out << " " << pkg.version;
+      }
+      if (!pkg.architecture.empty()) {
+        out << " [" << pkg.architecture << "]";
+      }
+      if (!desc.empty()) {
+        out << " - " << desc;
+      }
+      out << "\n";
+    }
+  }
+
+  if (matchCount == 0) {
+    messageOut = "No packages found matching the given pattern(s).";
+    return true;
+  }
+
+  messageOut = out.str();
+  if (!messageOut.empty() && messageOut.back() == '\n') {
+    messageOut.pop_back();
+  }
+  return true;
 }
 
 // Serialize and send a response frame to the client. Progress frames are sent
@@ -396,7 +656,8 @@ void IpcServer::handleClient(int clientFd) {
 
   auto requiresAuth = [](RequestType t) {
     return !(t == RequestType::Ping || t == RequestType::Authenticate ||
-             t == RequestType::ForgotPassword);
+             t == RequestType::ForgotPassword || t == RequestType::List ||
+             t == RequestType::Info || t == RequestType::Search);
   };
 
   if (requiresAuth(req.type)) {
@@ -411,6 +672,36 @@ void IpcServer::handleClient(int clientFd) {
   }
 
   switch (req.type) {
+
+  case RequestType::List: {
+    apm::logger::info("IpcServer: List request received");
+    resp.success = buildListResponseMessage(resp.message);
+    break;
+  }
+
+  case RequestType::Info: {
+    apm::logger::info("IpcServer: Info request for package: " +
+                      req.packageName);
+    if (req.packageName.empty()) {
+      resp.success = false;
+      resp.message = "Missing package name";
+      break;
+    }
+    resp.success = true;
+    resp.message = buildInfoResponseMessage(req.packageName);
+    break;
+  }
+
+  case RequestType::Search: {
+    apm::logger::info("IpcServer: Search request received");
+    std::vector<std::string> patterns;
+    auto it = req.rawFields.find("patterns");
+    if (it != req.rawFields.end()) {
+      patterns = splitLines(it->second);
+    }
+    resp.success = buildSearchResponseMessage(patterns, resp.message);
+    break;
+  }
 
   case RequestType::Authenticate: {
     apm::logger::info("IpcServer: Authenticate request received");
