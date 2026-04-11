@@ -52,6 +52,7 @@ enum class RequestType {
   ModuleDisable,
   ModuleRemove,
   FactoryReset,
+  WipeCache,
   DebugLogging,
   LogClear
 };

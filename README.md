@@ -109,6 +109,7 @@ Daemon-backed commands:
 - `apm autoremove`
 - `apm debuglogging <true|false>`
 - `apm factory-reset`
+- `apm wipe-cache [all|apm|repo-lists|package-downloads|sig-cache|ams-runtime]`
 - `apm forgot-password`
 - `apm module-list`
 - `apm module-install <zip>`

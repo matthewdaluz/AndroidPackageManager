@@ -38,7 +38,23 @@ struct FactoryResetResult {
   std::string message;
 };
 
+struct WipeCacheSelection {
+  bool apmGeneral = false;
+  bool repoLists = false;
+  bool packageDownloads = false;
+  bool signatureCache = false;
+  bool amsRuntime = false;
+};
+
+struct WipeCacheResult {
+  bool ok = false;
+  std::string message;
+};
+
 bool performFactoryReset(apm::ams::ModuleManager &moduleManager,
                          FactoryResetResult &out);
+bool performWipeCache(apm::ams::ModuleManager &moduleManager,
+                      const WipeCacheSelection &selection,
+                      WipeCacheResult &out);
 
 } // namespace apm::daemon

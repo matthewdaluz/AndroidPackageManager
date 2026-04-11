@@ -149,6 +149,76 @@ bool parseLogClearTarget(const Request &req, LogClearTarget &targetOut,
   return false;
 }
 
+bool parseBoolValue(std::string value, bool &out) {
+  std::transform(value.begin(), value.end(), value.begin(),
+                 [](unsigned char c) {
+                   return static_cast<char>(std::tolower(c));
+                 });
+
+  if (value == "1" || value == "true" || value == "yes" || value == "on") {
+    out = true;
+    return true;
+  }
+  if (value == "0" || value == "false" || value == "no" || value == "off") {
+    out = false;
+    return true;
+  }
+  return false;
+}
+
+bool parseOptionalBoolField(const Request &req, const char *key, bool &out,
+                            std::string *errorMsg) {
+  auto it = req.rawFields.find(key);
+  if (it == req.rawFields.end())
+    return true;
+
+  if (!parseBoolValue(it->second, out)) {
+    if (errorMsg)
+      *errorMsg = std::string("Invalid boolean value for '") + key + "'";
+    return false;
+  }
+  return true;
+}
+
+bool parseWipeCacheSelection(const Request &req,
+                             apm::daemon::WipeCacheSelection &selectionOut,
+                             std::string *errorMsg) {
+  selectionOut = apm::daemon::WipeCacheSelection{};
+
+  bool wipeAll = false;
+  if (!parseOptionalBoolField(req, "wipe_all", wipeAll, errorMsg) ||
+      !parseOptionalBoolField(req, "wipe_apm_cache", selectionOut.apmGeneral,
+                              errorMsg) ||
+      !parseOptionalBoolField(req, "wipe_repo_lists", selectionOut.repoLists,
+                              errorMsg) ||
+      !parseOptionalBoolField(req, "wipe_package_downloads",
+                              selectionOut.packageDownloads, errorMsg) ||
+      !parseOptionalBoolField(req, "wipe_signature_cache",
+                              selectionOut.signatureCache, errorMsg) ||
+      !parseOptionalBoolField(req, "wipe_ams_runtime",
+                              selectionOut.amsRuntime, errorMsg)) {
+    return false;
+  }
+
+  if (wipeAll) {
+    selectionOut.apmGeneral = true;
+    selectionOut.repoLists = true;
+    selectionOut.packageDownloads = true;
+    selectionOut.signatureCache = true;
+    selectionOut.amsRuntime = true;
+  }
+
+  if (!selectionOut.apmGeneral && !selectionOut.repoLists &&
+      !selectionOut.packageDownloads && !selectionOut.signatureCache &&
+      !selectionOut.amsRuntime) {
+    if (errorMsg)
+      *errorMsg = "No cache targets selected";
+    return false;
+  }
+
+  return true;
+}
+
 void appendUniquePath(const std::string &path, std::vector<std::string> &paths) {
   if (path.empty())
     return;
@@ -1361,6 +1431,31 @@ void IpcServer::handleClient(int clientFd) {
       resp.success = true;
       resp.message =
           result.message.empty() ? "Factory reset completed." : result.message;
+    }
+    break;
+  }
+
+  case RequestType::WipeCache: {
+    apm::daemon::WipeCacheSelection selection;
+    std::string parseErr;
+    if (!parseWipeCacheSelection(req, selection, &parseErr)) {
+      resp.success = false;
+      resp.message = parseErr.empty() ? "Invalid cache wipe request"
+                                      : parseErr;
+      break;
+    }
+
+    apm::logger::info("IpcServer: WipeCache request received");
+
+    apm::daemon::WipeCacheResult result;
+    if (!apm::daemon::performWipeCache(m_moduleManager, selection, result)) {
+      resp.success = false;
+      resp.message =
+          result.message.empty() ? "Cache wipe failed" : result.message;
+    } else {
+      resp.success = true;
+      resp.message =
+          result.message.empty() ? "Selected caches cleared." : result.message;
     }
     break;
   }

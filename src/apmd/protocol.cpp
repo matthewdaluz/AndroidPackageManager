@@ -227,6 +227,8 @@ RequestType parseType(const std::string &sRaw) {
     return RequestType::ModuleRemove;
   if (s == "FACTORY_RESET")
     return RequestType::FactoryReset;
+  if (s == "WIPE_CACHE")
+    return RequestType::WipeCache;
   if (s == "DEBUG_LOGGING")
     return RequestType::DebugLogging;
   if (s == "LOG_CLEAR")
@@ -276,6 +278,8 @@ std::string typeToString(RequestType t) {
     return "MODULE_REMOVE";
   case RequestType::FactoryReset:
     return "FACTORY_RESET";
+  case RequestType::WipeCache:
+    return "WIPE_CACHE";
   case RequestType::DebugLogging:
     return "DEBUG_LOGGING";
   case RequestType::LogClear:

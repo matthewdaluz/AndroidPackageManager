@@ -128,6 +128,98 @@ bool removeFilePath(const std::string &path, const std::string &label,
   return true;
 }
 
+bool ensureDirPath(const std::string &path, const std::string &label,
+                   std::vector<std::string> &errors) {
+  if (path.empty())
+    return true;
+
+  if (apm::fs::createDirs(path))
+    return true;
+
+  std::string msg = "Failed to recreate " + label + " at " + path;
+  errors.push_back(msg);
+  apm::logger::warn("wipe_cache: " + msg);
+  return false;
+}
+
+bool hasSelectedCaches(const apm::daemon::WipeCacheSelection &selection) {
+  return selection.apmGeneral || selection.repoLists ||
+         selection.packageDownloads || selection.signatureCache ||
+         selection.amsRuntime;
+}
+
+std::vector<std::string>
+selectedCacheLabels(const apm::daemon::WipeCacheSelection &selection) {
+  std::vector<std::string> labels;
+  if (selection.apmGeneral)
+    labels.emplace_back("APM general cache");
+  if (selection.repoLists)
+    labels.emplace_back("repository lists");
+  if (selection.packageDownloads)
+    labels.emplace_back("package downloads");
+  if (selection.signatureCache)
+    labels.emplace_back("signature cache");
+  if (selection.amsRuntime)
+    labels.emplace_back("AMS runtime cache");
+  return labels;
+}
+
+std::string joinLabels(const std::vector<std::string> &labels) {
+  std::ostringstream ss;
+  for (std::size_t i = 0; i < labels.size(); ++i) {
+    if (i > 0)
+      ss << (i + 1 == labels.size() ? " and " : ", ");
+    ss << labels[i];
+  }
+  return ss.str();
+}
+
+bool shouldPreserveEntry(const std::string &name,
+                         const std::vector<std::string> &preserveNames) {
+  for (const auto &entry : preserveNames) {
+    if (entry == name)
+      return true;
+  }
+  return false;
+}
+
+bool clearDirectoryContents(const std::string &path, const std::string &label,
+                            std::vector<std::string> &errors,
+                            const std::vector<std::string> &preserveNames = {}) {
+  if (path.empty())
+    return true;
+
+  bool ok = true;
+  if (apm::fs::pathExists(path)) {
+    if (!apm::fs::isDirectory(path)) {
+      ok &= removePathRecursive(path, label, errors);
+    } else {
+      auto entries = apm::fs::listDir(path, true);
+      for (const auto &entry : entries) {
+        if (shouldPreserveEntry(entry, preserveNames))
+          continue;
+
+        std::string childPath = apm::fs::joinPath(path, entry);
+        if (!removePathRecursive(childPath, label + " entry", errors))
+          ok = false;
+      }
+    }
+  }
+
+  if (!ensureDirPath(path, label, errors))
+    ok = false;
+
+  if (ok)
+    apm::logger::info("wipe_cache: cleared " + label + ": " + path);
+  return ok;
+}
+
+bool clearSignatureCache(std::vector<std::string> &errors) {
+  return removeFilePath(
+      apm::fs::joinPath(apm::config::getPkgsDir(), "sig-cache.json"),
+      "signature cache", errors);
+}
+
 bool removeAllModules(apm::ams::ModuleManager &moduleManager,
                       std::vector<std::string> &errors) {
   std::vector<apm::ams::ModuleStatusEntry> modules;
@@ -235,6 +327,66 @@ bool performFactoryReset(apm::ams::ModuleManager &moduleManager,
   } else {
     out.ok = false;
     out.message = "Factory reset completed with issues: " + joinErrors(errors);
+  }
+
+  return out.ok;
+}
+
+bool performWipeCache(apm::ams::ModuleManager &moduleManager,
+                      const WipeCacheSelection &selection,
+                      WipeCacheResult &out) {
+  out = WipeCacheResult{};
+  if (!hasSelectedCaches(selection)) {
+    out.message = "No cache targets selected.";
+    return false;
+  }
+
+  std::vector<std::string> errors;
+
+  if (selection.apmGeneral) {
+    clearDirectoryContents(apm::config::getCacheDir(), "APM general cache",
+                           errors);
+  }
+
+  if (selection.repoLists) {
+    clearDirectoryContents(apm::config::getListsDir(), "repository lists",
+                           errors);
+  }
+
+  if (selection.packageDownloads) {
+    std::vector<std::string> preserveNames;
+    if (!selection.signatureCache)
+      preserveNames.emplace_back("sig-cache.json");
+    clearDirectoryContents(apm::config::getPkgsDir(), "package download cache",
+                           errors, preserveNames);
+  }
+
+  if (selection.signatureCache)
+    clearSignatureCache(errors);
+
+  if (selection.amsRuntime) {
+    clearDirectoryContents(apm::config::getModuleRuntimeDir(),
+                           "AMS runtime cache", errors);
+
+    std::string rebuildErr;
+    if (!moduleManager.applyEnabledModules(&rebuildErr)) {
+      std::string msg =
+          rebuildErr.empty()
+              ? "Failed to rebuild AMS runtime after cache wipe"
+              : "Failed to rebuild AMS runtime after cache wipe: " + rebuildErr;
+      errors.push_back(msg);
+      apm::logger::warn("wipe_cache: " + msg);
+    }
+  }
+
+  const std::string targets = joinLabels(selectedCacheLabels(selection));
+  if (errors.empty()) {
+    out.ok = true;
+    out.message = "Cleared " + targets + ".";
+  } else {
+    out.ok = false;
+    out.message = "Cache wipe completed with issues while clearing " + targets +
+                  ": " + joinErrors(errors);
   }
 
   return out.ok;

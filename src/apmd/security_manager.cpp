@@ -7,7 +7,7 @@
  * File: security_manager.cpp
  * Purpose: Implement daemon-side password/PIN handling plus session issuance
  * and validation using BoringSSL primitives.
- * Last Modified: 2026-03-15 13:02:02.294334606 -0400.
+ * Last Modified: 2026-04-10 13:36:00.000000000 -0400.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -29,6 +29,7 @@
 
 #include "config.hpp"
 #include "fs.hpp"
+#include "logger.hpp"
 #include "security.hpp"
 
 #include <algorithm>
@@ -588,7 +589,8 @@ bool SecurityManager::issueSession(apm::security::SessionState &sessionOut,
       *errorMsg = "Failed to generate session token";
     return false;
   }
-  sessionOut.expiresAt = apm::security::currentUnixSeconds() + 180;
+  sessionOut.expiresAt = apm::security::currentUnixSeconds() +
+                         apm::security::SESSION_LIFETIME_SECONDS;
 
   if (!deriveHmac(sessionOut, sessionOut.hmac, errorMsg))
     return false;
@@ -662,8 +664,8 @@ bool SecurityManager::validateSessionToken(const std::string &token,
     return false;
   }
 
-  if (apm::security::isSessionExpired(state,
-                                      apm::security::currentUnixSeconds())) {
+  const std::uint64_t now = apm::security::currentUnixSeconds();
+  if (apm::security::isSessionExpired(state, now)) {
     if (errorMsg)
       *errorMsg = "Session expired";
     return false;
@@ -675,8 +677,21 @@ bool SecurityManager::validateSessionToken(const std::string &token,
     return false;
   }
 
-  // Persist the session to keep the shared token file in sync for AMSD.
-  apm::security::writeSession(state, nullptr);
+  // Refresh the shared session so shell users keep a rolling unlock window.
+  state.expiresAt = now + apm::security::SESSION_LIFETIME_SECONDS;
+  std::string refreshErr;
+  if (deriveHmac(state, state.hmac, &refreshErr)) {
+    if (!apm::security::writeSession(state, nullptr)) {
+      apm::logger::warn(
+          "SecurityManager::validateSessionToken: failed to persist refreshed "
+          "session expiry");
+    }
+  } else {
+    apm::logger::warn(
+        "SecurityManager::validateSessionToken: failed to refresh session "
+        "HMAC: " +
+        refreshErr);
+  }
 
   return true;
 }

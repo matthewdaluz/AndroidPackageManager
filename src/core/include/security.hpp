@@ -6,7 +6,7 @@
  *
  * File: security.hpp
  * Purpose: Declare shared security helpers for session storage and metadata handling.
- * Last Modified: 2026-03-15 11:56:16.537911560 -0400.
+ * Last Modified: 2026-04-10 13:36:00.000000000 -0400.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -33,6 +33,7 @@
 namespace apm::security {
 
 inline constexpr std::size_t SECURITY_QUESTION_COUNT = 3;
+inline constexpr std::uint64_t SESSION_LIFETIME_SECONDS = 180;
 
 struct SessionState {
   std::string token;

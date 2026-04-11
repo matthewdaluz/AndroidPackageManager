@@ -17,6 +17,7 @@
 - `apm package-install <file>`
 - `apm debuglogging <true|false>`
 - `apm factory-reset`
+- `apm wipe-cache [all|apm|repo-lists|package-downloads|sig-cache|ams-runtime]`
 
 ### AMS module operations
 

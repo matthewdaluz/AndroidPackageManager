@@ -13,7 +13,7 @@
  * File: security_manager.cpp
  * Purpose: Validate AMSD session tokens using the shared apmd session file and
  *          common HMAC derivation material.
- * Last Modified: 2026-03-15 11:56:16.535858305 -0400.
+ * Last Modified: 2026-04-10 13:36:00.000000000 -0400.
  * Author: Matthew DaLuz - RedHead Founder
  *
  * APM is free software: you can redistribute it and/or modify
@@ -118,8 +118,8 @@ bool SecurityManager::validateSessionToken(const std::string &token,
     return false;
   }
 
-  if (apm::security::isSessionExpired(state,
-                                      apm::security::currentUnixSeconds())) {
+  const std::uint64_t now = apm::security::currentUnixSeconds();
+  if (apm::security::isSessionExpired(state, now)) {
     if (errorMsg)
       *errorMsg = "Session expired";
     return false;
@@ -129,6 +129,22 @@ bool SecurityManager::validateSessionToken(const std::string &token,
     if (errorMsg)
       *errorMsg = "Session token mismatch";
     return false;
+  }
+
+  // Mirror apmd's rolling session refresh for direct AMSD-authenticated calls.
+  state.expiresAt = now + apm::security::SESSION_LIFETIME_SECONDS;
+  std::string refreshErr;
+  if (deriveHmac(state, state.hmac, &refreshErr)) {
+    if (!apm::security::writeSession(state, nullptr)) {
+      apm::logger::warn(
+          "AMSD SecurityManager::validateSessionToken: failed to persist "
+          "refreshed session expiry");
+    }
+  } else {
+    apm::logger::warn(
+        "AMSD SecurityManager::validateSessionToken: failed to refresh "
+        "session HMAC: " +
+        refreshErr);
   }
 
   return true;

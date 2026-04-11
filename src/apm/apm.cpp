@@ -90,7 +90,16 @@ struct LogCommandOptions {
   bool clearAll = false;
   bool showHelp = false;
 };
-  
+
+struct WipeCacheSelection {
+  bool apmGeneral = false;
+  bool repoLists = false;
+  bool packageDownloads = false;
+  bool signatureCache = false;
+  bool amsRuntime = false;
+  bool showHelp = false;
+};
+
 // -----------------------------------------------------------------------------
 // Progress formatting + helper utilities
 // -----------------------------------------------------------------------------
@@ -269,6 +278,146 @@ static bool parseBooleanArg(const std::string &value, bool &out) {
     return true;
   }
   return false;
+}
+
+static bool hasSelectedCaches(const WipeCacheSelection &selection) {
+  return selection.apmGeneral || selection.repoLists ||
+         selection.packageDownloads || selection.signatureCache ||
+         selection.amsRuntime;
+}
+
+static void selectAllCaches(WipeCacheSelection &selection) {
+  selection.apmGeneral = true;
+  selection.repoLists = true;
+  selection.packageDownloads = true;
+  selection.signatureCache = true;
+  selection.amsRuntime = true;
+}
+
+static std::vector<std::string> splitTokens(const std::string &input) {
+  std::vector<std::string> tokens;
+  std::string current;
+
+  for (char ch : input) {
+    if (std::isspace(static_cast<unsigned char>(ch)) || ch == ',') {
+      if (!current.empty()) {
+        tokens.push_back(current);
+        current.clear();
+      }
+      continue;
+    }
+    current.push_back(ch);
+  }
+
+  if (!current.empty())
+    tokens.push_back(current);
+
+  return tokens;
+}
+
+static bool applyWipeCacheToken(const std::string &tokenRaw,
+                                WipeCacheSelection &selection,
+                                std::string *errorMsg) {
+  const std::string token = toLower(tokenRaw);
+
+  if (token.empty())
+    return true;
+  if (token == "--help" || token == "-h" || token == "help") {
+    selection.showHelp = true;
+    return true;
+  }
+  if (token == "all") {
+    selectAllCaches(selection);
+    return true;
+  }
+  if (token == "1" || token == "apm" || token == "general" ||
+      token == "apm-cache" || token == "cache") {
+    selection.apmGeneral = true;
+    return true;
+  }
+  if (token == "2" || token == "repo" || token == "repos" ||
+      token == "lists" || token == "repo-lists") {
+    selection.repoLists = true;
+    return true;
+  }
+  if (token == "3" || token == "pkg" || token == "pkgs" ||
+      token == "package" || token == "packages" || token == "downloads" ||
+      token == "package-downloads") {
+    selection.packageDownloads = true;
+    return true;
+  }
+  if (token == "4" || token == "sig" || token == "signature" ||
+      token == "sig-cache" || token == "signature-cache") {
+    selection.signatureCache = true;
+    return true;
+  }
+  if (token == "5" || token == "ams" || token == "runtime" ||
+      token == "ams-runtime") {
+    selection.amsRuntime = true;
+    return true;
+  }
+
+  if (errorMsg)
+    *errorMsg = "unknown cache target '" + tokenRaw + "'";
+  return false;
+}
+
+static void printWipeCacheUsage() {
+  std::cout
+      << "Usage:\n"
+      << "  apm wipe-cache [target...]\n"
+      << "\nTargets:\n"
+      << "  all               Wipe every cache bucket listed below\n"
+      << "  apm               Clear the APM general cache under "
+      << apm::config::getCacheDir() << "\n"
+      << "  repo-lists        Clear cached repository lists under "
+      << apm::config::getListsDir() << "\n"
+      << "  package-downloads Clear cached package downloads under "
+      << apm::config::getPkgsDir() << "\n"
+      << "  sig-cache         Clear "
+      << apm::fs::joinPath(apm::config::getPkgsDir(), "sig-cache.json") << "\n"
+      << "  ams-runtime       Rebuild AMS runtime cache under "
+      << apm::config::getModuleRuntimeDir() << "\n"
+      << "\nIf no targets are passed, apm will prompt you to choose.\n";
+}
+
+static bool promptForWipeCacheSelection(WipeCacheSelection &selection,
+                                        std::string *errorMsg) {
+  std::cout << "Select cache targets to wipe:\n";
+  std::cout << "  1. APM general cache (" << apm::config::getCacheDir()
+            << ")\n";
+  std::cout << "  2. Repository lists (" << apm::config::getListsDir()
+            << ")\n";
+  std::cout << "  3. Package downloads (" << apm::config::getPkgsDir()
+            << ")\n";
+  std::cout << "  4. Signature cache ("
+            << apm::fs::joinPath(apm::config::getPkgsDir(), "sig-cache.json")
+            << ")\n";
+  std::cout << "  5. AMS runtime cache (" << apm::config::getModuleRuntimeDir()
+            << ")\n";
+  std::cout << "Type numbers, names, or 'all' separated by spaces/commas: "
+            << std::flush;
+
+  std::string line;
+  if (!std::getline(std::cin, line)) {
+    if (errorMsg)
+      *errorMsg = "selection aborted";
+    return false;
+  }
+
+  auto tokens = splitTokens(line);
+  if (tokens.empty()) {
+    if (errorMsg)
+      *errorMsg = "no cache targets selected";
+    return false;
+  }
+
+  for (const auto &token : tokens) {
+    if (!applyWipeCacheToken(token, selection, errorMsg))
+      return false;
+  }
+
+  return true;
 }
 
 static bool endsWithIgnoreCase(const std::string &value,
@@ -1325,6 +1474,7 @@ void printUsage() {
       << "  autoremove                  Remove unused auto-installed deps\n"
       << "  debuglogging <true|false>   Enable or disable daemon debug logging\n"
       << "  factory-reset               Reset APM data and installed content\n"
+      << "  wipe-cache [targets...]     Wipe selected APM/AMS cache buckets\n"
       << "  forgot-password             Recover access with security "
          "questions\n"
       << "  module-list                 List installed AMS modules\n"
@@ -1994,6 +2144,114 @@ int cmdFactoryReset(const std::string &sessionToken) {
   return 0;
 }
 
+int cmdWipeCache(int argc, char **argv) {
+  WipeCacheSelection selection;
+  std::string parseErr;
+
+  for (int idx = 0; idx < argc; ++idx) {
+    for (const auto &token : splitTokens(argv[idx])) {
+      if (!applyWipeCacheToken(token, selection, &parseErr)) {
+        std::cerr << "apm wipe-cache: " << parseErr << "\n";
+        printWipeCacheUsage();
+        return 1;
+      }
+    }
+  }
+
+  if (selection.showHelp) {
+    printWipeCacheUsage();
+    return 0;
+  }
+
+  if (!hasSelectedCaches(selection)) {
+    if (!promptForWipeCacheSelection(selection, &parseErr)) {
+      std::cerr << "apm wipe-cache: " << parseErr << "\n";
+      return 1;
+    }
+  }
+
+  if (!hasSelectedCaches(selection)) {
+    std::cerr << "apm wipe-cache: no cache targets selected\n";
+    return 1;
+  }
+
+  std::cout << "APM cache wipe will:\n";
+  if (selection.apmGeneral) {
+    std::cout << "  - Clear APM general cache under "
+              << apm::config::getCacheDir() << "\n";
+  }
+  if (selection.repoLists) {
+    std::cout << "  - Delete repository lists under "
+              << apm::config::getListsDir() << "\n";
+  }
+  if (selection.packageDownloads) {
+    std::cout << "  - Remove cached package downloads under "
+              << apm::config::getPkgsDir();
+    if (!selection.signatureCache)
+      std::cout << " (keeping sig-cache.json)";
+    std::cout << "\n";
+  }
+  if (selection.signatureCache) {
+    std::cout << "  - Clear signature cache at "
+              << apm::fs::joinPath(apm::config::getPkgsDir(), "sig-cache.json")
+              << "\n";
+  }
+  if (selection.amsRuntime) {
+    std::cout << "  - Rebuild AMS runtime cache under "
+              << apm::config::getModuleRuntimeDir() << "\n";
+  }
+  std::cout << "Proceed with cache wipe? [y/N]: " << std::flush;
+
+  std::string response;
+  if (!std::getline(std::cin, response)) {
+    response.clear();
+  }
+
+  bool confirmed = false;
+  for (char ch : response) {
+    if (std::isspace(static_cast<unsigned char>(ch)))
+      continue;
+    if (ch == 'y' || ch == 'Y')
+      confirmed = true;
+    break;
+  }
+
+  if (!confirmed) {
+    std::cout << "Cache wipe aborted.\n";
+    return 0;
+  }
+
+  std::string sessionToken;
+  if (!ensureAuthenticatedSession(sessionToken))
+    return 1;
+
+  apm::ipc::Request req;
+  req.type = apm::ipc::RequestType::WipeCache;
+  req.id = "wipe-cache-1";
+  attachSession(req, sessionToken);
+  req.rawFields["wipe_apm_cache"] = selection.apmGeneral ? "true" : "false";
+  req.rawFields["wipe_repo_lists"] = selection.repoLists ? "true" : "false";
+  req.rawFields["wipe_package_downloads"] =
+      selection.packageDownloads ? "true" : "false";
+  req.rawFields["wipe_signature_cache"] =
+      selection.signatureCache ? "true" : "false";
+  req.rawFields["wipe_ams_runtime"] = selection.amsRuntime ? "true" : "false";
+
+  apm::ipc::Response resp;
+  std::string err;
+  if (!apm::ipc::sendRequestAuto(req, resp, &err)) {
+    std::cerr << "Error: " << err << "\n";
+    return 1;
+  }
+
+  std::cout << (resp.message.empty()
+                    ? (resp.success ? "Selected caches cleared."
+                                    : "Cache wipe failed.")
+                    : resp.message)
+            << "\n";
+  return resp.success ? 0 : 1;
+}
+
 int cmdModuleInstall(const std::string &sessionToken,
                      const std::string &zipPath) {
   apm::ipc::Request req;
@@ -2577,6 +2835,10 @@ int main(int argc, char **argv) {
 
   if (cmd == "factory-reset")
     return cmdFactoryReset(sessionToken);
+  if (cmd == "wipe-cache") {
+    int remaining = argc - i;
+    return cmdWipeCache(remaining, argv + i);
+  }
 
   //
   // ============================
