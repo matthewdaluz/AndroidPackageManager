@@ -66,7 +66,7 @@ namespace {
 // Editable CLI metadata.
 static constexpr const char *kApmVersion = "2.0.1b - Open Beta";
 static constexpr const char *kApmBuildDate =
-    "April 7th, 2026. - 9:35 PM Eastern Time.";
+    "April 13th, 2026. - 9:45 AM Eastern Time.";
 static constexpr const char *kApmCopyright =
     "Copyright (C) 2026 RedHead Industries";
 static constexpr const char *kApmLicense =
