@@ -2,7 +2,7 @@
 
 APM is a GPL-3.0-or-later package manager stack for Android. It combines an APT-like package workflow, a privileged daemon, an Android module system, APK staging helpers, and shell PATH hotload support.
 
-Current CLI version in source: `2.0.1b - Open Beta`
+Current CLI version in source: `2.0.2b - Open Beta`
 
 ## Components
 
@@ -179,14 +179,14 @@ sudo apt install -y \
 ```bash
 sudo dnf install -y \
   @development-tools cmake pkgconf-pkg-config git \
-  ninja-build clang clang-tools-extra
+  ninja-build clang clangd clang-tools-extra
 ```
 
 ### Arch Linux
 
 ```bash
-sudo pacman -S --needed \
-  base-devel cmake pkgconf git ninja clang
+sudo pacman -Sy --needed \
+  base-devel cmake pkgconf git ninja clang clangd
 ```
 
 ### Android SDK / NDK
