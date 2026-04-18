@@ -477,7 +477,7 @@ int runDaemon(bool debugMode, bool emulatorMode,
         apm::config::getLogsDir(),      apm::config::getModulesDir(),
         apm::config::getListsDir(),     apm::config::getManualPackagesDir(),
         apm::config::getApmBinDir(),    apm::config::getSourcesDir(),
-        apm::config::getSourcesListD(), apm::config::getTrustedKeysDir(),
+        apm::config::getTrustedKeysDir(),
         apm::config::getSecurityDir()};
 
     for (const auto &dir : emulatorDirs) {

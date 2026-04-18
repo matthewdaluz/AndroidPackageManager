@@ -203,6 +203,8 @@ RequestType parseType(const std::string &sRaw) {
     return RequestType::Search;
   if (s == "UPDATE")
     return RequestType::Update;
+  if (s == "ADD_REPO")
+    return RequestType::AddRepo;
   if (s == "INSTALL")
     return RequestType::Install;
   if (s == "REMOVE")
@@ -254,6 +256,8 @@ std::string typeToString(RequestType t) {
     return "SEARCH";
   case RequestType::Update:
     return "UPDATE";
+  case RequestType::AddRepo:
+    return "ADD_REPO";
   case RequestType::Install:
     return "INSTALL";
   case RequestType::Remove:
@@ -325,6 +329,15 @@ bool parseRequest(const std::string &raw, Request &out, std::string *errorMsg) {
 
   out.id = get("id");
   out.sessionToken = get("session");
+
+  if (out.type == RequestType::AddRepo) {
+    out.repoPath = get("repo_path");
+    if (out.repoPath.empty()) {
+      if (errorMsg)
+        *errorMsg = "Missing 'repo_path' field";
+      return false;
+    }
+  }
 
   // Commands that require packageName
   // Install/Remove use packageName
@@ -437,6 +450,9 @@ std::string serializeRequest(const Request &req) {
 
   if (!req.packageName.empty())
     out << "package:" << escapeFieldValue(req.packageName) << "\n";
+
+  if (!req.repoPath.empty())
+    out << "repo_path:" << escapeFieldValue(req.repoPath) << "\n";
 
   if (!req.apkPath.empty())
     out << "apkPath:" << escapeFieldValue(req.apkPath) << "\n";

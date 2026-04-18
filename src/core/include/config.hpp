@@ -87,8 +87,6 @@ std::string getModuleRuntimeWorkDir();
 std::string getModuleRuntimeBaseDir();
 std::string getStatusFile();
 std::string getSourcesDir();
-std::string getSourcesMain();
-std::string getSourcesListD();
 std::string getSourcesList();
 std::string getIpcSocketPath();
 std::string getAmsdSocketPath();
@@ -167,18 +165,10 @@ inline constexpr const char *MODULE_RUNTIME_BASE_DIR =
 // Status DB (dpkg-style)
 inline constexpr const char *STATUS_FILE = "/data/apm/status";
 
-// Sources layout:
-//
-//   /data/apm/sources/
-//     ├── sources.list
-//     └── sources.list.d/*.list
-//
+// Sources layout: /data/apm/sources/*.repo
 inline constexpr const char *SOURCES_DIR = "/data/apm/sources";
-inline constexpr const char *SOURCES_MAIN = "/data/apm/sources/sources.list";
-inline constexpr const char *SOURCES_LIST_D =
-    "/data/apm/sources/sources.list.d";
 
-// For repo_index, this is treated as the “sources root” (dir).
+// For repo_index, this is treated as the .repo sources root.
 inline constexpr const char *SOURCES_LIST = SOURCES_DIR;
 
 // IPC endpoint used by shell/root-facing runtime.

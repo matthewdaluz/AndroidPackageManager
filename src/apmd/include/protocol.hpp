@@ -40,6 +40,7 @@ enum class RequestType {
   Info,
   Search,
   Update,
+  AddRepo,
   Install,
   Remove,
   Autoremove,
@@ -65,6 +66,9 @@ struct Request {
   std::string packageName;
 
   std::string sessionToken;
+
+  // Repository source management
+  std::string repoPath;
 
   // Authentication specific fields
   std::string authAction;

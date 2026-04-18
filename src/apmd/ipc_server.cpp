@@ -41,7 +41,9 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstring>
+#include <fcntl.h>
 #include <grp.h>
+#include <fstream>
 #include <sstream>
 #include <string>
 #include <sys/socket.h>
@@ -384,6 +386,173 @@ static std::vector<std::string> splitLines(const std::string &value) {
     }
   }
   return out;
+}
+
+static std::string baseName(const std::string &path) {
+  if (path.empty())
+    return {};
+  std::size_t end = path.find_last_not_of('/');
+  if (end == std::string::npos)
+    return {};
+  std::size_t slash = path.find_last_of('/', end);
+  if (slash == std::string::npos)
+    return path.substr(0, end + 1);
+  return path.substr(slash + 1, end - slash);
+}
+
+static bool writeRepoFileAll(int fd, const char *data, std::size_t size,
+                             std::string *errorMsg) {
+  std::size_t written = 0;
+  while (written < size) {
+    ssize_t n = ::write(fd, data + written, size - written);
+    if (n < 0) {
+      if (errno == EINTR)
+        continue;
+      if (errorMsg)
+        *errorMsg = "write failed: " + std::string(std::strerror(errno));
+      return false;
+    }
+    if (n == 0) {
+      if (errorMsg)
+        *errorMsg = "write failed";
+      return false;
+    }
+    written += static_cast<std::size_t>(n);
+  }
+  return true;
+}
+
+static bool copyRepoFileExclusive(const std::string &src,
+                                  const std::string &dst,
+                                  std::string *errorMsg) {
+  std::ifstream in(src, std::ios::binary);
+  if (!in.is_open()) {
+    if (errorMsg)
+      *errorMsg = "failed to open repo source: " + src;
+    return false;
+  }
+
+  int fd = ::open(dst.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0664);
+  if (fd < 0) {
+    if (errorMsg) {
+      if (errno == EEXIST) {
+        *errorMsg = "repo source already exists: " + dst;
+      } else {
+        *errorMsg = "failed to create repo source: " +
+                    std::string(std::strerror(errno));
+      }
+    }
+    return false;
+  }
+
+  bool ok = true;
+  std::string err;
+  char buffer[64 * 1024];
+  while (in) {
+    in.read(buffer, sizeof(buffer));
+    std::streamsize got = in.gcount();
+    if (got <= 0)
+      break;
+    if (!writeRepoFileAll(fd, buffer, static_cast<std::size_t>(got), &err)) {
+      ok = false;
+      break;
+    }
+  }
+
+  if (ok && !in.eof() && in.fail()) {
+    err = "failed to read repo source: " + src;
+    ok = false;
+  }
+
+  if (ok && ::fsync(fd) != 0) {
+    err = "failed to sync repo source: " + std::string(std::strerror(errno));
+    ok = false;
+  }
+
+  ::fchmod(fd, 0664);
+  if (!apm::config::isEmulatorMode()) {
+    gid_t shellGid = 0;
+    if (lookupShellGroup(shellGid)) {
+      ::fchown(fd, 0, shellGid);
+    }
+  }
+
+  if (::close(fd) != 0 && ok) {
+    err = "failed to close repo source: " + std::string(std::strerror(errno));
+    ok = false;
+  }
+
+  if (!ok) {
+    ::unlink(dst.c_str());
+    if (errorMsg)
+      *errorMsg = err.empty() ? "failed to copy repo source" : err;
+    return false;
+  }
+
+  return true;
+}
+
+static bool addRepoSourceFile(const std::string &sourcePath,
+                              std::string &messageOut) {
+  if (sourcePath.empty()) {
+    messageOut = "repo path is missing";
+    return false;
+  }
+  if (sourcePath.size() < 5 ||
+      sourcePath.compare(sourcePath.size() - 5, 5, ".repo") != 0) {
+    messageOut = "repo source must be a .repo file";
+    return false;
+  }
+  if (!apm::fs::isFile(sourcePath)) {
+    messageOut = "repo source does not exist or is not a regular file: " +
+                 sourcePath;
+    return false;
+  }
+
+  const std::string name = baseName(sourcePath);
+  if (name.empty() || name.size() < 5 || name == "." || name == ".." ||
+      name.find('/') != std::string::npos ||
+      name.find('\\') != std::string::npos ||
+      name.compare(name.size() - 5, 5, ".repo") != 0) {
+    messageOut = "invalid repo source filename";
+    return false;
+  }
+
+  apm::repo::RepoSourceList parsed;
+  std::string parseErr;
+  if (!apm::repo::loadSourcesList(sourcePath, parsed, &parseErr) ||
+      parsed.empty()) {
+    messageOut = parseErr.empty() ? "invalid .repo file" : parseErr;
+    return false;
+  }
+
+  const std::string sourcesDir = apm::config::getSourcesDir();
+  if (!apm::fs::createDirs(sourcesDir, 0775)) {
+    messageOut = "failed to create sources directory: " + sourcesDir;
+    return false;
+  }
+  ::chmod(sourcesDir.c_str(), 0775);
+  if (!apm::config::isEmulatorMode()) {
+    gid_t shellGid = 0;
+    if (lookupShellGroup(shellGid)) {
+      ::chown(sourcesDir.c_str(), 0, shellGid);
+    }
+  }
+
+  const std::string dest = apm::fs::joinPath(sourcesDir, name);
+  if (apm::fs::pathExists(dest)) {
+    messageOut = "repo source already exists: " + dest;
+    return false;
+  }
+
+  std::string copyErr;
+  if (!copyRepoFileExclusive(sourcePath, dest, &copyErr)) {
+    messageOut = copyErr.empty() ? "failed to copy repo source" : copyErr;
+    return false;
+  }
+
+  messageOut = "Repository source added: " + dest;
+  return true;
 }
 
 static bool buildListResponseMessage(std::string &messageOut) {
@@ -898,6 +1067,12 @@ void IpcServer::handleClient(int clientFd) {
     break;
   }
 
+  case RequestType::AddRepo: {
+    apm::logger::info("IpcServer: AddRepo request received");
+    resp.success = addRepoSourceFile(req.repoPath, resp.message);
+    break;
+  }
+
   case RequestType::Authenticate: {
     apm::logger::info("IpcServer: Authenticate request received");
     apm::security::SessionState session;
@@ -1091,7 +1266,7 @@ void IpcServer::handleClient(int clientFd) {
     apm::logger::info("IpcServer: Install request for package: " +
                       req.packageName);
 
-    // 1) Build repo indices (sources.list + Packages files)
+    // 1) Build repo indices (.repo sources + Packages files)
     apm::repo::RepoIndexList indices;
     std::string err;
     if (!apm::repo::buildRepoIndices(

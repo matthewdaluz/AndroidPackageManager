@@ -10,6 +10,7 @@
 ### Package and repository operations
 
 - `apm update`
+- `apm add-repo <file.repo>`
 - `apm install <pkg>`
 - `apm remove <pkg>`
 - `apm upgrade [pkgs...]`

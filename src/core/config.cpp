@@ -309,18 +309,6 @@ std::string getSourcesDir() {
   return "/data/apm/sources";
 }
 
-std::string getSourcesMain() {
-  if (g_emulatorMode)
-    return buildEmulatorPath("sources/sources.list");
-  return "/data/apm/sources/sources.list";
-}
-
-std::string getSourcesListD() {
-  if (g_emulatorMode)
-    return buildEmulatorPath("sources/sources.list.d");
-  return "/data/apm/sources/sources.list.d";
-}
-
 std::string getSourcesList() { return getSourcesDir(); }
 
 std::string getIpcSocketPath() {

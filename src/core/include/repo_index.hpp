@@ -74,10 +74,12 @@ struct PackageEntry {
 
 using PackageList = std::vector<PackageEntry>;
 
-// One 'deb' entry from sources.list
+// One 'deb' source from a .repo file.
 //
 // Example:
-//   deb [arch=arm64] https://deb.debian.org/debian bookworm main contrib
+//   Type=deb
+//   URL=https://deb.debian.org/debian
+//   Suites=bookworm,main,contrib
 //
 struct RepoSource {
   std::string type;                    // "deb"
@@ -85,7 +87,7 @@ struct RepoSource {
   std::string dist;                    // suite / dist (stable, bookworm, etc.)
   std::vector<std::string> components; // main, contrib, ...
 
-  // Optional per-repo arch override (like apt's [arch=...])
+  // Optional per-repo arch override (from Architectures=)
   // e.g. "arm64" for Debian, "aarch64" for Termux.
   std::string arch;
 
@@ -137,17 +139,14 @@ using RepoUpdateProgressCallback =
     std::function<void(const RepoUpdateProgress &)>;
 
 // ---------------------------------------------------------
-// Sources.list & indices
+// .repo sources & indices
 // ---------------------------------------------------------
 
 // Load sources from either:
-//   - a single file: "deb ..." lines
-//   - a directory: treats it like /etc/apt:
-//       <dir>/sources.list
-//       <dir>/sources.list.d/*.list
+//   - a single .repo file
+//   - a directory containing *.repo files
 //
 // Ignores comments (#...) and blank lines.
-// Only 'deb' entries are kept, 'deb-src' etc are ignored.
 //
 bool loadSourcesList(const std::string &path, RepoSourceList &out,
                      std::string *errorMsg = nullptr);
@@ -167,9 +166,9 @@ bool updateFromSourcesList(const std::string &sourcesPath,
                            std::string *errorMsg = nullptr,
                            RepoUpdateProgressCallback progressCb = {});
 
-// Build RepoIndexList from sourcesPath + downloaded Packages in listsDir.
+// Build RepoIndexList from .repo sources + downloaded Packages in listsDir.
 //
-// - sourcesPath: file OR directory (same semantics as loadSourcesList)
+// - sourcesPath: .repo file OR directory (same semantics as loadSourcesList)
 // - defaultArch: fallback architecture (e.g. "arm64")
 //
 bool buildRepoIndices(const std::string &sourcesPath,

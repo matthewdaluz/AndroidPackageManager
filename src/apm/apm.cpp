@@ -436,6 +436,16 @@ static bool endsWithIgnoreCase(const std::string &value,
   return true;
 }
 
+static std::string makeAbsolutePath(const std::string &path) {
+  if (path.empty() || path.front() == '/')
+    return path;
+
+  char cwd[4096];
+  if (::getcwd(cwd, sizeof(cwd)) == nullptr)
+    return path;
+  return apm::fs::joinPath(cwd, path);
+}
+
 static bool detectManualArchiveType(const std::string &path,
                                     ManualArchiveType &type,
                                     std::string *errorMsg) {
@@ -1061,12 +1071,13 @@ static void attachSession(apm::ipc::Request &req,
 }
 
 static bool requiresAuthSession(const std::string &cmd) {
-  return cmd == "update" || cmd == "install" || cmd == "remove" ||
-         cmd == "upgrade" || cmd == "autoremove" || cmd == "module-install" ||
-         cmd == "module-list" || cmd == "module-enable" ||
-         cmd == "module-disable" || cmd == "module-remove" ||
-         cmd == "apk-install" || cmd == "apk-uninstall" ||
-         cmd == "factory-reset" || cmd == "debuglogging";
+  return cmd == "update" || cmd == "add-repo" || cmd == "install" ||
+         cmd == "remove" || cmd == "upgrade" || cmd == "autoremove" ||
+         cmd == "module-install" || cmd == "module-list" ||
+         cmd == "module-enable" || cmd == "module-disable" ||
+         cmd == "module-remove" || cmd == "apk-install" ||
+         cmd == "apk-uninstall" || cmd == "factory-reset" ||
+         cmd == "debuglogging";
 }
 
 static bool ensureManualSlotAvailable(const std::string &pkgName,
@@ -1467,6 +1478,7 @@ void printUsage() {
       << "\nCommands:\n"
       << "  ping                        Check connection to apmd\n"
       << "  update                      Update repository metadata\n"
+      << "  add-repo <file.repo>        Add a repository source file\n"
       << "  install <pkg>               Install a package from repo\n"
       << "  package-install <file>      Install a local .deb/.gz/.xz\n"
       << "  remove <pkg>                Remove an installed package\n"
@@ -1727,6 +1739,39 @@ int cmdUpdate(const std::string &sessionToken) {
     std::cout << ": " << resp.message;
   std::cout << "\n";
   return resp.success ? 0 : 1;
+}
+
+// Ask the daemon to validate and install a .repo source file.
+int cmdAddRepo(const std::string &sessionToken, const std::string &path) {
+  if (path.size() < 5 || path.compare(path.size() - 5, 5, ".repo") != 0) {
+    std::cerr << "apm: add-repo requires a .repo file\n";
+    return 1;
+  }
+
+  apm::ipc::Request req;
+  req.type = apm::ipc::RequestType::AddRepo;
+  req.id = "add-repo-1";
+  req.repoPath = makeAbsolutePath(path);
+  attachSession(req, sessionToken);
+
+  apm::ipc::Response resp;
+  std::string err;
+  if (!apm::ipc::sendRequestAuto(req, resp, &err)) {
+    std::cerr << "Error: " << err << "\n";
+    return 1;
+  }
+
+  if (!resp.success) {
+    std::cerr << "Add repo failed: "
+              << (resp.message.empty() ? "unknown error" : resp.message)
+              << "\n";
+    return 1;
+  }
+
+  std::cout << (resp.message.empty() ? "Repository source added"
+                                     : resp.message)
+            << "\n";
+  return 0;
 }
 
 // Ask the daemon to install a package along with its dependencies.
@@ -2725,6 +2770,18 @@ int main(int argc, char **argv) {
     return cmdForgotPassword();
   if (cmd == "update")
     return cmdUpdate(sessionToken);
+
+  if (cmd == "add-repo") {
+    if (i >= argc) {
+      std::cerr << "apm: 'add-repo' requires a .repo file path\n";
+      return 1;
+    }
+    if (i + 1 != argc) {
+      std::cerr << "apm: 'add-repo' accepts exactly one file path\n";
+      return 1;
+    }
+    return cmdAddRepo(sessionToken, argv[i]);
+  }
 
   if (cmd == "install") {
     if (i >= argc) {

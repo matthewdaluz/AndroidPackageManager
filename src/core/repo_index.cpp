@@ -5,7 +5,7 @@
  * Copyright (C) 2025 RedHead Industries
  *
  * File: repo_index.cpp
- * Purpose: Implement sources.list parsing, repository index downloads, and
+ * Purpose: Implement .repo source parsing, repository index downloads, and
  * Packages parsing. Last Modified: 2026-03-15 11:56:16.537911560 -0400.
  * Author: Matthew DaLuz - RedHead Founder
  *
@@ -43,6 +43,7 @@
 #include <grp.h>
 #include <sstream>
 #include <sys/stat.h>
+#include <unordered_map>
 #include <unistd.h>
 #include <vector>
 #include <zlib.h>
@@ -307,7 +308,7 @@ static std::string mapArchToTermux(const std::string &arch) {
       lower.begin(), lower.end(), lower.begin(),
       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
-  if (lower == "arm64" || lower == "aarch64")
+  if (lower == "arm64-v8a" || lower == "arm64" || lower == "aarch64")
     return "aarch64";
   if (lower == "armhf" || lower == "arm")
     return "arm";
@@ -321,9 +322,27 @@ static std::string mapArchToTermux(const std::string &arch) {
   return arch;
 }
 
+static std::string normalizeDebianArch(const std::string &arch) {
+  if (arch.empty())
+    return arch;
+
+  std::string lower = toLower(arch);
+  if (lower == "arm64-v8a" || lower == "aarch64")
+    return "arm64";
+  if (lower == "armeabi-v7a")
+    return "armhf";
+  if (lower == "x86_64")
+    return "amd64";
+  if (lower == "x86")
+    return "i386";
+
+  return arch;
+}
+
 static std::string resolveRepoArch(const RepoSource &src,
                                    const std::string &defaultArch) {
-  std::string arch = src.arch.empty() ? defaultArch : src.arch;
+  std::string arch = normalizeDebianArch(src.arch.empty() ? defaultArch
+                                                          : src.arch);
 
   if (src.format == RepoFormat::Termux || src.isTermuxRepo) {
     std::string termuxArch = mapArchToTermux(arch);
@@ -598,22 +617,58 @@ const PackageEntry *findPackage(const PackageList &list,
 }
 
 // ---------------------------------------------------------
-// sources.list parsing
+// .repo source parsing
 // ---------------------------------------------------------
 
-// Parse one sources.list-style file into RepoSourceList (append).
-static bool parseSingleSourcesFile(const std::string &path,
-                                   RepoSourceList &out) {
+static void applyTrustPolicy(const std::string &value, RepoSource &src,
+                             const std::string &path) {
+  std::string valLower = toLower(value);
+
+  if (valLower == "required") {
+    src.trustPolicy = RepoTrustPolicy::Require;
+  } else if (valLower == "yes" || valLower == "true" || valLower == "1") {
+    src.trustPolicy = RepoTrustPolicy::Skip;
+  } else {
+    apm::logger::warn("loadSourcesList: unknown Trusted value '" + value +
+                      "' in " + path + " (defaulting to verification)");
+    src.trustPolicy = RepoTrustPolicy::Default;
+  }
+}
+
+static void applyDebSignaturePolicy(const std::string &value, RepoSource &src,
+                                    const std::string &path) {
+  std::string valLower = toLower(value);
+
+  if (valLower == "required") {
+    src.debSignaturePolicy = DebSignaturePolicy::Required;
+  } else if (valLower == "optional") {
+    src.debSignaturePolicy = DebSignaturePolicy::Optional;
+  } else if (valLower == "disabled" || valLower == "no" ||
+             valLower == "false" || valLower == "0") {
+    src.debSignaturePolicy = DebSignaturePolicy::Disabled;
+  } else {
+    apm::logger::warn("loadSourcesList: unknown Deb-Signatures value '" +
+                      value + "' in " + path + "; using 'disabled'");
+    src.debSignaturePolicy = DebSignaturePolicy::Disabled;
+  }
+}
+
+// Parse one APM .repo key-value file into RepoSourceList (append).
+static bool parseSingleRepoFile(const std::string &path, RepoSourceList &out,
+                                std::string *errorMsg) {
   std::string content;
   if (!apm::fs::readFile(path, content)) {
     apm::logger::error("loadSourcesList: cannot read " + path);
+    if (errorMsg)
+      *errorMsg = "Cannot read repo source: " + path;
     return false;
   }
 
   std::istringstream in(content);
   std::string line;
   size_t lineNo = 0;
-  bool any = false;
+  std::unordered_map<std::string, std::string> fields;
+  std::string rawForDetection;
 
   while (std::getline(in, line)) {
     ++lineNo;
@@ -630,221 +685,147 @@ static bool parseSingleSourcesFile(const std::string &path,
     if (!trimmed.empty() && trimmed[0] == '#')
       continue;
 
-    std::istringstream ls(trimmed);
-
-    std::string type;
-    if (!(ls >> type)) {
-      continue;
-    }
-
-    RepoSource src;
-    src.type = type;
-
-    std::string token;
-    if (!(ls >> token)) {
-      apm::logger::warn("loadSourcesList: malformed line " +
+    auto eqPos = trimmed.find('=');
+    if (eqPos == std::string::npos) {
+      apm::logger::warn("loadSourcesList: malformed .repo line " +
                         std::to_string(lineNo) + " in " + path);
-      continue;
+      if (errorMsg)
+        *errorMsg = "Malformed .repo line " + std::to_string(lineNo) +
+                    " in " + path;
+      return false;
     }
 
-    std::string uri;
-    std::string dist;
+    std::string key = trimmed.substr(0, eqPos);
+    std::string value = trimmed.substr(eqPos + 1);
+    trim(key);
+    trim(value);
 
-    // Optional "[...]" options block (we care about arch=)
-    if (!token.empty() && token[0] == '[') {
-      std::string options = token;
-      if (options.back() != ']') {
-        std::string t;
-        while (ls >> t) {
-          options.push_back(' ');
-          options.append(t);
-          if (!t.empty() && t.back() == ']')
-            break;
-        }
-      }
-
-      // Strip [ ]
-      if (!options.empty() && options.front() == '[')
-        options.erase(0, 1);
-      if (!options.empty() && options.back() == ']')
-        options.pop_back();
-
-      std::istringstream os(options);
-      std::string opt;
-      while (os >> opt) {
-        auto eqPos = opt.find('=');
-        if (eqPos == std::string::npos)
-          continue;
-
-        std::string key = opt.substr(0, eqPos);
-        std::string val = opt.substr(eqPos + 1);
-        trim(key);
-        trim(val);
-
-        std::string keyLower = key;
-        std::transform(
-            keyLower.begin(), keyLower.end(), keyLower.begin(),
-            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-
-        if (keyLower == "arch" || keyLower == "architectures") {
-          // Take first architecture if multiple
-          auto commaPos = val.find(',');
-          if (commaPos != std::string::npos) {
-            val = val.substr(0, commaPos);
-          }
-          src.arch = val;
-        } else if (keyLower == "trusted") {
-          std::string valLower = val;
-          std::transform(valLower.begin(), valLower.end(), valLower.begin(),
-                         [](unsigned char c) {
-                           return static_cast<char>(std::tolower(c));
-                         });
-
-          if (valLower == "required") {
-            src.trustPolicy = RepoTrustPolicy::Require;
-          } else if (valLower == "yes" || valLower == "true" ||
-                     valLower == "1") {
-            src.trustPolicy = RepoTrustPolicy::Skip;
-          } else {
-            apm::logger::warn("loadSourcesList: unknown trusted value '" + val +
-                              "' on line " + std::to_string(lineNo) + " in " +
-                              path + " (defaulting to verification)");
-            src.trustPolicy = RepoTrustPolicy::Default;
-          }
-        } else if (keyLower == "deb-signatures") {
-          std::string valLower = val;
-          std::transform(valLower.begin(), valLower.end(), valLower.begin(),
-                         [](unsigned char c) {
-                           return static_cast<char>(std::tolower(c));
-                         });
-
-          if (valLower == "required") {
-            src.debSignaturePolicy = DebSignaturePolicy::Required;
-          } else if (valLower == "optional") {
-            src.debSignaturePolicy = DebSignaturePolicy::Optional;
-          } else if (valLower == "disabled" || valLower == "no" ||
-                     valLower == "false" || valLower == "0") {
-            src.debSignaturePolicy = DebSignaturePolicy::Disabled;
-          } else {
-            apm::logger::warn(
-                "loadSourcesList: unknown deb-signatures value '" + val +
-                "' on line " + std::to_string(lineNo) + " in " + path +
-                "; using 'disabled'");
-            src.debSignaturePolicy = DebSignaturePolicy::Disabled;
-          }
-        }
-      }
-
-      if (!(ls >> uri >> dist)) {
-        apm::logger::warn("loadSourcesList: missing URI/dist on line " +
-                          std::to_string(lineNo) + " in " + path);
-        continue;
-      }
-    } else {
-      // No options: token is URI
-      uri = token;
-      if (!(ls >> dist)) {
-        apm::logger::warn("loadSourcesList: missing dist on line " +
-                          std::to_string(lineNo) + " in " + path);
-        continue;
-      }
-    }
-
-    src.uri = uri;
-    src.dist = dist;
-
-    std::string component;
-    while (ls >> component) {
-      src.components.push_back(component);
-    }
-
-    src.format = detectRepoFormat(src, trimmed);
-    src.isTermuxRepo =
-        (src.format == RepoFormat::Termux) || detectTermuxRepo(src, trimmed);
-    if (src.format == RepoFormat::Termux) {
-      apm::logger::info("loadSourcesList: detected Termux repository: " +
-                        src.uri);
-    } else if (src.isTermuxRepo) {
-      apm::logger::info("loadSourcesList: flagged Termux repository: " +
-                        src.uri);
-    }
-
-    if (src.type != "deb") {
-      // Ignore deb-src etc for now
-      continue;
-    }
-    if (src.uri.empty() || src.dist.empty() || src.components.empty()) {
-      apm::logger::warn("loadSourcesList: incomplete entry on line " +
+    if (key.empty()) {
+      apm::logger::warn("loadSourcesList: empty .repo key on line " +
                         std::to_string(lineNo) + " in " + path);
-      continue;
+      if (errorMsg)
+        *errorMsg = "Empty .repo key on line " + std::to_string(lineNo) +
+                    " in " + path;
+      return false;
     }
 
-    out.push_back(std::move(src));
-    any = true;
+    fields[toLower(key)] = value;
+    rawForDetection += trimmed;
+    rawForDetection.push_back('\n');
   }
 
-  if (!any) {
-    apm::logger::warn("loadSourcesList: no valid entries in " + path);
-  } else {
-    apm::logger::info("loadSourcesList: loaded entries from " + path);
+  auto getField = [&](const std::string &key) -> std::string {
+    auto it = fields.find(key);
+    return it != fields.end() ? it->second : "";
+  };
+
+  RepoSource src;
+  src.type = toLower(getField("type"));
+  src.uri = getField("url");
+
+  std::vector<std::string> suites = splitAndTrim(getField("suites"), ',');
+  if (!suites.empty()) {
+    src.dist = suites.front();
+    for (std::size_t i = 1; i < suites.size(); ++i) {
+      src.components.push_back(suites[i]);
+    }
   }
 
-  return any;
+  std::vector<std::string> archs =
+      splitAndTrim(getField("architectures"), ',');
+  if (!archs.empty()) {
+    src.arch = archs.front();
+  }
+
+  const std::string trusted = getField("trusted");
+  if (!trusted.empty()) {
+    applyTrustPolicy(trusted, src, path);
+  }
+
+  const std::string debSignatures = getField("deb-signatures");
+  if (!debSignatures.empty()) {
+    applyDebSignaturePolicy(debSignatures, src, path);
+  }
+
+  src.format = detectRepoFormat(src, rawForDetection);
+  src.isTermuxRepo =
+      (src.format == RepoFormat::Termux) || detectTermuxRepo(src, rawForDetection);
+  if (src.format == RepoFormat::Termux) {
+    apm::logger::info("loadSourcesList: detected Termux repository: " +
+                      src.uri);
+  } else if (src.isTermuxRepo) {
+    apm::logger::info("loadSourcesList: flagged Termux repository: " +
+                      src.uri);
+  }
+
+  if (src.type != "deb") {
+    if (errorMsg)
+      *errorMsg = "Repo source " + path + " must use Type=deb";
+    apm::logger::warn("loadSourcesList: unsupported Type in " + path);
+    return false;
+  }
+
+  if (src.uri.empty() || src.dist.empty() || src.components.empty()) {
+    if (errorMsg) {
+      *errorMsg =
+          "Repo source " + path +
+          " requires Type=deb, URL, and Suites=<dist>,<component>[,...]";
+    }
+    apm::logger::warn("loadSourcesList: incomplete .repo file " + path);
+    return false;
+  }
+
+  out.push_back(std::move(src));
+  apm::logger::info("loadSourcesList: loaded repo source from " + path);
+  return true;
 }
 
-// Parse either a single sources.list file or a directory containing
-// sources.list + sources.list.d/*.list.
+// Parse either a single .repo file or a directory containing *.repo files.
 bool loadSourcesList(const std::string &path, RepoSourceList &out,
                      std::string *errorMsg) {
   out.clear();
 
   if (isDirectoryPath(path)) {
-    // Directory mode: mimic /etc/apt
-    std::string mainFile = apm::fs::joinPath(path, "sources.list");
-    std::string dDir = apm::fs::joinPath(path, "sources.list.d");
-
     bool any = false;
 
-    if (apm::fs::pathExists(mainFile)) {
-      if (parseSingleSourcesFile(mainFile, out)) {
-        any = true;
-      }
-    }
-
-    if (isDirectoryPath(dDir)) {
-      auto files = apm::fs::listDir(dDir, false);
-      for (const auto &name : files) {
-        if (!hasSuffix(name, ".list"))
-          continue;
-        std::string full = apm::fs::joinPath(dDir, name);
-        if (parseSingleSourcesFile(full, out)) {
-          any = true;
+    auto files = apm::fs::listDir(path, false);
+    for (const auto &name : files) {
+      if (!hasSuffix(name, ".repo"))
+        continue;
+      std::string full = apm::fs::joinPath(path, name);
+      std::string parseErr;
+      if (!parseSingleRepoFile(full, out, &parseErr)) {
+        if (errorMsg) {
+          *errorMsg = parseErr.empty() ? "Invalid .repo source: " + full
+                                       : parseErr;
         }
+        return false;
       }
+      any = true;
     }
 
     if (!any) {
       if (errorMsg) {
-        *errorMsg = "No valid sources in directory: " + path;
+        *errorMsg = "No valid .repo sources in directory: " + path;
       }
-      apm::logger::warn("loadSourcesList: no valid sources in dir " + path);
+      apm::logger::warn("loadSourcesList: no valid .repo sources in dir " +
+                        path);
       return false;
     }
 
     apm::logger::info("loadSourcesList: total " + std::to_string(out.size()) +
-                      " sources loaded from dir " + path);
+                      " repo source(s) loaded from dir " + path);
     return true;
   }
 
-  // Single file mode
-  if (!parseSingleSourcesFile(path, out)) {
+  if (!hasSuffix(path, ".repo")) {
     if (errorMsg) {
-      *errorMsg = "No valid sources in " + path;
+      *errorMsg = "Repo source must be a .repo file: " + path;
     }
     return false;
   }
 
-  return true;
+  return parseSingleRepoFile(path, out, errorMsg);
 }
 
 // ---------------------------------------------------------
@@ -1688,7 +1669,7 @@ bool buildRepoIndices(const std::string &sourcesPath,
                       const std::string &listsDir,
                       const std::string &defaultArch, RepoIndexList &out,
                       std::string *errorMsg) {
-  // Load sources.list entries
+  // Load .repo source entries
   RepoSourceList sources;
   if (!loadSourcesList(sourcesPath, sources, errorMsg)) {
     return false;

@@ -33,8 +33,7 @@ Persistent APM data under `/data/apm`:
 - `logs`
 - `pkgs`
 - `sandbox/{state,env,mounts}`
-- `sources/sources.list`
-- `sources/sources.list.d/`
+- `sources/*.repo`
 - `status`
 - `.security/`
 - `debug.txt`
@@ -69,13 +68,15 @@ The CLI auto-detects emulator mode by looking for the emulator `apmd.socket`.
 
 ## Package and Repository Behavior
 
-- Sources are read from:
-  - `/data/apm/sources/sources.list`
-  - `/data/apm/sources/sources.list.d/*.list`
+- Sources are read from `/data/apm/sources/*.repo`.
+- Add a source with `apm add-repo <file.repo>`, then run `apm update`.
 - Supported source options:
-  - `arch=` / `architectures=`
-  - `trusted=`
-  - `deb-signatures=`
+  - `Type=deb`
+  - `URL=...`
+  - `Suites=<dist>,<component>[,<component>...]`
+  - `Architectures=...`
+  - `Trusted=...`
+  - `Deb-Signatures=...`
 - Release metadata flow:
   - Prefer `InRelease`
   - Fall back to `Release` + `Release.gpg`
@@ -85,15 +86,15 @@ The CLI auto-detects emulator mode by looking for the emulator `apmd.socket`.
 
 Trust behavior:
 
-- `trusted=yes|true|1`: skip Release signature verification
-- `trusted=required`: require Release signature verification
+- `Trusted=yes|true|1`: skip Release signature verification
+- `Trusted=required`: require Release signature verification
 - default: try verification and continue unverified on failure
 
 Detached `.deb` signature behavior:
 
-- `deb-signatures=required`: package install fails if detached verification fails or no signature is available
-- `deb-signatures=optional`: verification is attempted when possible, but install can continue
-- `deb-signatures=disabled`: skip detached package signature checks
+- `Deb-Signatures=required`: package install fails if detached verification fails or no signature is available
+- `Deb-Signatures=optional`: verification is attempted when possible, but install can continue
+- `Deb-Signatures=disabled`: skip detached package signature checks
 
 Detached package signature results are cached in `/data/apm/pkgs/sig-cache.json`.
 
@@ -103,6 +104,7 @@ Daemon-backed commands:
 
 - `apm ping`
 - `apm update`
+- `apm add-repo <file.repo>`
 - `apm install <pkg>`
 - `apm remove <pkg>`
 - `apm upgrade [pkgs...]`
@@ -151,7 +153,7 @@ Notes:
   - `Authenticate`
   - `ForgotPassword`
 - Session-required requests:
-  - update/install/remove/upgrade/autoremove
+  - update/add-repo/install/remove/upgrade/autoremove
   - APK operations
   - module lifecycle operations
   - factory reset

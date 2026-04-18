@@ -31,9 +31,9 @@ State file:
 
 Check:
 
-- source entries under `/data/apm/sources/sources.list` and `/data/apm/sources/sources.list.d/`
+- `.repo` source files under `/data/apm/sources/`
 - trusted keys under `/data/apm/keys`
-- `trusted=` and `deb-signatures=` options in the source definition
+- `Trusted=` and `Deb-Signatures=` options in the source definition
 - `/data/apm/logs/apmd.log` for Release, InRelease, checksum, or Packages download errors
 
 Remember:
@@ -46,11 +46,11 @@ Remember:
 Release verification:
 
 - import the correct public key with `apm key-add`
-- inspect `trusted=` for the affected source
+- inspect `Trusted=` for the affected source
 
 Detached `.deb` verification:
 
-- inspect `deb-signatures=` for the source
+- inspect `Deb-Signatures=` for the source
 - inspect `/data/apm/pkgs/sig-cache.json`
 - clear stale cache entries if needed:
 

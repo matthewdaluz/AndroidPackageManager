@@ -32,8 +32,7 @@ Under `/data/apm`:
 - `sandbox/state/`
 - `sandbox/env/`
 - `sandbox/mounts/`
-- `sources/sources.list`
-- `sources/sources.list.d/*.list`
+- `sources/*.repo`
 - `status`
 - `.security/`
 - `debug.txt`
@@ -126,21 +125,24 @@ Session-required requests:
 
 `apm update` and daemon-side metadata loading use this shape:
 
-1. Parse `sources.list` plus `sources.list.d/*.list`
+1. Parse `/data/apm/sources/*.repo`
 2. Detect repo format and architecture
 3. Download `InRelease` when available
 4. Fall back to `Release` + `Release.gpg`
-5. Apply `trusted=` policy
+5. Apply `Trusted=` policy
 6. Parse Release checksums
 7. Download `Packages.gz` first
 8. Fall back to plain `Packages` if needed
 9. Reject `Packages.xz` in the current Android path
 
-Source options currently recognized:
+`.repo` fields currently recognized:
 
-- `arch=` / `architectures=`
-- `trusted=`
-- `deb-signatures=`
+- `Type=deb`
+- `URL=...`
+- `Suites=<dist>,<component>[,<component>...]`
+- `Architectures=...`
+- `Trusted=...`
+- `Deb-Signatures=...`
 
 APM also auto-detects Termux-style repos and maps architectures accordingly.
 
