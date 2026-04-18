@@ -639,44 +639,8 @@ static bool ensureTermuxRuntimeDirs() {
     mk(apm::fs::joinPath(apm::config::getTermuxPrefix(), dir));
   }
 
-  mk(apm::config::APM_BIN_DIR);
+  mk(apm::config::getApmBinDir());
   return ok;
-}
-
-static bool createTermuxEnvFileIfMissing() {
-  if (apm::fs::pathExists(apm::config::TERMUX_ENV_FILE)) {
-    std::string existing;
-    if (apm::fs::readFile(apm::config::TERMUX_ENV_FILE, existing)) {
-      bool prefixOk =
-          existing.find(apm::config::getTermuxPrefix()) != std::string::npos;
-      bool libPathOk =
-          existing.find(
-              "LD_LIBRARY_PATH=$PREFIX/lib:$PREFIX/lib64:$PREFIX/lib32") !=
-          std::string::npos;
-      if (prefixOk && libPathOk) {
-        return true; // Already up-to-date
-      }
-    }
-    // Existing but stale; rewrite with the current paths.
-  }
-
-  std::ostringstream env;
-  env << "export PREFIX=" << apm::config::getTermuxPrefix() << "\n";
-  env << "export HOME=" << apm::config::TERMUX_HOME_DIR << "\n";
-  env << "export PATH=$PREFIX/bin:$PATH\n";
-  env << "export LD_LIBRARY_PATH=$PREFIX/lib:$PREFIX/lib64:$PREFIX/lib32\n";
-  env << "export TMPDIR=" << apm::config::TERMUX_TMP_DIR << "\n";
-  env << "export TERM=xterm-256color\n";
-  env << "export LANG=en_US.UTF-8\n";
-  env << "export SHELL=/system/bin/sh\n";
-
-  if (!apm::fs::writeFile(apm::config::TERMUX_ENV_FILE, env.str(), true)) {
-    apm::logger::warn("install_manager: failed to write Termux env file");
-    return false;
-  }
-
-  ::chmod(apm::config::TERMUX_ENV_FILE, 0644);
-  return true;
 }
 
 static bool copyFilePreserveMode(const std::string &src,
@@ -838,15 +802,16 @@ static bool createTermuxWrapper(const std::string &commandName) {
   if (commandName.empty())
     return false;
 
-  if (!apm::fs::createDirs(apm::config::APM_BIN_DIR)) {
+  if (!apm::fs::createDirs(apm::config::getApmBinDir())) {
     apm::logger::warn("install_manager: failed to create wrapper dir");
     return false;
   }
 
-  std::string target = apm::fs::joinPath(apm::config::APM_BIN_DIR, commandName);
+  std::string target =
+      apm::fs::joinPath(apm::config::getApmBinDir(), commandName);
   std::ostringstream script;
   script << "#!/system/bin/sh\n";
-  script << ". " << apm::config::TERMUX_ENV_FILE << "\n";
+  script << ". " << apm::config::getTermuxEnvFile() << "\n";
   script << "exec " << apm::config::getTermuxPrefix() << "/bin/" << commandName
          << " \"$@\"\n";
 
@@ -865,7 +830,8 @@ static bool createTermuxWrapper(const std::string &commandName) {
 static bool removeTermuxWrapper(const std::string &commandName) {
   if (commandName.empty())
     return true;
-  std::string target = apm::fs::joinPath(apm::config::APM_BIN_DIR, commandName);
+  std::string target =
+      apm::fs::joinPath(apm::config::getApmBinDir(), commandName);
   return apm::fs::removeFile(target);
 }
 
@@ -889,9 +855,12 @@ static bool rewriteTermuxPathsDuringExtraction(
     return false;
   }
 
-  if (!ensureTermuxRuntimeDirs() || !createTermuxEnvFileIfMissing()) {
+  std::string envErr;
+  if (!ensureTermuxRuntimeDirs() ||
+      !apm::daemon::path::ensureTermuxEnvFile(&envErr)) {
     if (errorMsg)
-      *errorMsg = "Failed to prepare Termux runtime directories";
+      *errorMsg = envErr.empty() ? "Failed to prepare Termux runtime directories"
+                                 : envErr;
     return false;
   }
 

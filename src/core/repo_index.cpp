@@ -555,7 +555,10 @@ bool parsePackagesString(const std::string &content, PackageList &out,
     pkg.sha256 = getField("SHA256");
 
     const std::string dependsRaw = getField("Depends");
+    const std::string preDependsRaw = getField("Pre-Depends");
     pkg.depends = parseDependsField(dependsRaw);
+    auto preDepends = parseDependsField(preDependsRaw);
+    pkg.depends.insert(pkg.depends.end(), preDepends.begin(), preDepends.end());
     pkg.isTermuxPackage = detectTermuxPackage(pkg);
 
     if (pkg.packageName.empty()) {

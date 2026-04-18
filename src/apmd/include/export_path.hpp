@@ -63,6 +63,9 @@ void refreshPathEnvironment();
 // Ensure canonical /data/apm/path path source files are present.
 void ensureProfileLoaded();
 
+// Ensure the Termux runtime env file exists and matches the current APM prefix.
+bool ensureTermuxEnvFile(std::string *errorMsg = nullptr);
+
 // Generate apm-env.sh for emulator mode with atomic write.
 // Only active when isEmulatorMode() is true.
 void generateEmulatorEnv();
