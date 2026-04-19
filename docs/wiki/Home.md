@@ -13,7 +13,8 @@ This wiki tracks the current codebase for APM, `apmd`, `amsd`, and AMS.
 
 ## Quick Facts
 
-- Current CLI version in source: `2.0.1b - Open Beta`
+- Current CLI version in source: `2.0.3b - Open Beta`
+- Current CLI build date string: `April 18th, 2026. - 5:00 PM Eastern Time.`
 - Main package transport is UNIX socket IPC
 - Android `apmd` endpoint: abstract socket `@apmd`
 - Android `amsd` endpoint: `/data/ams/amsd.sock`
@@ -25,11 +26,11 @@ This wiki tracks the current codebase for APM, `apmd`, `amsd`, and AMS.
 
 ## Source Map
 
-- `src/apm`: CLI, log helpers, manual package handling, IPC client/transport
+- `src/apm`: CLI, auth/session prompts, log helpers, manual package handling, IPC client/transport
 - `src/apmd`: package daemon, install manager, APK installer, factory reset, PATH hotload
 - `src/amsd`: AMS daemon, safe mode, module IPC dispatcher
 - `src/ams`: module metadata parser and lifecycle manager
-- `src/core`: config, repo parsing, release parsing, downloader, status DB, manual package metadata
+- `src/core`: config, repo/release parsing, downloader, status DB, manual package metadata
 - `src/util`: filesystem/process helpers and crypto primitives
 
 ## Related Documents

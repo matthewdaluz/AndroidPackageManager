@@ -35,11 +35,14 @@ Check:
 - trusted keys under `/data/apm/keys`
 - `Trusted=` and `Deb-Signatures=` options in the source definition
 - `/data/apm/logs/apmd.log` for Release, InRelease, checksum, or Packages download errors
+- HTTPS certificate availability; the downloader uses `APM_CAINFO` first, then common system CA bundle files and CA directories
 
 Remember:
 
 - `Packages.gz` and plain `Packages` are supported
 - `Packages.xz` is not used in the current Android path
+
+If HTTPS downloads fail with certificate errors, point `APM_CAINFO` at a PEM bundle readable by the daemon environment.
 
 ## Signature verification fails
 
@@ -94,6 +97,12 @@ Also check:
 - managed shell startup files for the APM hook block
 - a fresh shell session after install/remove operations
 
+Command collision behavior:
+
+- shims that collide with Android system commands are skipped
+- collisions between managed packages can produce namespaced shims such as `<package>-<command>`
+- install/remove output and `apmd.log` report collision warnings when hotload is rebuilt
+
 ## `module-install` fails
 
 Check:
@@ -122,9 +131,14 @@ Check:
 - `/data/ams/.amsd_safe_mode_threshold`
 - `/data/ams/.amsd_safe_mode`
 - the module `state.json` file
+- `/data/ams/.runtime/bind-mounts-system.txt`
+- `/data/ams/.runtime/bind-mounts-vendor.txt`
+- `/data/ams/.runtime/bind-mounts-product.txt`
 - `/data/ams/logs/amsd.log`
 
 If a target partition was not mounted when `amsd` started, the partition monitor may retry later in the same boot. If safe mode is active, overlays are intentionally skipped.
+
+The current backend uses read-only bind mounts plus small read-only overlay mounts. Make sure top-level entries under `overlay/system`, `overlay/vendor`, and `overlay/product` match existing files or directories on the target partition.
 
 ## `apk-install --install-as-system` fails
 
@@ -133,6 +147,9 @@ Check:
 - `apmd` is running as root
 - the AMS module skeleton `apm-system-apps` can be created under `/data/ams/modules/`
 - `/data/ams/modules/apm-system-apps/overlay/system/app/` is writable
+- `/data/ams/modules/apm-system-apps/module-info.json`
+- `/data/ams/modules/apm-system-apps/state.json`
+- `/data/ams/modules/apm-system-apps/workdir/system/`
 
 Also remember:
 
@@ -184,3 +201,9 @@ It may leave behind:
 - general cache directories
 
 Check the resulting daemon message and `/data/apm/logs/apmd.log` for partial-failure details.
+
+For cache-only cleanup after a reset, run:
+
+```bash
+apm wipe-cache all
+```

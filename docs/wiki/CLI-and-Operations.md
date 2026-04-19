@@ -34,12 +34,18 @@
 - `apm apk-install <apk> --install-as-system`
 - `apm apk-uninstall <package>`
 
-### Local inspection and trust helpers
+### Read-only daemon requests
 
 - `apm list`
 - `apm info <pkg>`
 - `apm search <pattern>`
+
+These go through `apmd`, but they do not require a security session.
+
+### Local inspection and trust helpers
+
 - `apm log [--apm|--ams|--module <name>|<module>] [--export|--clear]`
+- `apm log [--daemon apm|ams] [--export|--clear]`
 - `apm log --clear-all`
 - `apm version`
 - `apm key-add <file.asc|file.gpg>`
@@ -58,8 +64,11 @@ These commands require a valid session:
 - `autoremove`
 - `debuglogging`
 - `factory-reset`
+- `wipe-cache`
 - `module-*`
 - `apk-*`
+- `log --clear`
+- `log --clear-all`
 
 These do not:
 
@@ -68,7 +77,7 @@ These do not:
 - `list`
 - `info`
 - `search`
-- `log`
+- `log` follow/export
 - `version`
 - `key-add`
 - `sig-cache`
@@ -100,9 +109,11 @@ apm install <package>
 
 Notes:
 
-- repository metadata must already exist locally from `apm update`
+- `apm install` first asks the daemon for a simulated install plan and prompts before running it
+- repository metadata is built from configured sources before candidate resolution; running `apm update` first is still the clearest way to validate repository setup
 - dependency resolution is direct, not a full SAT solver
 - dependencies installed only to satisfy another package are tracked as auto-installed
+- install downloads can report progress for multiple packages
 
 ### Remove a package
 
@@ -114,6 +125,7 @@ Behavior:
 
 - manual/local package installs are removed locally first
 - repo-backed installs are forwarded to `apmd`
+- repo-backed removal refuses to remove a package required by another installed package unless internal force options are used by daemon code
 
 ### Autoremove
 
@@ -134,7 +146,14 @@ Supported manual payloads:
 - `.deb`
 - tar-style archives including `.tar`, `.tar.gz`, `.tgz`, `.tar.xz`, `.txz`, `.gz`, and `.xz`
 
-Tarball/manual packages must contain `package-info.json` with install metadata including a target prefix.
+Tarball/manual packages must contain `package-info.json`. Required fields are:
+
+- `package`
+- `prefix`
+
+The prefix must live under `/data/local/tmp/apm/runtime/installed` and must include a package-specific subdirectory.
+
+Local `.deb` manual installs use the Debian control `Package` and `Version` fields and install under `/data/local/tmp/apm/runtime/installed/commands/<package>`.
 
 ### Manage AMS modules
 
@@ -243,6 +262,14 @@ It does not currently advertise a full wipe of:
 - repo source definitions
 - package download cache under `pkgs/`
 - general cache under `cache/`
+
+## Cache Wipe
+
+```bash
+apm wipe-cache [all|apm|repo-lists|package-downloads|sig-cache|ams-runtime]
+```
+
+If no target is passed, the CLI prompts for one or more targets. Wiping package downloads preserves `sig-cache.json` unless `sig-cache` is selected too. Wiping `ams-runtime` clears `/data/ams/.runtime` and then asks the module manager to rebuild enabled overlays.
 
 ## Primary Logs
 

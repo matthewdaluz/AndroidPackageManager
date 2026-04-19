@@ -2,7 +2,7 @@
 
 ## Core Components
 
-- `apm`: CLI entry point. It mixes local commands with daemon-backed requests.
+- `apm`: CLI entry point. It mixes authenticated daemon requests, unauthenticated read-only daemon requests, and local helper commands.
 - `apmd`: privileged package daemon. It owns repository updates, package lifecycle operations, APK operations, security sessions, factory reset, and command hotload.
 - `amsd`: AMS daemon. It owns boot-time overlay application, safe mode, and module lifecycle script startup.
 - `ModuleManager`: shared AMS lifecycle engine used by both daemons.
@@ -82,6 +82,9 @@ Session-free requests:
 - `Ping`
 - `Authenticate`
 - `ForgotPassword`
+- `List`
+- `Info`
+- `Search`
 
 Session-required requests:
 
@@ -98,7 +101,9 @@ Session-required requests:
 - `ModuleDisable`
 - `ModuleRemove`
 - `FactoryReset`
+- `WipeCache`
 - `DebugLogging`
+- `LogClear`
 
 ### `amsd`
 
@@ -120,6 +125,7 @@ Session-required requests:
 - expiry: `180` seconds
 - integrity: HMAC over `token|expiry`
 - HMAC material is derived from the master key
+- successful privileged validation refreshes the rolling expiry window
 
 ## Repository Update Flow
 
@@ -134,6 +140,8 @@ Session-required requests:
 7. Download `Packages.gz` first
 8. Fall back to plain `Packages` if needed
 9. Reject `Packages.xz` in the current Android path
+
+`buildRepoIndices(...)` is an active metadata builder, not only a parser. Daemon-side commands that need repository candidates, including install, upgrade, info, and search, can attempt the same source/list refresh path before parsing package entries.
 
 `.repo` fields currently recognized:
 
@@ -155,10 +163,13 @@ Current behavior:
 - dependency resolution is direct and practical, not a full SAT solver
 - package payloads are checksum-verified
 - SHA256 is preferred, with MD5 fallback if metadata provides it
+- package metadata must provide at least one checksum for install
+- downloads are batched with up to 3 parallel transfers where the code queues multiple package or index downloads
 - detached `.deb` signatures can be enforced per source
 - detached verification results are cached in `/data/apm/pkgs/sig-cache.json`
 - installed package metadata is persisted in a dpkg-style status file
 - `autoInstalled` dependencies can later be removed by `autoremove`
+- Termux-style packages are separated from normal Debian packages, installed under the Termux runtime prefix, and get wrapper shims that source the generated Termux environment file
 
 Manual/local packages are separate from the repo-backed status DB:
 
@@ -177,6 +188,13 @@ Generated output:
 - bash hook file: `/data/local/tmp/apm/path/bash-path.sh`
 - command index: `/data/apm/sandbox/state/command-index.json`
 - path env snapshot: `/data/apm/sandbox/env/apm-path.env`
+- Termux env file: `/data/local/tmp/apm/runtime/installed/termux/env.sh`
+
+Shim collision behavior:
+
+- commands that already exist in system paths are skipped
+- the first package providing a non-conflicting command gets the canonical shim name
+- later package-to-package collisions can get namespaced shims such as `<package>-<command>`
 
 Boot fallback hooks shipped by the flashable:
 
@@ -192,12 +210,15 @@ Boot fallback hooks shipped by the flashable:
 - user app install:
   - stage APK under `/data/local/tmp/apm-apk-staging`
   - run `pm install --user 0 -r`
+  - remove the staged copy after `pm` returns
 - system app staging:
   - require root
-  - stage `base.apk` into the AMS module `apm-system-apps`
+  - create/update the AMS module skeleton `apm-system-apps`
+  - ensure `module-info.json`, `state.json`, and `workdir/{system,vendor,product}` exist
   - target path: `/data/ams/modules/apm-system-apps/overlay/system/app/<name>/base.apk`
   - reboot required for Android to recognize the staged system app
 
 ## Versioning Note
 
-The current hardcoded CLI version string lives in `src/apm/apm.cpp` and is `2.0.1b - Open Beta`.
+The current hardcoded CLI version string lives in `src/apm/apm.cpp` and is `2.0.3b - Open Beta`.
+The current hardcoded CLI build date string is `April 18th, 2026. - 5:00 PM Eastern Time.`

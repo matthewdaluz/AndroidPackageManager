@@ -49,7 +49,8 @@ Recognized fields:
 Notes:
 
 - booleans can be JSON booleans or `"true"` / `"false"` strings
-- unsupported JSON value types are not accepted by the lightweight parser
+- `null` is accepted and behaves like an unset/default value for recognized fields
+- numbers, arrays, and objects are not accepted by the lightweight parser
 
 ### Name Rules
 
@@ -121,7 +122,8 @@ Important current behavior:
 
 - install writes `state.json` with `enabled=true`
 - overlays are rebuilt as part of install
-- successful install may immediately trigger lifecycle scripts
+- successful install runs declared `post-fs-data.sh` and `service.sh` hooks immediately after the overlay rebuild
+- enabling a disabled module also rebuilds overlays and runs declared hooks
 
 ## Script Hooks
 
@@ -135,10 +137,12 @@ Important current behavior:
 ### `post-fs-data.sh`
 
 - runs synchronously when `post_fs_data: true`
+- runs after overlays are rebuilt during install, enable, and daemon startup
 
 ### `service.sh`
 
 - runs in the background when `service: true`
+- starts after `post-fs-data.sh` during install, enable, and daemon startup
 
 All scripts run through `/system/bin/sh`.
 
@@ -165,6 +169,8 @@ It also creates:
 
 - keep overlays additive and easy to reason about
 - test each target subtree independently
+- match the target filesystem shape at the top level; the bind backend expects top-level overlay entries to correspond to existing target files or directories
+- prefer placing new files under existing directories instead of trying to create brand-new top-level target entries
 - if using `install-sh`, make it idempotent and fail loudly
 - check `/data/ams/logs/<module>.log` after install or enable
 - if boot-time partitions were not ready when you enabled a module, `amsd` may need a reboot or partition-monitor retry window before the overlay fully appears

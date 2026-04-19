@@ -138,7 +138,7 @@ cmake --build build --parallel "$(nproc)"
 - `apmd`
 - `amsd`
 
-It also defines packaged `init.amsd.rc` and `init.apmd.rc` prebuilts.
+The binary definitions reference `init_rc` entries for daemon startup in Soong/AOSP builds. The maintained recovery flashable carries the concrete init scripts under `apm-flashable-new/system/etc/init/`.
 
 ## Recovery Flashable Build
 
@@ -189,9 +189,13 @@ The flashable ships:
 - `/system/etc/selinux/apm_file_contexts`
 - `/system/etc/selinux/apm_property_contexts`
 - `/system/etc/selinux/apm_service_contexts`
-- `/system/addon.d/30-apm.sh`
+- addon.d template pieces used to create `/system/addon.d/30-apm.sh`
 
 The custom recovery installer is slot-aware and chooses its target from `/mnt/system*`.
+
+During install, `update-binary` combines `system/addon.d/addond_head`, the final payload file list, and `system/addon.d/addond_tail` into `system/addon.d/30-apm.sh`.
+
+It also detects recovery layouts where top-level `bin` or `etc` are symlinks and copies into the nested `system/` root when needed.
 
 ## Boot/Init Behavior in the Flashable
 
