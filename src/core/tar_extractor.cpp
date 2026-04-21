@@ -128,19 +128,52 @@ static bool validateEntryPath(const std::string &rawPath,
   return true;
 }
 
+static bool pathHasPrefixBoundary(const std::string &path,
+                                  const std::string &prefix) {
+  if (prefix.empty() || path.size() < prefix.size()) {
+    return false;
+  }
+  if (path.compare(0, prefix.size(), prefix) != 0) {
+    return false;
+  }
+  return path.size() == prefix.size() || prefix.back() == '/' ||
+         path[prefix.size()] == '/';
+}
+
+static bool validateAllowedAbsoluteSymlinkTarget(
+    const std::string &entryName, const std::string &rawTarget,
+    const apm::tar::ExtractOptions &options, std::string *errorMsg) {
+  for (const auto &prefix : options.allowedAbsoluteSymlinkTargetPrefixes) {
+    if (!pathHasPrefixBoundary(rawTarget, prefix)) {
+      continue;
+    }
+
+    std::string suffix = rawTarget.substr(prefix.size());
+    while (!suffix.empty() && suffix.front() == '/') {
+      suffix.erase(0, 1);
+    }
+
+    std::vector<std::string> parts;
+    if (!appendSegments(suffix, false, parts, errorMsg, entryName)) {
+      return false;
+    }
+    return true;
+  }
+
+  if (errorMsg) {
+    *errorMsg = "Unsafe tar link (absolute target): " + entryName;
+  }
+  return false;
+}
+
 static bool validateLinkTarget(const std::string &entryName,
                                const std::string &rawTarget,
+                               char linkType,
+                               const apm::tar::ExtractOptions &options,
                                std::string *errorMsg) {
   if (rawTarget.empty()) {
     if (errorMsg) {
       *errorMsg = "Unsafe tar link (empty target): " + entryName;
-    }
-    return false;
-  }
-
-  if (rawTarget.front() == '/') {
-    if (errorMsg) {
-      *errorMsg = "Unsafe tar link (absolute target): " + entryName;
     }
     return false;
   }
@@ -150,6 +183,17 @@ static bool validateLinkTarget(const std::string &entryName,
       *errorMsg = "Unsafe tar link (backslash in target): " + entryName;
     }
     return false;
+  }
+
+  if (rawTarget.front() == '/') {
+    if (linkType == 'h') {
+      if (errorMsg) {
+        *errorMsg = "Unsafe tar hardlink (absolute target): " + entryName;
+      }
+      return false;
+    }
+    return validateAllowedAbsoluteSymlinkTarget(entryName, rawTarget, options,
+                                                errorMsg);
   }
 
   std::string name = stripLeadingDotSlash(entryName);
@@ -378,6 +422,11 @@ namespace apm::tar {
 // lightweight across Android and Linux hosts.
 bool extractTar(const std::string &tarPath, const std::string &destDir,
                 std::string *errorMsg) {
+  return extractTar(tarPath, destDir, ExtractOptions{}, errorMsg);
+}
+
+bool extractTar(const std::string &tarPath, const std::string &destDir,
+                const ExtractOptions &options, std::string *errorMsg) {
   if (tarPath.empty()) {
     if (errorMsg)
       *errorMsg = "Tar path is empty";
@@ -468,7 +517,8 @@ bool extractTar(const std::string &tarPath, const std::string &destDir,
         apm::logger::error("extractTar: link entry missing target");
         return false;
       }
-      if (!validateLinkTarget(entry, info.linkTarget, errorMsg)) {
+      if (!validateLinkTarget(entry, info.linkTarget, info.type, options,
+                              errorMsg)) {
         apm::logger::error("extractTar: unsafe tar link target: " + entry);
         return false;
       }

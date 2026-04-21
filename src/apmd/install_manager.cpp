@@ -44,6 +44,7 @@
 #include "gpg_verify.hpp"
 
 #include <dirent.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -62,6 +63,11 @@ namespace apm::install {
 using apm::repo::PackageEntry;
 using apm::repo::PackageList;
 using apm::repo::RepoIndexList;
+
+namespace {
+constexpr const char *kLegacyTermuxPrefix =
+    "/data/data/com.termux/files/usr";
+}
 
 // ---------------------------------------------------------------------
 // Small helpers
@@ -82,6 +88,15 @@ static std::string makeDebFileName(const PackageEntry &pkg) {
 
 static bool startsWith(const std::string &s, const std::string &prefix) {
   return s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0;
+}
+
+static bool hasPathPrefixBoundary(const std::string &path,
+                                  const std::string &prefix) {
+  if (!startsWith(path, prefix)) {
+    return false;
+  }
+  return path.size() == prefix.size() || prefix.back() == '/' ||
+         path[prefix.size()] == '/';
 }
 
 static bool hasSuffix(const std::string &s, const std::string &suffix) {
@@ -645,38 +660,106 @@ static bool ensureTermuxRuntimeDirs() {
 
 static bool copyFilePreserveMode(const std::string &src,
                                  const std::string &dst) {
-  std::ifstream in(src, std::ios::binary);
-  if (!in.is_open()) {
-    apm::logger::warn("install_manager: cannot open source file " + src);
+  int inFd = ::open(src.c_str(), O_RDONLY | O_CLOEXEC);
+  if (inFd < 0) {
+    apm::logger::warn("install_manager: cannot open source file " + src +
+                      ": " + std::strerror(errno));
+    return false;
+  }
+
+  struct stat st{};
+  if (::fstat(inFd, &st) != 0) {
+    apm::logger::warn("install_manager: cannot stat source file " + src +
+                      ": " + std::strerror(errno));
+    ::close(inFd);
     return false;
   }
 
   auto pos = dst.find_last_of('/');
   if (pos != std::string::npos) {
     std::string parent = dst.substr(0, pos);
-    if (!parent.empty()) {
-      apm::fs::createDirs(parent);
+    if (!parent.empty() && !apm::fs::createDirs(parent)) {
+      apm::logger::warn("install_manager: cannot create destination parent " +
+                        parent);
+      ::close(inFd);
+      return false;
     }
   }
 
-  std::ofstream out(dst, std::ios::binary | std::ios::trunc);
-  if (!out.is_open()) {
-    apm::logger::warn("install_manager: cannot open destination file " + dst);
+  ::unlink(dst.c_str());
+
+  const mode_t mode = st.st_mode & 07777;
+  int outFd = ::open(dst.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC,
+                     mode);
+  if (outFd < 0) {
+    apm::logger::warn("install_manager: cannot open destination file " + dst +
+                      ": " + std::strerror(errno));
+    ::close(inFd);
     return false;
   }
 
-  out << in.rdbuf();
-  if (!out.good()) {
-    apm::logger::warn("install_manager: failed to copy file " + src);
-    return false;
+  char buffer[65536];
+  while (true) {
+    ssize_t n = ::read(inFd, buffer, sizeof(buffer));
+    if (n < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      apm::logger::warn("install_manager: failed to read file " + src + ": " +
+                        std::strerror(errno));
+      ::close(inFd);
+      ::close(outFd);
+      ::unlink(dst.c_str());
+      return false;
+    }
+    if (n == 0) {
+      break;
+    }
+
+    ssize_t written = 0;
+    while (written < n) {
+      ssize_t w = ::write(outFd, buffer + written,
+                          static_cast<std::size_t>(n - written));
+      if (w < 0) {
+        if (errno == EINTR) {
+          continue;
+        }
+        apm::logger::warn("install_manager: failed to write file " + dst +
+                          ": " + std::strerror(errno));
+        ::close(inFd);
+        ::close(outFd);
+        ::unlink(dst.c_str());
+        return false;
+      }
+      if (w == 0) {
+        apm::logger::warn("install_manager: zero-byte write while copying " +
+                          src + " -> " + dst);
+        ::close(inFd);
+        ::close(outFd);
+        ::unlink(dst.c_str());
+        return false;
+      }
+      written += w;
+    }
   }
 
-  struct stat st{};
-  if (::stat(src.c_str(), &st) == 0) {
-    ::chmod(dst.c_str(), st.st_mode & 07777);
+  bool ok = true;
+  if (::fchmod(outFd, mode) != 0) {
+    apm::logger::warn("install_manager: chmod failed for " + dst + ": " +
+                      std::strerror(errno));
+    ok = false;
   }
 
-  return true;
+  if (::close(outFd) != 0) {
+    apm::logger::warn("install_manager: close failed for " + dst + ": " +
+                      std::strerror(errno));
+    ok = false;
+  }
+  ::close(inFd);
+  if (!ok) {
+    ::unlink(dst.c_str());
+  }
+  return ok;
 }
 
 static bool copySymlink(const std::string &src, const std::string &dst) {
@@ -688,6 +771,18 @@ static bool copySymlink(const std::string &src, const std::string &dst) {
   }
   buf[static_cast<std::size_t>(len)] = '\0';
 
+  std::string target(buf.data());
+  if (!target.empty() && target.front() == '/') {
+    if (!hasPathPrefixBoundary(target, kLegacyTermuxPrefix)) {
+      apm::logger::warn("install_manager: unsafe Termux symlink target " +
+                        target + " from " + src);
+      return false;
+    }
+
+    target = apm::config::getTermuxPrefix() +
+             target.substr(std::strlen(kLegacyTermuxPrefix));
+  }
+
   auto pos = dst.find_last_of('/');
   if (pos != std::string::npos) {
     std::string parent = dst.substr(0, pos);
@@ -697,7 +792,7 @@ static bool copySymlink(const std::string &src, const std::string &dst) {
   }
 
   ::unlink(dst.c_str());
-  if (::symlink(buf.data(), dst.c_str()) != 0) {
+  if (::symlink(target.c_str(), dst.c_str()) != 0) {
     apm::logger::warn("install_manager: symlink failed for " + dst);
     return false;
   }
@@ -1033,7 +1128,18 @@ static bool installSinglePackage(const PackageEntry &pkg,
   }
 
   if (!parts.dataTarPath.empty()) {
-    if (!apm::tar::extractTar(parts.dataTarPath, dataDir, &err)) {
+    bool dataExtracted = false;
+    if (opts.isTermuxPackage) {
+      apm::tar::ExtractOptions tarOptions;
+      tarOptions.allowedAbsoluteSymlinkTargetPrefixes.push_back(
+          kLegacyTermuxPrefix);
+      dataExtracted =
+          apm::tar::extractTar(parts.dataTarPath, dataDir, tarOptions, &err);
+    } else {
+      dataExtracted = apm::tar::extractTar(parts.dataTarPath, dataDir, &err);
+    }
+
+    if (!dataExtracted) {
       if (errorMsg)
         *errorMsg = "Failed to extract data tar: " + err;
       apm::logger::error("installSinglePackage: data tar extract failed: " +

@@ -32,6 +32,7 @@ set(CMAKE_ANDROID_API 29)
 
 # Emulator mode for x86_64 Linux PC builds
 option(APM_EMULATOR_MODE "Build APM in emulator mode for x86_64 Linux" OFF)
+option(APM_BUILD_TESTS "Build focused APM regression tests" OFF)
 if(APM_EMULATOR_MODE)
   add_compile_definitions(APM_EMULATOR_MODE=1)
   message(STATUS "APM Emulator Mode: ENABLED")
@@ -503,3 +504,23 @@ target_link_libraries(amsd PRIVATE
     ${OPENSSL_SSL_LIBRARY}
     ${OPENSSL_CRYPTO_LIBRARY}
 )
+
+if(APM_BUILD_TESTS)
+  enable_testing()
+
+  add_executable(apm_tar_extractor_tests
+      tests/tar_extractor_tests.cpp
+      src/core/tar_extractor.cpp
+      src/core/config.cpp
+      src/core/logger.cpp
+      src/util/fs.cpp
+  )
+
+  target_include_directories(apm_tar_extractor_tests PRIVATE
+      src/core/include
+      src/util/include
+      include
+  )
+
+  add_test(NAME tar_extractor_tests COMMAND apm_tar_extractor_tests)
+endif()

@@ -27,8 +27,13 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 namespace apm::tar {
+
+struct ExtractOptions {
+  std::vector<std::string> allowedAbsoluteSymlinkTargetPrefixes;
+};
 
 // Extract a tar archive (optionally compressed: .gz, .xz, .bz2, etc.)
 // into the given destination directory.
@@ -39,6 +44,10 @@ namespace apm::tar {
 //
 // Returns true on success, false on failure.
 bool extractTar(const std::string &tarPath, const std::string &destDir,
+                std::string *errorMsg = nullptr);
+
+bool extractTar(const std::string &tarPath, const std::string &destDir,
+                const ExtractOptions &options,
                 std::string *errorMsg = nullptr);
 
 } // namespace apm::tar
