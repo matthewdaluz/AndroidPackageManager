@@ -203,6 +203,36 @@ static bool ensureDirectoryMode(const std::string &path, mode_t mode) {
   return true;
 }
 
+static bool rewriteLegacyTermuxScriptContent(const std::string &src,
+                                             const struct stat &st,
+                                             std::string &rewritten) {
+  rewritten.clear();
+
+  if (!S_ISREG(st.st_mode) || (st.st_mode & 0111) == 0) {
+    return false;
+  }
+
+  std::string content;
+  if (!apm::fs::readFile(src, content) || content.size() < 2 ||
+      content[0] != '#' || content[1] != '!') {
+    return false;
+  }
+
+  const std::string legacyPrefix = kLegacyTermuxPrefix;
+  const std::string currentPrefix = apm::config::getTermuxPrefix();
+  if (content.find(legacyPrefix) == std::string::npos) {
+    return false;
+  }
+
+  rewritten = content;
+  std::size_t pos = 0;
+  while ((pos = rewritten.find(legacyPrefix, pos)) != std::string::npos) {
+    rewritten.replace(pos, legacyPrefix.size(), currentPrefix);
+    pos += currentPrefix.size();
+  }
+  return true;
+}
+
 // Validate a downloaded .deb against checksums provided in Packages.
 // Prefers SHA256; if that mismatches and an MD5sum is present, fallback to MD5.
 static bool verifyDebSha256(const PackageEntry &pkg, const std::string &debPath,
@@ -689,6 +719,9 @@ static bool copyFilePreserveMode(const std::string &src,
   ::unlink(dst.c_str());
 
   const mode_t mode = st.st_mode & 07777;
+  std::string rewrittenScript;
+  const bool useRewrittenScript =
+      rewriteLegacyTermuxScriptContent(src, st, rewrittenScript);
   int outFd = ::open(dst.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC,
                      mode);
   if (outFd < 0) {
@@ -698,48 +731,77 @@ static bool copyFilePreserveMode(const std::string &src,
     return false;
   }
 
-  char buffer[65536];
-  while (true) {
-    ssize_t n = ::read(inFd, buffer, sizeof(buffer));
-    if (n < 0) {
-      if (errno == EINTR) {
-        continue;
-      }
-      apm::logger::warn("install_manager: failed to read file " + src + ": " +
-                        std::strerror(errno));
-      ::close(inFd);
-      ::close(outFd);
-      ::unlink(dst.c_str());
-      return false;
-    }
-    if (n == 0) {
-      break;
-    }
-
-    ssize_t written = 0;
-    while (written < n) {
-      ssize_t w = ::write(outFd, buffer + written,
-                          static_cast<std::size_t>(n - written));
+  if (useRewrittenScript) {
+    const char *data = rewrittenScript.data();
+    ssize_t remaining = static_cast<ssize_t>(rewrittenScript.size());
+    while (remaining > 0) {
+      ssize_t w = ::write(outFd, data, static_cast<std::size_t>(remaining));
       if (w < 0) {
         if (errno == EINTR) {
           continue;
         }
-        apm::logger::warn("install_manager: failed to write file " + dst +
-                          ": " + std::strerror(errno));
+        apm::logger::warn("install_manager: failed to write rewritten script " +
+                          dst + ": " + std::strerror(errno));
         ::close(inFd);
         ::close(outFd);
         ::unlink(dst.c_str());
         return false;
       }
       if (w == 0) {
-        apm::logger::warn("install_manager: zero-byte write while copying " +
+        apm::logger::warn("install_manager: zero-byte write while rewriting " +
                           src + " -> " + dst);
         ::close(inFd);
         ::close(outFd);
         ::unlink(dst.c_str());
         return false;
       }
-      written += w;
+      data += w;
+      remaining -= w;
+    }
+  } else {
+    char buffer[65536];
+    while (true) {
+      ssize_t n = ::read(inFd, buffer, sizeof(buffer));
+      if (n < 0) {
+        if (errno == EINTR) {
+          continue;
+        }
+        apm::logger::warn("install_manager: failed to read file " + src + ": " +
+                          std::strerror(errno));
+        ::close(inFd);
+        ::close(outFd);
+        ::unlink(dst.c_str());
+        return false;
+      }
+      if (n == 0) {
+        break;
+      }
+
+      ssize_t written = 0;
+      while (written < n) {
+        ssize_t w = ::write(outFd, buffer + written,
+                            static_cast<std::size_t>(n - written));
+        if (w < 0) {
+          if (errno == EINTR) {
+            continue;
+          }
+          apm::logger::warn("install_manager: failed to write file " + dst +
+                            ": " + std::strerror(errno));
+          ::close(inFd);
+          ::close(outFd);
+          ::unlink(dst.c_str());
+          return false;
+        }
+        if (w == 0) {
+          apm::logger::warn("install_manager: zero-byte write while copying " +
+                            src + " -> " + dst);
+          ::close(inFd);
+          ::close(outFd);
+          ::unlink(dst.c_str());
+          return false;
+        }
+        written += w;
+      }
     }
   }
 
@@ -930,10 +992,40 @@ static bool removeTermuxWrapper(const std::string &commandName) {
   return apm::fs::removeFile(target);
 }
 
+static bool pruneEmptyDirs(const std::string &root, bool keepRoot);
+
+static void removeInstalledTermuxPaths(const std::vector<std::string> &paths) {
+  for (const auto &rel : paths) {
+    std::string full = apm::fs::joinPath(apm::config::getTermuxRoot(), rel);
+    apm::fs::removeFile(full);
+
+    static const std::string kBinPrefix = "usr/bin/";
+    if (rel.compare(0, kBinPrefix.size(), kBinPrefix) == 0) {
+      std::string cmd = rel.substr(kBinPrefix.size());
+      auto slash = cmd.find('/');
+      if (slash == std::string::npos && !cmd.empty()) {
+        removeTermuxWrapper(cmd);
+      }
+    }
+  }
+}
+
+static void rollbackTermuxInstall(
+    const std::string &installRoot,
+    const std::vector<std::string> &installedPaths) {
+  removeInstalledTermuxPaths(installedPaths);
+  pruneEmptyDirs(apm::fs::joinPath(apm::config::getTermuxRoot(), "usr"), true);
+  apm::fs::removeDirRecursive(installRoot);
+}
+
 static bool detectTermuxLayout(const std::string &dataDir) {
   std::string termuxUsr =
       apm::fs::joinPath(dataDir, "data/data/com.termux/files/usr");
   return apm::fs::isDirectory(termuxUsr);
+}
+
+static bool isEffectivelyEmptyDirectory(const std::string &path) {
+  return apm::fs::isDirectory(path) && apm::fs::listDir(path, true).empty();
 }
 
 static bool rewriteTermuxPathsDuringExtraction(
@@ -970,6 +1062,7 @@ static bool rewriteTermuxPathsDuringExtraction(
                       installedPaths)) {
     if (errorMsg)
       *errorMsg = "Failed to rewrite Termux paths during extraction";
+    rollbackTermuxInstall(installRoot, installedPaths);
     return false;
   }
 
@@ -980,6 +1073,7 @@ static bool rewriteTermuxPathsDuringExtraction(
   if (!writeTermuxManifest(installRoot, installedPaths)) {
     if (errorMsg)
       *errorMsg = "Failed to write Termux manifest";
+    rollbackTermuxInstall(installRoot, installedPaths);
     return false;
   }
 
@@ -1032,25 +1126,52 @@ static bool removeTermuxPackageFiles(const apm::status::InstalledPackage &ip,
                       ip.installRoot);
   }
 
-  for (const auto &rel : manifest) {
-    std::string full = apm::fs::joinPath(apm::config::getTermuxRoot(), rel);
-    apm::fs::removeFile(full);
-
-    static const std::string kBinPrefix = "usr/bin/";
-    if (rel.compare(0, kBinPrefix.size(), kBinPrefix) == 0) {
-      std::string cmd = rel.substr(kBinPrefix.size());
-      auto slash = cmd.find('/');
-      if (slash == std::string::npos && !cmd.empty()) {
-        removeTermuxWrapper(cmd);
-      }
-    }
-  }
-
+  removeInstalledTermuxPaths(manifest);
   pruneEmptyDirs(apm::fs::joinPath(apm::config::getTermuxRoot(), "usr"), true);
   apm::fs::removeDirRecursive(ip.installRoot);
 
   if (errorMsg) {
     *errorMsg = "";
+  }
+  return true;
+}
+
+static bool cleanupStaleTermuxInstallRoot(const std::string &packageName,
+                                          const std::string &installRoot,
+                                          std::string *errorMsg) {
+  apm::status::InstalledDb installedDb;
+  std::string dbErr;
+  if (!apm::status::loadStatus(installedDb, &dbErr)) {
+    if (errorMsg) {
+      *errorMsg = dbErr.empty() ? "Failed to inspect installed package status"
+                                : dbErr;
+    }
+    apm::logger::warn("install_manager: cannot inspect status DB while "
+                      "checking stale Termux install root for " +
+                      packageName + ": " + dbErr);
+    return false;
+  }
+
+  auto it = installedDb.find(packageName);
+  if (it != installedDb.end() && it->second.termuxPackage) {
+    return false;
+  }
+
+  std::vector<std::string> manifest;
+  if (!readTermuxManifest(installRoot, manifest)) {
+    apm::logger::warn("install_manager: stale Termux install root missing "
+                      "manifest: " + installRoot);
+  }
+
+  apm::logger::warn("install_manager: removing stale Termux install root " +
+                    installRoot + " for " + packageName);
+  rollbackTermuxInstall(installRoot, manifest);
+
+  if (apm::fs::pathExists(installRoot)) {
+    if (errorMsg) {
+      *errorMsg = "Failed to remove stale Termux install root: " + installRoot;
+    }
+    return false;
   }
   return true;
 }
@@ -1180,23 +1301,60 @@ static bool installSinglePackage(const PackageEntry &pkg,
     }
   }
 
-  if (apm::fs::pathExists(installRoot)) {
-    if (!opts.reinstall) {
-      if (errorMsg)
-        *errorMsg = "Install root already exists: " + installRoot;
-      apm::logger::error("installSinglePackage: install root exists: " +
-                         installRoot);
-      removeDirRecursive(tmpRoot);
-      return false;
-    }
-    apm::fs::removeDirRecursive(installRoot);
-  }
-
   const bool termuxLayout = detectTermuxLayout(dataDir);
   const bool termuxMode = opts.isTermuxPackage || termuxLayout;
 
+  if (apm::fs::pathExists(installRoot)) {
+    if (!opts.reinstall) {
+      bool cleanedStaleRoot = false;
+      if (termuxMode) {
+        cleanedStaleRoot = cleanupStaleTermuxInstallRoot(
+            pkg.packageName, installRoot, errorMsg);
+      }
+
+      if (!cleanedStaleRoot && apm::fs::pathExists(installRoot)) {
+        if (errorMsg && errorMsg->empty())
+          *errorMsg = "Install root already exists: " + installRoot;
+        apm::logger::error("installSinglePackage: install root exists: " +
+                           installRoot);
+        removeDirRecursive(tmpRoot);
+        return false;
+      }
+    }
+    if (opts.reinstall && apm::fs::pathExists(installRoot)) {
+      apm::fs::removeDirRecursive(installRoot);
+    }
+  }
+
   if (termuxMode) {
     if (!termuxLayout) {
+      if (isEffectivelyEmptyDirectory(dataDir)) {
+        if (!apm::fs::createDirs(installRoot)) {
+          if (errorMsg)
+            *errorMsg = "Failed to prepare Termux install root: " + installRoot;
+          apm::logger::error("installSinglePackage: cannot create Termux "
+                             "metadata-only install root: " +
+                             installRoot);
+          removeDirRecursive(tmpRoot);
+          return false;
+        }
+
+        std::vector<std::string> installedPaths;
+        if (!writeTermuxManifest(installRoot, installedPaths)) {
+          if (errorMsg)
+            *errorMsg = "Failed to write Termux manifest";
+          apm::fs::removeDirRecursive(installRoot);
+          removeDirRecursive(tmpRoot);
+          return false;
+        }
+
+        removeDirRecursive(tmpRoot);
+        apm::logger::info("installSinglePackage: installed metadata-only "
+                          "Termux package " +
+                          pkg.packageName);
+        return true;
+      }
+
       if (errorMsg)
         *errorMsg = "Termux package flag set but layout not detected";
       apm::logger::error(
