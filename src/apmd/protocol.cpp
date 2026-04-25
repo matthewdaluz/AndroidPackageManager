@@ -205,6 +205,10 @@ RequestType parseType(const std::string &sRaw) {
     return RequestType::Update;
   if (s == "ADD_REPO")
     return RequestType::AddRepo;
+  if (s == "LIST_REPOS")
+    return RequestType::ListRepos;
+  if (s == "REMOVE_REPO")
+    return RequestType::RemoveRepo;
   if (s == "INSTALL")
     return RequestType::Install;
   if (s == "REMOVE")
@@ -258,6 +262,10 @@ std::string typeToString(RequestType t) {
     return "UPDATE";
   case RequestType::AddRepo:
     return "ADD_REPO";
+  case RequestType::ListRepos:
+    return "LIST_REPOS";
+  case RequestType::RemoveRepo:
+    return "REMOVE_REPO";
   case RequestType::Install:
     return "INSTALL";
   case RequestType::Remove:
@@ -330,7 +338,7 @@ bool parseRequest(const std::string &raw, Request &out, std::string *errorMsg) {
   out.id = get("id");
   out.sessionToken = get("session");
 
-  if (out.type == RequestType::AddRepo) {
+  if (out.type == RequestType::AddRepo || out.type == RequestType::RemoveRepo) {
     out.repoPath = get("repo_path");
     if (out.repoPath.empty()) {
       if (errorMsg)
@@ -474,7 +482,8 @@ std::string serializeRequest(const Request &req) {
         kv.first == "session" || kv.first == "apkPath" ||
         kv.first == "installAsSystem" || kv.first == "module_path" ||
         kv.first == "module" || kv.first == "auth_action" ||
-        kv.first == "auth_secret" || kv.first == "enabled")
+        kv.first == "auth_secret" || kv.first == "enabled" ||
+        kv.first == "repo_path")
       continue;
     out << kv.first << ":" << escapeFieldValue(kv.second) << "\n";
   }

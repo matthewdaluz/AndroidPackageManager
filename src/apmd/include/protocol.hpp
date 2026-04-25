@@ -41,6 +41,8 @@ enum class RequestType {
   Search,
   Update,
   AddRepo,
+  ListRepos,
+  RemoveRepo,
   Install,
   Remove,
   Autoremove,

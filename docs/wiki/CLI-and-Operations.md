@@ -11,6 +11,7 @@
 
 - `apm update`
 - `apm add-repo <file.repo>`
+- `apm remove-repo <name|name.repo>`
 - `apm install <pkg>`
 - `apm remove <pkg>`
 - `apm upgrade [pkgs...]`
@@ -37,6 +38,7 @@
 ### Read-only daemon requests
 
 - `apm list`
+- `apm list-repos`
 - `apm info <pkg>`
 - `apm search <pattern>`
 
@@ -58,6 +60,8 @@ These go through `apmd`, but they do not require a security session.
 These commands require a valid session:
 
 - `update`
+- `add-repo`
+- `remove-repo`
 - `install`
 - `remove`
 - `upgrade`
@@ -75,6 +79,7 @@ These do not:
 - `ping`
 - `forgot-password`
 - `list`
+- `list-repos`
 - `info`
 - `search`
 - `log` follow/export

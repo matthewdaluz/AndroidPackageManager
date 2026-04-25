@@ -64,9 +64,9 @@
 namespace {
 
 // Editable CLI metadata.
-static constexpr const char *kApmVersion = "2.0.3b - Open Beta";
+static constexpr const char *kApmVersion = "2.0.4b - Open Beta";
 static constexpr const char *kApmBuildDate =
-    "April 18th, 2026. - 5:00 PM Eastern Time.";
+    "April 24th, 2026. - 11:20 PM Eastern Time.";
 static constexpr const char *kApmCopyright =
     "Copyright (C) 2026 RedHead Industries";
 static constexpr const char *kApmLicense =
@@ -1071,13 +1071,13 @@ static void attachSession(apm::ipc::Request &req,
 }
 
 static bool requiresAuthSession(const std::string &cmd) {
-  return cmd == "update" || cmd == "add-repo" || cmd == "install" ||
-         cmd == "remove" || cmd == "upgrade" || cmd == "autoremove" ||
-         cmd == "module-install" || cmd == "module-list" ||
-         cmd == "module-enable" || cmd == "module-disable" ||
-         cmd == "module-remove" || cmd == "apk-install" ||
-         cmd == "apk-uninstall" || cmd == "factory-reset" ||
-         cmd == "debuglogging";
+  return cmd == "update" || cmd == "add-repo" || cmd == "remove-repo" ||
+         cmd == "install" || cmd == "remove" || cmd == "upgrade" ||
+         cmd == "autoremove" || cmd == "module-install" ||
+         cmd == "module-list" || cmd == "module-enable" ||
+         cmd == "module-disable" || cmd == "module-remove" ||
+         cmd == "apk-install" || cmd == "apk-uninstall" ||
+         cmd == "factory-reset" || cmd == "debuglogging";
 }
 
 static bool ensureManualSlotAvailable(const std::string &pkgName,
@@ -1479,6 +1479,8 @@ void printUsage() {
       << "  ping                        Check connection to apmd\n"
       << "  update                      Update repository metadata\n"
       << "  add-repo <file.repo>        Add a repository source file\n"
+      << "  list-repos                  List configured repository sources\n"
+      << "  remove-repo <name|name.repo> Remove a repository source file\n"
       << "  install <pkg>               Install a package from repo\n"
       << "  package-install <file>      Install a local .deb/.gz/.xz\n"
       << "  remove <pkg>                Remove an installed package\n"
@@ -1769,6 +1771,55 @@ int cmdAddRepo(const std::string &sessionToken, const std::string &path) {
   }
 
   std::cout << (resp.message.empty() ? "Repository source added"
+                                     : resp.message)
+            << "\n";
+  return 0;
+}
+
+int cmdListRepos() {
+  apm::ipc::Request req;
+  req.type = apm::ipc::RequestType::ListRepos;
+  req.id = "list-repos-1";
+
+  apm::ipc::Response resp;
+  std::string err;
+  if (!apm::ipc::sendRequestAuto(req, resp, &err)) {
+    std::cerr << "Error: " << err << "\n";
+    return 1;
+  }
+
+  if (!resp.message.empty())
+    std::cout << resp.message << "\n";
+  return resp.success ? 0 : 1;
+}
+
+int cmdRemoveRepo(const std::string &sessionToken, const std::string &name) {
+  if (name.empty()) {
+    std::cerr << "apm: remove-repo requires a repository name\n";
+    return 1;
+  }
+
+  apm::ipc::Request req;
+  req.type = apm::ipc::RequestType::RemoveRepo;
+  req.id = "remove-repo-1";
+  req.repoPath = name;
+  attachSession(req, sessionToken);
+
+  apm::ipc::Response resp;
+  std::string err;
+  if (!apm::ipc::sendRequestAuto(req, resp, &err)) {
+    std::cerr << "Error: " << err << "\n";
+    return 1;
+  }
+
+  if (!resp.success) {
+    std::cerr << "Remove repo failed: "
+              << (resp.message.empty() ? "unknown error" : resp.message)
+              << "\n";
+    return 1;
+  }
+
+  std::cout << (resp.message.empty() ? "Repository source removed"
                                      : resp.message)
             << "\n";
   return 0;
@@ -2781,6 +2832,26 @@ int main(int argc, char **argv) {
       return 1;
     }
     return cmdAddRepo(sessionToken, argv[i]);
+  }
+
+  if (cmd == "list-repos") {
+    if (i != argc) {
+      std::cerr << "apm: 'list-repos' accepts no arguments\n";
+      return 1;
+    }
+    return cmdListRepos();
+  }
+
+  if (cmd == "remove-repo") {
+    if (i >= argc) {
+      std::cerr << "apm: 'remove-repo' requires a repository name\n";
+      return 1;
+    }
+    if (i + 1 != argc) {
+      std::cerr << "apm: 'remove-repo' accepts exactly one repository name\n";
+      return 1;
+    }
+    return cmdRemoveRepo(sessionToken, argv[i]);
   }
 
   if (cmd == "install") {

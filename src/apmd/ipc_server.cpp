@@ -400,6 +400,89 @@ static std::string baseName(const std::string &path) {
   return path.substr(slash + 1, end - slash);
 }
 
+static bool hasSuffix(const std::string &value, const std::string &suffix) {
+  return value.size() >= suffix.size() &&
+         value.compare(value.size() - suffix.size(), suffix.size(), suffix) ==
+             0;
+}
+
+static const char *repoFormatToString(apm::repo::RepoFormat format) {
+  switch (format) {
+  case apm::repo::RepoFormat::Termux:
+    return "termux";
+  case apm::repo::RepoFormat::Debian:
+  default:
+    return "debian";
+  }
+}
+
+static const char *
+repoTrustPolicyToString(apm::repo::RepoTrustPolicy policy) {
+  switch (policy) {
+  case apm::repo::RepoTrustPolicy::Require:
+    return "required";
+  case apm::repo::RepoTrustPolicy::Skip:
+    return "skip";
+  case apm::repo::RepoTrustPolicy::Default:
+  default:
+    return "default";
+  }
+}
+
+static const char *
+debSignaturePolicyToString(apm::repo::DebSignaturePolicy policy) {
+  switch (policy) {
+  case apm::repo::DebSignaturePolicy::Optional:
+    return "optional";
+  case apm::repo::DebSignaturePolicy::Required:
+    return "required";
+  case apm::repo::DebSignaturePolicy::Disabled:
+  default:
+    return "disabled";
+  }
+}
+
+static bool normalizeRepoSourceName(const std::string &input,
+                                    std::string &nameOut,
+                                    std::string &errorOut) {
+  nameOut.clear();
+  errorOut.clear();
+
+  if (input.empty()) {
+    errorOut = "repo source name is missing";
+    return false;
+  }
+  if (input == "." || input == ".." || input.find('/') != std::string::npos ||
+      input.find('\\') != std::string::npos) {
+    errorOut = "invalid repo source name: " + input;
+    return false;
+  }
+
+  std::string name = input;
+  if (hasSuffix(name, ".repo")) {
+    if (name.size() <= 5) {
+      errorOut = "invalid repo source name: " + input;
+      return false;
+    }
+  } else {
+    if (name.find('.') != std::string::npos) {
+      errorOut = "repo source name must be a bare name or end with .repo";
+      return false;
+    }
+    name += ".repo";
+  }
+
+  if (name == "." || name == ".." || name.find('/') != std::string::npos ||
+      name.find('\\') != std::string::npos || !hasSuffix(name, ".repo") ||
+      name.size() <= 5) {
+    errorOut = "invalid repo source name: " + input;
+    return false;
+  }
+
+  nameOut = std::move(name);
+  return true;
+}
+
 static bool writeRepoFileAll(int fd, const char *data, std::size_t size,
                              std::string *errorMsg) {
   std::size_t written = 0;
@@ -552,6 +635,105 @@ static bool addRepoSourceFile(const std::string &sourcePath,
   }
 
   messageOut = "Repository source added: " + dest;
+  return true;
+}
+
+static bool buildRepoSourceListResponseMessage(std::string &messageOut) {
+  const std::string sourcesDir = apm::config::getSourcesDir();
+  if (!apm::fs::isDirectory(sourcesDir)) {
+    messageOut = "No repository sources configured.";
+    return true;
+  }
+
+  std::vector<std::string> names;
+  for (const auto &name : apm::fs::listDir(sourcesDir, false)) {
+    if (hasSuffix(name, ".repo")) {
+      names.push_back(name);
+    }
+  }
+  std::sort(names.begin(), names.end());
+
+  if (names.empty()) {
+    messageOut = "No repository sources configured.";
+    return true;
+  }
+
+  std::ostringstream out;
+  out << "Repository sources:\n";
+  for (const auto &name : names) {
+    const std::string path = apm::fs::joinPath(sourcesDir, name);
+    if (!apm::fs::isFile(path)) {
+      out << "  " << name << ": invalid (not a regular file)\n";
+      continue;
+    }
+
+    apm::repo::RepoSourceList sources;
+    std::string parseErr;
+    if (!apm::repo::loadSourcesList(path, sources, &parseErr) ||
+        sources.empty()) {
+      out << "  " << name << ": invalid";
+      if (!parseErr.empty())
+        out << " (" << parseErr << ")";
+      out << "\n";
+      continue;
+    }
+
+    for (std::size_t i = 0; i < sources.size(); ++i) {
+      const auto &src = sources[i];
+      out << "  " << name;
+      if (sources.size() > 1)
+        out << "#" << (i + 1);
+      out << ": " << src.uri << " suite=" << src.dist
+          << " components=" << joinStrings(src.components, ",")
+          << " format=" << repoFormatToString(src.format);
+      if (src.isTermuxRepo && src.format != apm::repo::RepoFormat::Termux)
+        out << " termux=yes";
+      if (!src.arch.empty())
+        out << " arch=" << src.arch;
+      if (src.trustPolicy != apm::repo::RepoTrustPolicy::Default)
+        out << " trusted=" << repoTrustPolicyToString(src.trustPolicy);
+      if (src.debSignaturePolicy != apm::repo::DebSignaturePolicy::Disabled) {
+        out << " deb-signatures="
+            << debSignaturePolicyToString(src.debSignaturePolicy);
+      }
+      out << "\n";
+    }
+  }
+
+  messageOut = out.str();
+  if (!messageOut.empty() && messageOut.back() == '\n')
+    messageOut.pop_back();
+  return true;
+}
+
+static bool removeRepoSourceFile(const std::string &repoName,
+                                 std::string &messageOut) {
+  std::string name;
+  std::string nameErr;
+  if (!normalizeRepoSourceName(repoName, name, nameErr)) {
+    messageOut = nameErr.empty() ? "invalid repo source name" : nameErr;
+    return false;
+  }
+
+  const std::string path =
+      apm::fs::joinPath(apm::config::getSourcesDir(), name);
+  if (!apm::fs::pathExists(path)) {
+    messageOut = "repo source not found: " + name;
+    return false;
+  }
+  if (!apm::fs::isFile(path)) {
+    messageOut = "repo source is not a regular file: " + path;
+    return false;
+  }
+
+  if (::unlink(path.c_str()) != 0) {
+    messageOut =
+        "failed to remove repo source: " + std::string(std::strerror(errno));
+    return false;
+  }
+
+  messageOut = "Repository source removed: " + path +
+               "\nRun 'apm update' to refresh repository metadata.";
   return true;
 }
 
@@ -1021,7 +1203,8 @@ void IpcServer::handleClient(int clientFd) {
   auto requiresAuth = [](RequestType t) {
     return !(t == RequestType::Ping || t == RequestType::Authenticate ||
              t == RequestType::ForgotPassword || t == RequestType::List ||
-             t == RequestType::Info || t == RequestType::Search);
+             t == RequestType::Info || t == RequestType::Search ||
+             t == RequestType::ListRepos);
   };
 
   if (requiresAuth(req.type)) {
@@ -1070,6 +1253,18 @@ void IpcServer::handleClient(int clientFd) {
   case RequestType::AddRepo: {
     apm::logger::info("IpcServer: AddRepo request received");
     resp.success = addRepoSourceFile(req.repoPath, resp.message);
+    break;
+  }
+
+  case RequestType::ListRepos: {
+    apm::logger::info("IpcServer: ListRepos request received");
+    resp.success = buildRepoSourceListResponseMessage(resp.message);
+    break;
+  }
+
+  case RequestType::RemoveRepo: {
+    apm::logger::info("IpcServer: RemoveRepo request received");
+    resp.success = removeRepoSourceFile(req.repoPath, resp.message);
     break;
   }
 

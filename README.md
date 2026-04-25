@@ -105,6 +105,8 @@ Daemon-backed commands:
 - `apm ping`
 - `apm update`
 - `apm add-repo <file.repo>`
+- `apm list-repos`
+- `apm remove-repo <name|name.repo>`
 - `apm install <pkg>`
 - `apm remove <pkg>`
 - `apm upgrade [pkgs...]`
@@ -121,9 +123,10 @@ Daemon-backed commands:
 - `apm apk-install <apk> [--install-as-system]`
 - `apm apk-uninstall <package>`
 
-Local/offline commands:
+Session-free daemon/local commands:
 
 - `apm list`
+- `apm list-repos`
 - `apm info <pkg>`
 - `apm search <pattern>`
 - `apm package-install <file>`
@@ -152,8 +155,12 @@ Notes:
   - `Ping`
   - `Authenticate`
   - `ForgotPassword`
+  - `List`
+  - `Info`
+  - `Search`
+  - `ListRepos`
 - Session-required requests:
-  - update/add-repo/install/remove/upgrade/autoremove
+  - update/add-repo/remove-repo/install/remove/upgrade/autoremove
   - APK operations
   - module lifecycle operations
   - factory reset
