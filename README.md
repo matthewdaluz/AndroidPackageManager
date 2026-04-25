@@ -2,7 +2,7 @@
 
 APM is a GPL-3.0-or-later package manager stack for Android. It combines an APT-like package workflow, a privileged daemon, an Android module system, APK staging helpers, and shell PATH hotload support.
 
-Current CLI version in source: `2.0.3b - Open Beta`
+Current CLI version in source: `2.0.4b - Open Beta`
 
 ## Components
 
