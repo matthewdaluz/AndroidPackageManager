@@ -1,0 +1,96 @@
+APM Performance and Stability To-Do
+===================================
+
+Created from the May 22, 2026 codebase review.
+
+
+High Priority
+-------------
+
+[ ] Prevent idle or slow IPC clients from stalling apmd and amsd.
+    - Add read deadlines or nonblocking/poll-based request framing.
+    - Keep mutating operations serialized as needed without blocking the accept
+      loop on partial client requests.
+    - Revisit the broad Android socket permissions while hardening the request
+      path.
+    - Relevant code:
+      src/apmd/ipc_server.cpp
+      src/amsd/ipc_server.cpp
+
+[ ] Make install/remove results match durable package state.
+    - Treat failed status DB writes as user-visible operation failures or add a
+      recovery/journal path that can repair partial state.
+    - Check non-Termux package tree removal results before reporting success.
+    - Avoid leaving installed payloads untracked or removed payloads still
+      recorded as installed.
+    - Relevant code:
+      src/apmd/install_manager.cpp
+      src/core/status_db.cpp
+
+[ ] Bring Android.bp back in sync with the supported build.
+    - Compare Soong source lists against CMake source lists for apm, apmd, and
+      amsd.
+    - Add missing IPC, config, md5, and process-lock sources where required.
+    - Fix or remove root-level init_rc references if the real init files remain
+      under apm-flashable-new/system/etc/init/.
+    - If Soong is no longer supported, remove or clearly retire the stale build
+      definition instead of letting it drift.
+    - Relevant code:
+      Android.bp
+      CMakeLists.txt
+
+
+Performance Improvements
+------------------------
+
+[ ] Cache parsed repository indexes inside the daemon.
+    - Avoid reparsing every cached Packages file for repeated info and search
+      requests.
+    - Invalidate cached indexes after repository updates or when source/list
+      mtimes or hashes change.
+    - Build package-name lookup maps for info and dependency lookup paths.
+    - Relevant code:
+      src/apmd/ipc_server.cpp
+      src/core/repo_index.cpp
+
+[ ] Reduce whole-tree permission normalization work for Termux installs.
+    - Normalize copied or newly created paths where possible instead of walking
+      the entire Termux root after each package install.
+    - Cache the shell group ID instead of calling getgrnam for every visited
+      filesystem node.
+    - Consider iterative traversal if large trees remain necessary.
+    - Review startup runtime normalization for the same scaling behavior.
+    - Relevant code:
+      src/apmd/install_manager.cpp
+      src/apmd/apmd.cpp
+      src/core/repo_index.cpp
+
+
+Stability Improvements
+----------------------
+
+[ ] Make emulator daemon locking atomic.
+    - Replace the current check-then-truncate PID-file flow with O_EXCL,
+      flock/fcntl locking, or another ownership mechanism held for the daemon
+      lifetime.
+    - Coordinate socket cleanup with the stronger lock so concurrent starts do
+      not unlink an active endpoint.
+    - Relevant code:
+      src/util/process_lock.cpp
+      src/apmd/apmd.cpp
+      src/apmd/ipc_server.cpp
+
+
+Build and Test Follow-Up
+------------------------
+
+[ ] Restore the focused tar extractor regression test target.
+    - CMake currently references tests/tar_extractor_tests.cpp, but that source
+      file is missing from this checkout.
+    - Re-add the test source or remove/update the stale CMake test target.
+    - Validation command:
+      cmake -S . -B /tmp/apm-review-cmake -DAPM_EMULATOR_MODE=ON \
+        -DAPM_BUILD_TESTS=ON
+    - Relevant code:
+      CMakeLists.txt
+
