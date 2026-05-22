@@ -811,10 +811,9 @@ static std::string buildInfoResponseMessage(const std::string &name) {
 
   apm::repo::RepoIndexList indices;
   std::string repoErr;
-  if (!apm::repo::buildRepoIndices(apm::config::getSourcesList(),
-                                   apm::config::getListsDir(),
-                                   apm::config::getDefaultArch(), indices,
-                                   &repoErr)) {
+  if (!apm::repo::loadRepoIndicesFromCache(
+          apm::config::getSourcesList(), apm::config::getListsDir(),
+          apm::config::getDefaultArch(), indices, &repoErr)) {
     out << "Repository info unavailable";
     if (!repoErr.empty())
       out << ": " << repoErr;
@@ -881,10 +880,9 @@ static bool buildSearchResponseMessage(const std::vector<std::string> &patternsI
 
   apm::repo::RepoIndexList indices;
   std::string err;
-  if (!apm::repo::buildRepoIndices(apm::config::getSourcesList(),
-                                   apm::config::getListsDir(),
-                                   apm::config::getDefaultArch(), indices,
-                                   &err)) {
+  if (!apm::repo::loadRepoIndicesFromCache(
+          apm::config::getSourcesList(), apm::config::getListsDir(),
+          apm::config::getDefaultArch(), indices, &err)) {
     messageOut = "apm search: failed to load repo indices";
     if (!err.empty()) {
       messageOut += ": " + err;
@@ -1415,7 +1413,7 @@ void IpcServer::handleClient(int clientFd) {
     // Build repo indices (like for install)
     apm::repo::RepoIndexList indices;
     std::string err;
-    if (!apm::repo::buildRepoIndices(
+    if (!apm::repo::loadRepoIndicesFromCache(
             apm::config::getSourcesList(), apm::config::getListsDir(),
             apm::config::getDefaultArch(), indices, &err)) {
       resp.success = false;
@@ -1464,7 +1462,7 @@ void IpcServer::handleClient(int clientFd) {
     // 1) Build repo indices (.repo sources + Packages files)
     apm::repo::RepoIndexList indices;
     std::string err;
-    if (!apm::repo::buildRepoIndices(
+    if (!apm::repo::loadRepoIndicesFromCache(
             apm::config::getSourcesList(), apm::config::getListsDir(),
             apm::config::getDefaultArch(), indices, &err)) {
       resp.success = false;

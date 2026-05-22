@@ -166,6 +166,14 @@ bool updateFromSourcesList(const std::string &sourcesPath,
                            std::string *errorMsg = nullptr,
                            RepoUpdateProgressCallback progressCb = {});
 
+// Parse RepoIndexList from cached Packages files in listsDir without refreshing
+// network metadata. Returns false if no cached Packages files can be loaded.
+bool loadRepoIndicesFromCache(const std::string &sourcesPath,
+                              const std::string &listsDir,
+                              const std::string &defaultArch,
+                              RepoIndexList &out,
+                              std::string *errorMsg = nullptr);
+
 // Build RepoIndexList from .repo sources + downloaded Packages in listsDir.
 //
 // - sourcesPath: .repo file OR directory (same semantics as loadSourcesList)

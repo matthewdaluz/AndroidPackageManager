@@ -29,6 +29,7 @@
 
 #include <functional>
 #include <sstream>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace apm::dep {
@@ -188,9 +189,41 @@ bool resolveDependencies(const apm::repo::PackageList &repoPackages,
                          const std::string &arch, ResolutionResult &out,
                          const std::vector<std::string> &alreadyInstalled,
                          std::string *errorMsg) {
+  std::unordered_map<std::string, const apm::repo::PackageEntry *> firstByName;
+  std::unordered_map<std::string, const apm::repo::PackageEntry *> archByName;
+  std::unordered_map<std::string, const apm::repo::PackageEntry *> allByName;
+
+  firstByName.reserve(repoPackages.size());
+  archByName.reserve(repoPackages.size());
+  allByName.reserve(repoPackages.size());
+
+  for (const auto &pkg : repoPackages) {
+    if (pkg.packageName.empty()) {
+      continue;
+    }
+    firstByName.emplace(pkg.packageName, &pkg);
+    if (!arch.empty() && pkg.architecture == arch) {
+      archByName.emplace(pkg.packageName, &pkg);
+    }
+    if (!arch.empty() && pkg.architecture == "all") {
+      allByName.emplace(pkg.packageName, &pkg);
+    }
+  }
+
   auto findPkg =
       [&](const std::string &name) -> const apm::repo::PackageEntry * {
-    return apm::repo::findPackage(repoPackages, name, arch);
+    if (arch.empty()) {
+      auto it = firstByName.find(name);
+      return it == firstByName.end() ? nullptr : it->second;
+    }
+
+    auto archIt = archByName.find(name);
+    if (archIt != archByName.end()) {
+      return archIt->second;
+    }
+
+    auto allIt = allByName.find(name);
+    return allIt == allByName.end() ? nullptr : allIt->second;
   };
 
   return resolveRecursive(rootPackage, out, alreadyInstalled, findPkg,
@@ -203,15 +236,19 @@ bool resolveTermuxDependencies(const apm::repo::PackageList &repoPackages,
                                ResolutionResult &out,
                                const std::vector<std::string> &alreadyInstalled,
                                std::string *errorMsg) {
+  std::unordered_map<std::string, const apm::repo::PackageEntry *> termuxByName;
+  termuxByName.reserve(repoPackages.size());
+
+  for (const auto &pkg : repoPackages) {
+    if (pkg.isTermuxPackage && !pkg.packageName.empty()) {
+      termuxByName.emplace(pkg.packageName, &pkg);
+    }
+  }
+
   auto findPkg =
       [&](const std::string &name) -> const apm::repo::PackageEntry * {
-    for (const auto &pkg : repoPackages) {
-      if (!pkg.isTermuxPackage)
-        continue;
-      if (pkg.packageName == name)
-        return &pkg;
-    }
-    return nullptr;
+    auto it = termuxByName.find(name);
+    return it == termuxByName.end() ? nullptr : it->second;
   };
 
   return resolveRecursive(rootPackage, out, alreadyInstalled, findPkg,

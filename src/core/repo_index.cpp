@@ -1659,38 +1659,21 @@ bool updateFromSourcesList(const std::string &sourcesPath,
   return true;
 }
 
-/**
- * Build repo indices from downloaded Release & Packages files.
- *
- * listsDir: directory containing Release, Release.gpg, Packages*
- * dbOut: vector of RepoIndex to fill
- * errorOut: optional string to receive errors
- */
-// High-level wrapper that ensures metadata is downloaded, parses all Packages
-// files, and returns a RepoIndexList the CLI/daemon reuse for lookups.
-bool buildRepoIndices(const std::string &sourcesPath,
-                      const std::string &listsDir,
-                      const std::string &defaultArch, RepoIndexList &out,
-                      std::string *errorMsg) {
-  // Load .repo source entries
+// Parse cached Packages files into RepoIndex entries without touching the
+// network. Callers should run updateFromSourcesList() explicitly when they want
+// to refresh repository metadata.
+bool loadRepoIndicesFromCache(const std::string &sourcesPath,
+                              const std::string &listsDir,
+                              const std::string &defaultArch,
+                              RepoIndexList &out, std::string *errorMsg) {
   RepoSourceList sources;
   if (!loadSourcesList(sourcesPath, sources, errorMsg)) {
     return false;
   }
 
-  // Download Release + Packages (+ SHA256 verification)
-  std::string summary;
-  if (!updateFromSourcesList(sourcesPath, listsDir, defaultArch, &summary,
-                             errorMsg)) {
-    apm::logger::warn("buildRepoIndices: updateFromSourcesList failed");
-    return false;
-  }
-
-  // Build list of RepoIndex results
   out.clear();
 
   for (const auto &src : sources) {
-    // Resolve arch override
     const std::string archToUse = resolveRepoArch(src, defaultArch);
 
     for (const auto &comp : src.components) {
@@ -1736,22 +1719,21 @@ bool buildRepoIndices(const std::string &sourcesPath,
       }
 
       if (pkgFile.empty()) {
-        apm::logger::warn("buildRepoIndices: no Packages file found for " +
+        apm::logger::warn("loadRepoIndicesFromCache: no cached Packages file "
+                          "found for " +
                           src.uri + " " + src.dist + " " + comp);
         continue;
       }
 
       idx.packagesPath = pkgFile;
 
-      // Parse Packages file
       std::string parseErr;
       if (!parsePackagesFile(pkgFile, idx.packages, &parseErr)) {
-        apm::logger::warn("buildRepoIndices: failed parsing " + pkgFile + ": " +
-                          parseErr);
+        apm::logger::warn("loadRepoIndicesFromCache: failed parsing " +
+                          pkgFile + ": " + parseErr);
         continue;
       }
 
-      // Fill repo metadata for each package
       bool anyTermuxPkg = false;
       for (auto &pkg : idx.packages) {
         pkg.repoUri = src.uri;
@@ -1771,10 +1753,43 @@ bool buildRepoIndices(const std::string &sourcesPath,
     }
   }
 
-  apm::logger::info("buildRepoIndices: built " + std::to_string(out.size()) +
-                    " repo index entries");
+  if (out.empty()) {
+    if (errorMsg) {
+      *errorMsg = "No cached repo indices found in " + listsDir +
+                  " - run 'apm update' and try again";
+    }
+    apm::logger::warn("loadRepoIndicesFromCache: no cached indices loaded");
+    return false;
+  }
+
+  apm::logger::info("loadRepoIndicesFromCache: loaded " +
+                    std::to_string(out.size()) + " cached repo index entries");
 
   return true;
+}
+
+/**
+ * Build repo indices from downloaded Release & Packages files.
+ *
+ * listsDir: directory containing Release, Release.gpg, Packages*
+ * dbOut: vector of RepoIndex to fill
+ * errorOut: optional string to receive errors
+ */
+// High-level wrapper that ensures metadata is downloaded, parses all Packages
+// files, and returns a RepoIndexList the CLI/daemon reuse for lookups.
+bool buildRepoIndices(const std::string &sourcesPath,
+                      const std::string &listsDir,
+                      const std::string &defaultArch, RepoIndexList &out,
+                      std::string *errorMsg) {
+  std::string summary;
+  if (!updateFromSourcesList(sourcesPath, listsDir, defaultArch, &summary,
+                             errorMsg)) {
+    apm::logger::warn("buildRepoIndices: updateFromSourcesList failed");
+    return false;
+  }
+
+  return loadRepoIndicesFromCache(sourcesPath, listsDir, defaultArch, out,
+                                  errorMsg);
 }
 
 } // namespace apm::repo

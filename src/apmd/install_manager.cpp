@@ -56,6 +56,7 @@
 #include <grp.h>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace apm::install {
@@ -2243,33 +2244,67 @@ bool upgradePackages(const apm::repo::RepoIndexList &repoIndices,
     return true;
   }
 
+  std::unordered_map<std::string, const apm::repo::PackageEntry *>
+      debCandidates;
+  std::unordered_map<std::string, const apm::repo::PackageEntry *>
+      termuxCandidates;
+  debCandidates.reserve(toCheck.size());
+  termuxCandidates.reserve(toCheck.size());
+
+  for (const auto &idx : repoIndices) {
+    bool idxTermux = idx.source.isTermuxRepo ||
+                     idx.source.format == apm::repo::RepoFormat::Termux;
+
+    if (idxTermux) {
+      for (const auto &pkg : idx.packages) {
+        if (pkg.isTermuxPackage && !pkg.packageName.empty()) {
+          termuxCandidates.emplace(pkg.packageName, &pkg);
+        }
+      }
+      continue;
+    }
+
+    if (arch.empty()) {
+      for (const auto &pkg : idx.packages) {
+        if (!pkg.packageName.empty()) {
+          debCandidates.emplace(pkg.packageName, &pkg);
+        }
+      }
+      continue;
+    }
+
+    std::unordered_map<std::string, const apm::repo::PackageEntry *>
+        idxArchCandidates;
+    std::unordered_map<std::string, const apm::repo::PackageEntry *>
+        idxAllCandidates;
+    idxArchCandidates.reserve(idx.packages.size());
+    idxAllCandidates.reserve(idx.packages.size());
+
+    for (const auto &pkg : idx.packages) {
+      if (pkg.packageName.empty()) {
+        continue;
+      }
+      if (pkg.architecture == arch) {
+        idxArchCandidates.emplace(pkg.packageName, &pkg);
+      } else if (pkg.architecture == "all") {
+        idxAllCandidates.emplace(pkg.packageName, &pkg);
+      }
+    }
+
+    for (const auto &entry : idxArchCandidates) {
+      debCandidates.emplace(entry.first, entry.second);
+    }
+    for (const auto &entry : idxAllCandidates) {
+      debCandidates.emplace(entry.first, entry.second);
+    }
+  }
+
   // Helper to find candidate package entry
   auto findCandidate = [&](const std::string &name,
                            bool termux) -> const apm::repo::PackageEntry * {
-    for (const auto &idx : repoIndices) {
-      bool idxTermux = idx.source.isTermuxRepo ||
-                       idx.source.format == apm::repo::RepoFormat::Termux;
-      if (idxTermux != termux) {
-        continue;
-      }
-
-      if (termux) {
-        for (const auto &pkg : idx.packages) {
-          if (!pkg.isTermuxPackage)
-            continue;
-          if (pkg.packageName == name)
-            return &pkg;
-        }
-      } else {
-        const auto *p = apm::repo::findPackage(idx.packages, name, arch);
-        if (!p) {
-          p = apm::repo::findPackage(idx.packages, name, "all");
-        }
-        if (p)
-          return p;
-      }
-    }
-    return nullptr;
+    const auto &candidates = termux ? termuxCandidates : debCandidates;
+    auto it = candidates.find(name);
+    return it == candidates.end() ? nullptr : it->second;
   };
 
   // Iterate and upgrade
