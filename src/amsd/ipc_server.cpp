@@ -27,15 +27,22 @@
 
 #include "ipc_server.hpp"
 
+#include "config.hpp"
 #include "logger.hpp"
 #include "protocol.hpp"
 
+#include <algorithm>
 #include <cerrno>
+#include <chrono>
 #include <cstring>
+#include <grp.h>
+#include <limits>
+#include <poll.h>
 #include <string>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
+#include <thread>
 #include <unistd.h>
 
 namespace apm::amsd {
@@ -43,15 +50,125 @@ namespace apm::amsd {
 namespace {
 
 constexpr std::size_t kMaxRequestBytes = 64 * 1024;
+constexpr std::size_t kMaxClientWorkers = 32;
+constexpr auto kRequestReadDeadline = std::chrono::seconds(5);
+constexpr auto kResponseWriteDeadline = std::chrono::seconds(5);
 constexpr const char *kLogFileTag = "ipc_server.cpp";
+
+void setSocketAccess(const std::string &socketPath) {
+  const bool emulatorMode = apm::config::isEmulatorMode();
+  const mode_t socketMode = emulatorMode ? 0600 : 0660;
+
+  if (!emulatorMode) {
+    struct group *shellGroup = ::getgrnam("shell");
+    if (!shellGroup) {
+      apm::logger::warn("amsd: could not look up shell group for socket");
+    } else if (::chown(socketPath.c_str(), 0, shellGroup->gr_gid) < 0 &&
+               errno != EPERM) {
+      apm::logger::warn("amsd: chown() failed on socket: " +
+                        std::string(std::strerror(errno)));
+    }
+  }
+
+  if (::chmod(socketPath.c_str(), socketMode) < 0) {
+    apm::logger::warn("amsd: chmod() failed on socket: " +
+                      std::string(std::strerror(errno)));
+  }
+}
+
+bool waitForSocket(int fd, short events,
+                   std::chrono::steady_clock::time_point deadline,
+                   std::string *errorMsg) {
+  while (true) {
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= deadline) {
+      errno = ETIMEDOUT;
+      if (errorMsg)
+        *errorMsg = "socket I/O timed out";
+      return false;
+    }
+
+    auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+        deadline - now);
+    const auto timeoutMs = std::min<long long>(
+        std::max<long long>(remaining.count(), 1),
+        std::numeric_limits<int>::max());
+
+    pollfd pfd{};
+    pfd.fd = fd;
+    pfd.events = events;
+    const int rc = ::poll(&pfd, 1, static_cast<int>(timeoutMs));
+    if (rc > 0) {
+      if ((pfd.revents & (POLLERR | POLLNVAL)) != 0) {
+        errno = EIO;
+        if (errorMsg)
+          *errorMsg = "socket poll reported an error";
+        return false;
+      }
+      if ((pfd.revents & (events | POLLHUP)) != 0)
+        return true;
+      continue;
+    }
+    if (rc == 0)
+      continue;
+    if (errno == EINTR)
+      continue;
+    if (errorMsg)
+      *errorMsg = "poll() failed: " + std::string(std::strerror(errno));
+    return false;
+  }
+}
+
+bool readRequestFrame(int fd, std::string &buffer, bool &tooLarge,
+                      std::string *errorMsg) {
+  const auto deadline =
+      std::chrono::steady_clock::now() + kRequestReadDeadline;
+  tooLarge = false;
+  buffer.clear();
+  char temp[512];
+
+  while (true) {
+    if (!waitForSocket(fd, POLLIN, deadline, errorMsg))
+      return false;
+
+    const ssize_t n = ::recv(fd, temp, sizeof(temp), MSG_DONTWAIT);
+    if (n < 0) {
+      if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
+        continue;
+      if (errorMsg)
+        *errorMsg = "read() failed: " + std::string(std::strerror(errno));
+      return false;
+    }
+    if (n == 0)
+      return true;
+
+    const std::size_t incoming = static_cast<std::size_t>(n);
+    if (buffer.size() + incoming > kMaxRequestBytes) {
+      tooLarge = true;
+      if (errorMsg)
+        *errorMsg = "request too large";
+      return false;
+    }
+
+    buffer.append(temp, incoming);
+    if (buffer.find("\n\n") != std::string::npos)
+      return true;
+  }
+}
 
 bool writeAll(int fd, const char *data, std::size_t len,
               std::string *errorMsg) {
+  const auto deadline =
+      std::chrono::steady_clock::now() + kResponseWriteDeadline;
   std::size_t sent = 0;
   while (sent < len) {
-    ssize_t n = ::write(fd, data + sent, len - sent);
+    if (!waitForSocket(fd, POLLOUT, deadline, errorMsg))
+      return false;
+
+    ssize_t n =
+        ::send(fd, data + sent, len - sent, MSG_DONTWAIT | MSG_NOSIGNAL);
     if (n < 0) {
-      if (errno == EINTR)
+      if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
         continue;
       if (errorMsg)
         *errorMsg = "write() failed: " + std::string(std::strerror(errno));
@@ -83,6 +200,7 @@ void sendResponseMessage(int clientFd, apm::ipc::Response resp) {
   std::string err;
   if (!writeAll(clientFd, wire.data(), wire.size(), &err)) {
     apm::logger::warn("amsd: sendResponseMessage failed: " + err);
+    ::shutdown(clientFd, SHUT_RDWR);
   }
 }
 
@@ -95,6 +213,7 @@ IpcServer::IpcServer(const std::string &socketPath,
 
 IpcServer::~IpcServer() {
   stop();
+  waitForClients();
   if (!socketPath_.empty()) {
     ::unlink(socketPath_.c_str());
   }
@@ -142,10 +261,7 @@ bool IpcServer::start() {
     return false;
   }
 
-  if (::chmod(socketPath_.c_str(), 0666) < 0) {
-    apm::logger::warn("amsd: chmod() failed on socket: " +
-                      std::string(std::strerror(errno)));
-  }
+  setSocketAccess(socketPath_);
 
   running_.store(true);
   apm::logger::info("amsd: listening on " + socketPath_);
@@ -170,8 +286,8 @@ void IpcServer::run() {
       break;
     }
 
-    handleClient(clientFd);
-    ::close(clientFd);
+    if (!startClientWorker(clientFd))
+      ::close(clientFd);
   }
 
   apm::logger::info("amsd: IPC loop stopped");
@@ -186,6 +302,43 @@ void IpcServer::stop() {
   }
 }
 
+bool IpcServer::startClientWorker(int clientFd) {
+  {
+    std::lock_guard<std::mutex> lock(clientMutex_);
+    if (activeClients_ >= kMaxClientWorkers) {
+      apm::logger::warn("amsd: rejecting client at worker limit");
+      return false;
+    }
+    ++activeClients_;
+  }
+
+  try {
+    std::thread([this, clientFd]() {
+      handleClient(clientFd);
+      ::shutdown(clientFd, SHUT_RDWR);
+      ::close(clientFd);
+      {
+        std::lock_guard<std::mutex> lock(clientMutex_);
+        --activeClients_;
+      }
+      clientCv_.notify_one();
+    }).detach();
+  } catch (...) {
+    std::lock_guard<std::mutex> lock(clientMutex_);
+    --activeClients_;
+    apm::logger::error("amsd: failed to start client worker");
+    clientCv_.notify_one();
+    return false;
+  }
+
+  return true;
+}
+
+void IpcServer::waitForClients() {
+  std::unique_lock<std::mutex> lock(clientMutex_);
+  clientCv_.wait(lock, [this]() { return activeClients_ == 0; });
+}
+
 void IpcServer::handleClient(int clientFd) {
   if (apm::logger::isDebugEnabled()) {
     apm::logger::debug(std::string(kLogFileTag) +
@@ -194,34 +347,20 @@ void IpcServer::handleClient(int clientFd) {
   }
 
   std::string buffer;
-  char temp[512];
-
-  while (true) {
-    ssize_t n = ::read(clientFd, temp, sizeof(temp));
-    if (n < 0) {
-      if (errno == EINTR)
-        continue;
-      apm::logger::error("amsd: read() failed: " +
-                         std::string(std::strerror(errno)));
-      return;
-    }
-    if (n == 0)
-      break;
-
-    const std::size_t incoming = static_cast<std::size_t>(n);
-    if (buffer.size() + incoming > kMaxRequestBytes) {
+  bool tooLarge = false;
+  std::string readErr;
+  if (!readRequestFrame(clientFd, buffer, tooLarge, &readErr)) {
+    if (tooLarge) {
       apm::logger::warn("amsd: rejecting oversized request (> " +
                         std::to_string(kMaxRequestBytes) + " bytes)");
       apm::ipc::Response badResp;
       badResp.success = false;
       badResp.message = "Bad request: request too large";
       sendResponseMessage(clientFd, badResp);
-      return;
+    } else {
+      apm::logger::warn("amsd: " + readErr);
     }
-
-    buffer.append(temp, incoming);
-    if (buffer.find("\n\n") != std::string::npos)
-      break;
+    return;
   }
 
   apm::ipc::Request req;
@@ -242,7 +381,10 @@ void IpcServer::handleClient(int clientFd) {
 
   apm::ipc::Response resp;
   resp.id = req.id;
-  dispatcher_.dispatch(req, resp);
+  {
+    std::lock_guard<std::mutex> dispatchLock(dispatchMutex_);
+    dispatcher_.dispatch(req, resp);
+  }
 
   if (apm::logger::isDebugEnabled()) {
     apm::logger::debug(std::string(kLogFileTag) +

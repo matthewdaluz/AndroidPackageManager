@@ -35,6 +35,9 @@
 #include "request_dispatcher.hpp"
 
 #include <atomic>
+#include <condition_variable>
+#include <cstddef>
+#include <mutex>
 #include <string>
 
 namespace apm::amsd {
@@ -53,7 +56,13 @@ private:
   std::string socketPath_;
   std::atomic<bool> running_;
   RequestDispatcher &dispatcher_;
+  std::mutex dispatchMutex_;
+  std::mutex clientMutex_;
+  std::condition_variable clientCv_;
+  std::size_t activeClients_ = 0;
 
+  bool startClientWorker(int clientFd);
+  void waitForClients();
   void handleClient(int clientFd);
 };
 

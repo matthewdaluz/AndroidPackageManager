@@ -39,16 +39,20 @@
 #include <algorithm>
 #include <cctype>
 #include <cerrno>
+#include <chrono>
 #include <cstddef>
 #include <cstring>
 #include <fcntl.h>
 #include <grp.h>
 #include <fstream>
+#include <limits>
+#include <poll.h>
 #include <sstream>
 #include <string>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
+#include <thread>
 #include <unordered_set>
 #include <unistd.h>
 #include <utility>
@@ -59,6 +63,9 @@ namespace apm::ipc {
 namespace {
 
 constexpr std::size_t kMaxRequestBytes = 64 * 1024;
+constexpr std::size_t kMaxClientWorkers = 32;
+constexpr auto kRequestReadDeadline = std::chrono::seconds(5);
+constexpr auto kResponseWriteDeadline = std::chrono::seconds(5);
 constexpr const char *kLogFileTag = "ipc_server.cpp";
 
 enum class LogClearTarget { Apm, Ams, Module, All };
@@ -947,15 +954,101 @@ static bool buildSearchResponseMessage(const std::vector<std::string> &patternsI
   return true;
 }
 
+bool waitForSocket(int fd, short events,
+                   std::chrono::steady_clock::time_point deadline,
+                   std::string *errorMsg) {
+  while (true) {
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= deadline) {
+      errno = ETIMEDOUT;
+      if (errorMsg)
+        *errorMsg = "socket I/O timed out";
+      return false;
+    }
+
+    auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+        deadline - now);
+    const auto timeoutMs = std::min<long long>(
+        std::max<long long>(remaining.count(), 1),
+        std::numeric_limits<int>::max());
+
+    pollfd pfd{};
+    pfd.fd = fd;
+    pfd.events = events;
+    const int rc = ::poll(&pfd, 1, static_cast<int>(timeoutMs));
+    if (rc > 0) {
+      if ((pfd.revents & (POLLERR | POLLNVAL)) != 0) {
+        errno = EIO;
+        if (errorMsg)
+          *errorMsg = "socket poll reported an error";
+        return false;
+      }
+      if ((pfd.revents & (events | POLLHUP)) != 0)
+        return true;
+      continue;
+    }
+    if (rc == 0)
+      continue;
+    if (errno == EINTR)
+      continue;
+    if (errorMsg)
+      *errorMsg = "poll() failed: " + std::string(std::strerror(errno));
+    return false;
+  }
+}
+
+bool readRequestFrame(int fd, std::string &buffer, bool &tooLarge,
+                      std::string *errorMsg) {
+  const auto deadline =
+      std::chrono::steady_clock::now() + kRequestReadDeadline;
+  tooLarge = false;
+  buffer.clear();
+  char temp[512];
+
+  while (true) {
+    if (!waitForSocket(fd, POLLIN, deadline, errorMsg))
+      return false;
+
+    const ssize_t n = ::recv(fd, temp, sizeof(temp), MSG_DONTWAIT);
+    if (n < 0) {
+      if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
+        continue;
+      if (errorMsg)
+        *errorMsg = "read() failed: " + std::string(std::strerror(errno));
+      return false;
+    }
+    if (n == 0)
+      return true;
+
+    const std::size_t incoming = static_cast<std::size_t>(n);
+    if (buffer.size() + incoming > kMaxRequestBytes) {
+      tooLarge = true;
+      if (errorMsg)
+        *errorMsg = "request too large";
+      return false;
+    }
+
+    buffer.append(temp, incoming);
+    if (buffer.find("\n\n") != std::string::npos)
+      return true;
+  }
+}
+
 // Serialize and send a response frame to the client. Progress frames are sent
 // as-is; other responses are coerced into Ok/Error status automatically.
 static bool writeAll(int fd, const char *data, std::size_t len,
                      std::string *errorMsg) {
+  const auto deadline =
+      std::chrono::steady_clock::now() + kResponseWriteDeadline;
   std::size_t sent = 0;
   while (sent < len) {
-    ssize_t n = ::write(fd, data + sent, len - sent);
+    if (!waitForSocket(fd, POLLOUT, deadline, errorMsg))
+      return false;
+
+    ssize_t n =
+        ::send(fd, data + sent, len - sent, MSG_DONTWAIT | MSG_NOSIGNAL);
     if (n < 0) {
-      if (errno == EINTR)
+      if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
         continue;
       if (errorMsg)
         *errorMsg = "write() failed: " + std::string(std::strerror(errno));
@@ -987,6 +1080,7 @@ void sendResponseMessage(int clientFd, Response resp,
   std::string err;
   if (!writeAll(clientFd, wire.data(), wire.size(), &err)) {
     apm::logger::warn("IpcServer::sendResponseMessage: " + err);
+    ::shutdown(clientFd, SHUT_RDWR);
   }
 }
 
@@ -998,9 +1092,8 @@ IpcServer::IpcServer(const std::string &socketPath,
       m_moduleManager(moduleManager), m_securityManager() {}
 
 IpcServer::~IpcServer() {
-  if (m_listenFd >= 0) {
-    ::close(m_listenFd);
-  }
+  stop();
+  waitForClients();
   if (!m_socketPath.empty()) {
     ::unlink(m_socketPath.c_str());
   }
@@ -1087,8 +1180,8 @@ bool IpcServer::start() {
     return false;
   }
 
-  // Set socket permissions (0600 for emulator mode, 0666 for Android)
-  mode_t socketMode = apm::config::isEmulatorMode() ? 0600 : 0666;
+  // Android filesystem sockets are shared with the shell group.
+  mode_t socketMode = apm::config::isEmulatorMode() ? 0600 : 0660;
   if (!abstractSocket) {
     if (::chmod(m_socketPath.c_str(), socketMode) < 0) {
       apm::logger::warn("IpcServer::start: chmod() failed: " +
@@ -1100,7 +1193,7 @@ bool IpcServer::start() {
     }
   }
 
-  m_running = true;
+  m_running.store(true);
   apm::logger::info("apmd: listening on " + m_socketPath);
   return true;
 }
@@ -1112,67 +1205,96 @@ void IpcServer::run() {
     return;
   }
 
-  while (m_running) {
+  while (m_running.load()) {
     int clientFd = ::accept(m_listenFd, nullptr, nullptr);
     if (clientFd < 0) {
       if (errno == EINTR)
         continue;
+      if (!m_running.load())
+        break;
       apm::logger::error("IpcServer::run: accept() failed: " +
                          std::string(std::strerror(errno)));
       break;
     }
 
-    handleClient(clientFd);
-    ::close(clientFd);
+    if (!startClientWorker(clientFd))
+      ::close(clientFd);
   }
 
   apm::logger::info("IpcServer::run: stopping event loop");
 }
 
-// Signal the accept loop to exit after the current iteration.
-void IpcServer::stop() { m_running = false; }
+// Signal the accept loop to exit.
+void IpcServer::stop() {
+  m_running.store(false);
+  if (m_listenFd >= 0) {
+    ::shutdown(m_listenFd, SHUT_RDWR);
+    ::close(m_listenFd);
+    m_listenFd = -1;
+  }
+}
+
+bool IpcServer::startClientWorker(int clientFd) {
+  {
+    std::lock_guard<std::mutex> lock(m_clientMutex);
+    if (m_activeClients >= kMaxClientWorkers) {
+      apm::logger::warn("IpcServer::run: rejecting client at worker limit");
+      return false;
+    }
+    ++m_activeClients;
+  }
+
+  try {
+    std::thread([this, clientFd]() {
+      handleClient(clientFd);
+      ::shutdown(clientFd, SHUT_RDWR);
+      ::close(clientFd);
+      {
+        std::lock_guard<std::mutex> lock(m_clientMutex);
+        --m_activeClients;
+      }
+      m_clientCv.notify_one();
+    }).detach();
+  } catch (...) {
+    std::lock_guard<std::mutex> lock(m_clientMutex);
+    --m_activeClients;
+    apm::logger::error("IpcServer::run: failed to start client worker");
+    m_clientCv.notify_one();
+    return false;
+  }
+
+  return true;
+}
+
+void IpcServer::waitForClients() {
+  std::unique_lock<std::mutex> lock(m_clientMutex);
+  m_clientCv.wait(lock, [this]() { return m_activeClients == 0; });
+}
 
 // Read, parse, and dispatch a single client request. Each request is served
-// synchronously; expensive operations report progress over the socket.
+// synchronously once its frame is complete; expensive operations report
+// progress over the socket.
 void IpcServer::handleClient(int clientFd) {
   apm::logger::debug(std::string(kLogFileTag) +
                      ": IpcServer::handleClient new client fd=" +
                      std::to_string(clientFd));
 
-  // Read until blank line
   std::string buffer;
-  char temp[512];
-
-  while (true) {
-    ssize_t n = ::read(clientFd, temp, sizeof(temp));
-    if (n < 0) {
-      if (errno == EINTR)
-        continue;
-
-      apm::logger::error("IpcServer::handleClient: read() failed: " +
-                         std::string(std::strerror(errno)));
-      return;
-    }
-    if (n == 0)
-      break;
-
-    const std::size_t incoming = static_cast<std::size_t>(n);
-    if (buffer.size() + incoming > kMaxRequestBytes) {
+  bool tooLarge = false;
+  std::string readErr;
+  if (!readRequestFrame(clientFd, buffer, tooLarge, &readErr)) {
+    if (tooLarge) {
       apm::logger::warn(
           "IpcServer::handleClient: rejecting oversized request (> " +
           std::to_string(kMaxRequestBytes) + " bytes)");
-
       Response badResp;
       badResp.success = false;
       badResp.message = "Bad request: request too large";
       sendResponseMessage(clientFd, badResp);
-      return;
+    } else {
+      apm::logger::warn("IpcServer::handleClient: " + readErr);
     }
-
-    buffer.append(temp, incoming);
-
-    if (buffer.find("\n\n") != std::string::npos)
-      break;
+    return;
   }
 
   Request req;
@@ -1195,6 +1317,7 @@ void IpcServer::handleClient(int clientFd) {
                        req.id + "' type=" + typeToString(req.type));
   }
 
+  std::lock_guard<std::mutex> dispatchLock(m_dispatchMutex);
   Response resp;
   resp.id = req.id;
 

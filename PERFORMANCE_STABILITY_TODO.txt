@@ -7,7 +7,7 @@ Created from the May 22, 2026 codebase review.
 High Priority
 -------------
 
-[ ] Prevent idle or slow IPC clients from stalling apmd and amsd.
+[x] Prevent idle or slow IPC clients from stalling apmd and amsd.
     - Add read deadlines or nonblocking/poll-based request framing.
     - Keep mutating operations serialized as needed without blocking the accept
       loop on partial client requests.
@@ -93,4 +93,3 @@ Build and Test Follow-Up
         -DAPM_BUILD_TESTS=ON
     - Relevant code:
       CMakeLists.txt
-

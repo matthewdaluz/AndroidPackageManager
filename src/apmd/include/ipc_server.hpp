@@ -29,6 +29,10 @@
 #include "ams/module_manager.hpp"
 #include "security_manager.hpp"
 
+#include <atomic>
+#include <condition_variable>
+#include <cstddef>
+#include <mutex>
 #include <string>
 
 namespace apm::ipc {
@@ -42,20 +46,26 @@ public:
   // Create/bind/listen on the UNIX socket.
   bool start();
 
-  // Blocking event loop: accept + handle clients until stop() is called
-  // from another thread or process exit.
+  // Blocking event loop: accept clients until stop() is called from another
+  // thread or process exit.
   void run();
 
-  // Signal the server to stop after the current iteration.
+  // Signal the server to stop accepting clients.
   void stop();
 
 private:
   int m_listenFd;
   std::string m_socketPath;
-  bool m_running;
+  std::atomic<bool> m_running;
   apm::ams::ModuleManager &m_moduleManager;
   apm::daemon::SecurityManager m_securityManager;
+  std::mutex m_dispatchMutex;
+  std::mutex m_clientMutex;
+  std::condition_variable m_clientCv;
+  std::size_t m_activeClients = 0;
 
+  bool startClientWorker(int clientFd);
+  void waitForClients();
   void handleClient(int clientFd);
 };
 
