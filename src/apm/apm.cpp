@@ -64,11 +64,11 @@
 namespace {
 
 // Editable CLI metadata.
-static constexpr const char *kApmVersion = "2.0.4b - Open Beta";
+static constexpr const char *kApmVersion = "2.0.5b - Open Beta";
 static constexpr const char *kApmBuildDate =
-    "April 24th, 2026. - 11:20 PM Eastern Time.";
+    "May 23rd, 2026. - 8:10 PM Eastern Time.";
 static constexpr const char *kApmCopyright =
-    "Copyright (C) 2026 RedHead Industries";
+    "Copyright (C) 2026 Skidworks (Formally RedHead Industries)";
 static constexpr const char *kApmLicense =
     "License: GNU GPL v3 or later (GPL-3.0-or-later)";
 static constexpr const char *kLogExportDir = "/storage/emulated/0";
