@@ -17,7 +17,7 @@ High Priority
       src/apmd/ipc_server.cpp
       src/amsd/ipc_server.cpp
 
-[ ] Make install/remove results match durable package state.
+[x] Make install/remove results match durable package state.
     - Treat failed status DB writes as user-visible operation failures or add a
       recovery/journal path that can repair partial state.
     - Check non-Termux package tree removal results before reporting success.
@@ -27,14 +27,14 @@ High Priority
       src/apmd/install_manager.cpp
       src/core/status_db.cpp
 
-[ ] Bring Android.bp back in sync with the supported build.
+[x] Bring Android.bp back in sync with the supported build.
     - Compare Soong source lists against CMake source lists for apm, apmd, and
       amsd.
     - Add missing IPC, config, md5, and process-lock sources where required.
     - Fix or remove root-level init_rc references if the real init files remain
       under apm-flashable-new/system/etc/init/.
     - If Soong is no longer supported, remove or clearly retire the stale build
-      definition instead of letting it drift.
+      definition instead of letting it drift. (Note from developer: Soong and Ninja are still supported.)
     - Relevant code:
       Android.bp
       CMakeLists.txt
@@ -43,7 +43,7 @@ High Priority
 Performance Improvements
 ------------------------
 
-[ ] Cache parsed repository indexes inside the daemon.
+[x] Cache parsed repository indexes inside the daemon.
     - Avoid reparsing every cached Packages file for repeated info and search
       requests.
     - Invalidate cached indexes after repository updates or when source/list
@@ -53,7 +53,7 @@ Performance Improvements
       src/apmd/ipc_server.cpp
       src/core/repo_index.cpp
 
-[ ] Reduce whole-tree permission normalization work for Termux installs.
+[x] Reduce whole-tree permission normalization work for Termux installs.
     - Normalize copied or newly created paths where possible instead of walking
       the entire Termux root after each package install.
     - Cache the shell group ID instead of calling getgrnam for every visited

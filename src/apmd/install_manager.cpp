@@ -142,51 +142,56 @@ static bool lookupShellGroup(gid_t &gidOut) {
   return true;
 }
 
-static void normalizeShellReadableTree(const std::string &path) {
+struct ShellAccessContext {
+  bool haveShellGid = false;
+  gid_t shellGid = 0;
+};
+
+static const ShellAccessContext &shellAccessContext() {
+  static const ShellAccessContext ctx = [] {
+    ShellAccessContext value;
+    value.haveShellGid = lookupShellGroup(value.shellGid);
+    return value;
+  }();
+  return ctx;
+}
+
+static mode_t shellReadableMode(mode_t rawMode, bool isDir) {
+  mode_t mode = rawMode & 07777;
+  if (mode == 0) {
+    mode = isDir ? 0755 : 0644;
+  }
+
+  if (isDir) {
+    mode |= S_IRGRP | S_IXGRP;
+  } else if ((mode & S_IRUSR) != 0) {
+    mode |= S_IRGRP;
+  }
+
+  if ((mode & S_IWUSR) != 0) {
+    mode |= S_IWGRP;
+  }
+  if (!isDir && (mode & S_IXUSR) != 0) {
+    mode |= S_IXGRP;
+  }
+  return mode;
+}
+
+static void normalizeShellReadablePath(const std::string &path) {
   struct stat st{};
   if (::lstat(path.c_str(), &st) != 0) {
     return;
   }
-
-  gid_t shellGid = 0;
-  const bool haveShellGid = lookupShellGroup(shellGid);
-
-  if (S_ISDIR(st.st_mode)) {
-    if (haveShellGid) {
-      ::chown(path.c_str(), 0, shellGid);
-    }
-    mode_t mode = st.st_mode & 07777;
-    mode |= S_IRGRP | S_IXGRP;
-    if ((mode & S_IWUSR) != 0) {
-      mode |= S_IWGRP;
-    }
-    ::chmod(path.c_str(), mode);
-
-    for (const auto &entry : apm::fs::listDir(path, true)) {
-      if (entry == "." || entry == "..") {
-        continue;
-      }
-      normalizeShellReadableTree(apm::fs::joinPath(path, entry));
-    }
+  if (!S_ISDIR(st.st_mode) && !S_ISREG(st.st_mode)) {
     return;
   }
 
-  if (S_ISREG(st.st_mode)) {
-    if (haveShellGid) {
-      ::chown(path.c_str(), 0, shellGid);
-    }
-    mode_t mode = st.st_mode & 07777;
-    if ((mode & S_IRUSR) != 0) {
-      mode |= S_IRGRP;
-    }
-    if ((mode & S_IWUSR) != 0) {
-      mode |= S_IWGRP;
-    }
-    if ((mode & S_IXUSR) != 0) {
-      mode |= S_IXGRP;
-    }
-    ::chmod(path.c_str(), mode);
+  const auto &ctx = shellAccessContext();
+  if (ctx.haveShellGid) {
+    ::chown(path.c_str(), 0, ctx.shellGid);
   }
+
+  ::chmod(path.c_str(), shellReadableMode(st.st_mode, S_ISDIR(st.st_mode)));
 }
 
 static bool ensureDirectoryMode(const std::string &path, mode_t mode) {
@@ -201,6 +206,7 @@ static bool ensureDirectoryMode(const std::string &path, mode_t mode) {
     return false;
   }
 
+  normalizeShellReadablePath(path);
   return true;
 }
 
@@ -807,7 +813,14 @@ static bool copyFilePreserveMode(const std::string &src,
   }
 
   bool ok = true;
-  if (::fchmod(outFd, mode) != 0) {
+  const auto &ctx = shellAccessContext();
+  if (ctx.haveShellGid && ::fchown(outFd, 0, ctx.shellGid) != 0) {
+    apm::logger::warn("install_manager: chown failed for " + dst + ": " +
+                      std::strerror(errno));
+    ok = false;
+  }
+
+  if (::fchmod(outFd, shellReadableMode(mode, false)) != 0) {
     apm::logger::warn("install_manager: chmod failed for " + dst + ": " +
                       std::strerror(errno));
     ok = false;
@@ -858,6 +871,14 @@ static bool copySymlink(const std::string &src, const std::string &dst) {
   if (::symlink(target.c_str(), dst.c_str()) != 0) {
     apm::logger::warn("install_manager: symlink failed for " + dst);
     return false;
+  }
+
+  auto slash = dst.find_last_of('/');
+  if (slash != std::string::npos) {
+    std::string parent = dst.substr(0, slash);
+    if (!parent.empty()) {
+      normalizeShellReadablePath(parent);
+    }
   }
 
   return true;
@@ -931,8 +952,13 @@ static bool writeTermuxManifest(const std::string &installRoot,
   for (const auto &p : paths) {
     ss << p << "\n";
   }
-  return apm::fs::writeFile(apm::fs::joinPath(installRoot, "files.list"),
-                            ss.str(), true);
+  const std::string manifestPath = apm::fs::joinPath(installRoot, "files.list");
+  if (!apm::fs::writeFile(manifestPath, ss.str(), true)) {
+    return false;
+  }
+  normalizeShellReadablePath(installRoot);
+  normalizeShellReadablePath(manifestPath);
+  return true;
 }
 
 static bool readTermuxManifest(const std::string &installRoot,
@@ -981,6 +1007,7 @@ static bool createTermuxWrapper(const std::string &commandName) {
   if (::chmod(target.c_str(), 0755) != 0) {
     apm::logger::warn("install_manager: chmod failed for wrapper " + target);
   }
+  normalizeShellReadablePath(target);
 
   return true;
 }
@@ -995,20 +1022,35 @@ static bool removeTermuxWrapper(const std::string &commandName) {
 
 static bool pruneEmptyDirs(const std::string &root, bool keepRoot);
 
-static void removeInstalledTermuxPaths(const std::vector<std::string> &paths) {
+static bool removeInstalledTermuxPaths(const std::vector<std::string> &paths,
+                                       std::string *errorMsg = nullptr) {
+  bool ok = true;
+
   for (const auto &rel : paths) {
     std::string full = apm::fs::joinPath(apm::config::getTermuxRoot(), rel);
-    apm::fs::removeFile(full);
+    if (!apm::fs::removeFile(full) && apm::fs::pathExists(full)) {
+      ok = false;
+      if (errorMsg && errorMsg->empty()) {
+        *errorMsg = "Failed to remove Termux payload path: " + full;
+      }
+    }
 
     static const std::string kBinPrefix = "usr/bin/";
     if (rel.compare(0, kBinPrefix.size(), kBinPrefix) == 0) {
       std::string cmd = rel.substr(kBinPrefix.size());
       auto slash = cmd.find('/');
       if (slash == std::string::npos && !cmd.empty()) {
-        removeTermuxWrapper(cmd);
+        if (!removeTermuxWrapper(cmd)) {
+          ok = false;
+          if (errorMsg && errorMsg->empty()) {
+            *errorMsg = "Failed to remove Termux wrapper: " + cmd;
+          }
+        }
       }
     }
   }
+
+  return ok;
 }
 
 static void rollbackTermuxInstall(
@@ -1067,10 +1109,6 @@ static bool rewriteTermuxPathsDuringExtraction(
     return false;
   }
 
-  // Match apmd startup behavior immediately so newly installed Termux
-  // commands are shell-accessible without waiting for a reboot.
-  normalizeShellReadableTree(apm::config::getTermuxRoot());
-
   if (!writeTermuxManifest(installRoot, installedPaths)) {
     if (errorMsg)
       *errorMsg = "Failed to write Termux manifest";
@@ -1123,18 +1161,64 @@ static bool removeTermuxPackageFiles(const apm::status::InstalledPackage &ip,
                                      std::string *errorMsg) {
   std::vector<std::string> manifest;
   if (!readTermuxManifest(ip.installRoot, manifest)) {
-    apm::logger::warn("removeTermuxPackageFiles: missing manifest at " +
-                      ip.installRoot);
+    if (errorMsg) {
+      *errorMsg = "Missing Termux package manifest at " + ip.installRoot;
+    }
+    apm::logger::error("removeTermuxPackageFiles: missing manifest at " +
+                       ip.installRoot);
+    return false;
   }
 
-  removeInstalledTermuxPaths(manifest);
+  std::string removeErr;
+  bool ok = removeInstalledTermuxPaths(manifest, &removeErr);
   pruneEmptyDirs(apm::fs::joinPath(apm::config::getTermuxRoot(), "usr"), true);
-  apm::fs::removeDirRecursive(ip.installRoot);
+  if (!apm::fs::removeDirRecursive(ip.installRoot)) {
+    ok = false;
+    if (removeErr.empty()) {
+      removeErr = "Failed to remove Termux install metadata: " + ip.installRoot;
+    }
+  }
+
+  if (!ok && errorMsg) {
+    *errorMsg = removeErr.empty() ? "Failed to remove Termux package payload"
+                                  : removeErr;
+  }
+  return ok;
+}
+
+static bool removeNonTermuxPackageTree(const std::string &installRoot,
+                                       std::string *errorMsg) {
+  if (installRoot.empty()) {
+    if (errorMsg) {
+      *errorMsg = "Install root is empty";
+    }
+    return false;
+  }
+
+  if (!apm::fs::pathExists(installRoot)) {
+    apm::logger::warn("removePackage: installRoot does not exist: " +
+                      installRoot);
+    return true;
+  }
+
+  if (apm::fs::removeDirRecursive(installRoot) &&
+      !apm::fs::pathExists(installRoot)) {
+    return true;
+  }
 
   if (errorMsg) {
-    *errorMsg = "";
+    *errorMsg = "Failed to remove install root: " + installRoot;
   }
-  return true;
+  return false;
+}
+
+static bool removePackagePayload(const apm::status::InstalledPackage &ip,
+                                 std::string *errorMsg) {
+  if (ip.termuxPackage) {
+    return removeTermuxPackageFiles(ip, errorMsg);
+  }
+
+  return removeNonTermuxPackageTree(ip.installRoot, errorMsg);
 }
 
 static bool cleanupStaleTermuxInstallRoot(const std::string &packageName,
@@ -1330,7 +1414,7 @@ static bool installSinglePackage(const PackageEntry &pkg,
   if (termuxMode) {
     if (!termuxLayout) {
       if (isEffectivelyEmptyDirectory(dataDir)) {
-        if (!apm::fs::createDirs(installRoot)) {
+        if (!ensureDirectoryMode(installRoot, 0755)) {
           if (errorMsg)
             *errorMsg = "Failed to prepare Termux install root: " + installRoot;
           apm::logger::error("installSinglePackage: cannot create Termux "
@@ -1579,8 +1663,10 @@ bool installWithDeps(const RepoIndexList &repoIndices,
   apm::status::InstalledDb installedDb;
   std::string dbErr;
   if (!apm::status::loadStatus(installedDb, &dbErr)) {
-    apm::logger::warn("installWithDeps: failed to load status DB: " + dbErr);
-    // continue with empty DB; worst case, resolver thinks nothing is installed
+    result.ok = false;
+    result.message = "Failed to load status DB: " + dbErr;
+    apm::logger::error("installWithDeps: " + result.message);
+    return false;
   }
 
   std::vector<std::string> alreadyInstalled;
@@ -1864,17 +1950,23 @@ bool installWithDeps(const RepoIndexList &repoIndices,
       ip.installPrefix = apm::config::getTermuxPrefix();
     }
 
+    const auto existingBeforeInstall = installedDb.find(pkg->packageName);
+    const bool hadExistingBeforeInstall =
+        existingBeforeInstall != installedDb.end();
+    apm::status::InstalledPackage previousPackage;
+    if (hadExistingBeforeInstall) {
+      previousPackage = existingBeforeInstall->second;
+    }
+
     // Auto-Installed flag:
     //
     // - New root package of this install => manual (autoInstalled=false)
     // - New dependencies => autoInstalled=true
     // - If something was already installed, keep its current flag,
     //   but if the user explicitly installed it as the root, flip to manual.
-    auto existing_auto_installed = installedDb.find(pkg->packageName);
-
-    if (existing_auto_installed != installedDb.end()) {
+    if (hadExistingBeforeInstall) {
       // Keep prior autoInstalled flag
-      ip.autoInstalled = existing_auto_installed->second.autoInstalled;
+      ip.autoInstalled = previousPackage.autoInstalled;
 
       // If user explicitly installed this as the root, it's not auto
       if (pkg->packageName == rootPackage) {
@@ -1894,8 +1986,24 @@ bool installWithDeps(const RepoIndexList &repoIndices,
     // Flush to disk (dpkg-style)
     std::string writeErr;
     if (!apm::status::writeStatus(installedDb, &writeErr)) {
-      apm::logger::warn("installWithDeps: failed to update status DB: " +
-                        writeErr);
+      result.ok = false;
+      result.message = "Failed to persist installed package state for " +
+                       pkg->packageName + ": " + writeErr;
+
+      if (!hadExistingBeforeInstall) {
+        std::string rollbackErr;
+        if (!removePackagePayload(ip, &rollbackErr)) {
+          result.message += "; rollback failed";
+          if (!rollbackErr.empty()) {
+            result.message += ": " + rollbackErr;
+          }
+        }
+      } else {
+        installedDb[ip.name] = previousPackage;
+      }
+
+      apm::logger::error("installWithDeps: " + result.message);
+      return false;
     }
 
     result.installedPackages.push_back(pkg->packageName);
@@ -2017,7 +2125,7 @@ bool removePackage(const std::string &packageName, const RemoveOptions &opts,
     }
   }
 
-  const apm::status::InstalledPackage &ip = it->second;
+  apm::status::InstalledPackage ip = it->second;
 
   std::string installRoot = ip.installRoot;
   if (installRoot.empty()) {
@@ -2029,36 +2137,40 @@ bool removePackage(const std::string &packageName, const RemoveOptions &opts,
           apm::fs::joinPath(apm::config::getInstalledDir(), packageName);
     }
   }
+  ip.installRoot = installRoot;
 
   apm::logger::info("removePackage: removing package '" + packageName +
                     "' from " + installRoot);
 
-  if (ip.termuxPackage) {
-    std::string removeErr;
-    if (!removeTermuxPackageFiles(ip, &removeErr)) {
-      result.ok = false;
-      result.message = removeErr.empty()
-                           ? "Failed to remove Termux package payload"
-                           : removeErr;
-      apm::logger::error("removePackage: " + result.message);
-      return false;
-    }
-  } else {
-    // Remove installed root directory tree
-    if (apm::fs::pathExists(installRoot)) {
-      removeDirRecursive(installRoot);
-    } else {
-      apm::logger::warn("removePackage: installRoot does not exist: " +
-                        installRoot);
-    }
+  apm::status::InstalledDb dbWithPackage = db;
+  apm::status::InstalledDb dbWithoutPackage = db;
+  dbWithoutPackage.erase(packageName);
+
+  std::string writeErr;
+  if (!apm::status::writeStatus(dbWithoutPackage, &writeErr)) {
+    result.ok = false;
+    result.message = "Failed to persist removal state for " + packageName +
+                     ": " + writeErr;
+    apm::logger::error("removePackage: " + result.message);
+    return false;
   }
 
-  // Remove from status DB
-  db.erase(it);
-  std::string writeErr;
-  if (!apm::status::writeStatus(db, &writeErr)) {
-    apm::logger::warn("removePackage: failed to update status DB: " + writeErr);
-    // Non-fatal: files are gone, DB just slightly out of sync
+  std::string removeErr;
+  if (!removePackagePayload(ip, &removeErr)) {
+    std::string restoreErr;
+    const bool restoredStatus = apm::status::writeStatus(dbWithPackage,
+                                                         &restoreErr);
+    result.ok = false;
+    result.message = removeErr.empty() ? "Failed to remove package payload"
+                                       : removeErr;
+    if (!restoredStatus) {
+      result.message += "; failed to restore status DB entry";
+      if (!restoreErr.empty()) {
+        result.message += ": " + restoreErr;
+      }
+    }
+    apm::logger::error("removePackage: " + result.message);
+    return false;
   }
 
   apm::daemon::path::CommandHotloadSummary hotloadSummary;

@@ -46,6 +46,7 @@
 #include <grp.h>
 #include <fstream>
 #include <limits>
+#include <memory>
 #include <poll.h>
 #include <sstream>
 #include <string>
@@ -53,6 +54,7 @@
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <thread>
+#include <unordered_map>
 #include <unordered_set>
 #include <unistd.h>
 #include <utility>
@@ -381,6 +383,145 @@ static std::string toLower(std::string value) {
                    return static_cast<char>(std::tolower(c));
                  });
   return value;
+}
+
+struct CachedRepoSearchEntry {
+  const apm::repo::PackageEntry *pkg = nullptr;
+  std::string haystack;
+};
+
+struct CachedRepoData {
+  apm::repo::RepoIndexList indices;
+  std::unordered_map<std::string, const apm::repo::PackageEntry *>
+      packageByName;
+  std::vector<CachedRepoSearchEntry> searchEntries;
+  std::string fingerprint;
+};
+
+struct RepoIndexCache {
+  std::mutex mutex;
+  std::string sourcesPath;
+  std::string listsDir;
+  std::string defaultArch;
+  std::shared_ptr<const CachedRepoData> data;
+};
+
+RepoIndexCache gRepoIndexCache;
+
+static void appendPathFingerprint(const std::string &path,
+                                  std::ostringstream &out) {
+  struct stat st {};
+  if (::lstat(path.c_str(), &st) != 0) {
+    out << path << "|missing|" << errno << "\n";
+    return;
+  }
+
+  out << path << "|" << st.st_mode << "|" << st.st_size << "|" << st.st_mtime
+      << "\n";
+
+  if (!S_ISDIR(st.st_mode)) {
+    return;
+  }
+
+  auto entries = apm::fs::listDir(path, true);
+  std::sort(entries.begin(), entries.end());
+  for (const auto &entry : entries) {
+    if (entry == "." || entry == "..") {
+      continue;
+    }
+    appendPathFingerprint(apm::fs::joinPath(path, entry), out);
+  }
+}
+
+static std::string repoIndexFingerprint(const std::string &sourcesPath,
+                                        const std::string &listsDir,
+                                        const std::string &defaultArch) {
+  std::ostringstream out;
+  out << "arch|" << defaultArch << "\n";
+  appendPathFingerprint(sourcesPath, out);
+  appendPathFingerprint(listsDir, out);
+  return out.str();
+}
+
+static void buildRepoLookupMaps(CachedRepoData &data) {
+  std::size_t packageCount = 0;
+  for (const auto &idx : data.indices) {
+    packageCount += idx.packages.size();
+  }
+
+  data.packageByName.reserve(packageCount);
+  data.searchEntries.reserve(packageCount);
+
+  for (const auto &idx : data.indices) {
+    for (const auto &pkg : idx.packages) {
+      if (pkg.packageName.empty()) {
+        continue;
+      }
+
+      data.packageByName.emplace(pkg.packageName, &pkg);
+
+      std::string haystack = toLower(pkg.packageName);
+      auto descIt = pkg.rawFields.find("Description");
+      if (descIt != pkg.rawFields.end() && !descIt->second.empty()) {
+        haystack.push_back(' ');
+        haystack += toLower(descIt->second);
+      }
+
+      data.searchEntries.push_back({&pkg, std::move(haystack)});
+    }
+  }
+}
+
+static bool loadCachedRepoIndices(
+    std::shared_ptr<const CachedRepoData> &dataOut, std::string *errorMsg) {
+  const std::string sourcesPath = apm::config::getSourcesList();
+  const std::string listsDir = apm::config::getListsDir();
+  const std::string defaultArch = apm::config::getDefaultArch();
+  const std::string fingerprint =
+      repoIndexFingerprint(sourcesPath, listsDir, defaultArch);
+
+  std::lock_guard<std::mutex> lock(gRepoIndexCache.mutex);
+  if (gRepoIndexCache.data && gRepoIndexCache.sourcesPath == sourcesPath &&
+      gRepoIndexCache.listsDir == listsDir &&
+      gRepoIndexCache.defaultArch == defaultArch &&
+      gRepoIndexCache.data->fingerprint == fingerprint) {
+    dataOut = gRepoIndexCache.data;
+    return true;
+  }
+
+  auto fresh = std::make_shared<CachedRepoData>();
+  fresh->fingerprint = fingerprint;
+  if (!apm::repo::loadRepoIndicesFromCache(sourcesPath, listsDir, defaultArch,
+                                           fresh->indices, errorMsg)) {
+    gRepoIndexCache.data.reset();
+    return false;
+  }
+
+  fresh->fingerprint = repoIndexFingerprint(sourcesPath, listsDir, defaultArch);
+  buildRepoLookupMaps(*fresh);
+  gRepoIndexCache.sourcesPath = sourcesPath;
+  gRepoIndexCache.listsDir = listsDir;
+  gRepoIndexCache.defaultArch = defaultArch;
+  gRepoIndexCache.data = fresh;
+  dataOut = std::move(fresh);
+
+  apm::logger::info(std::string(kLogFileTag) + ": cached " +
+                    std::to_string(gRepoIndexCache.data->indices.size()) +
+                    " repo index entries with " +
+                    std::to_string(gRepoIndexCache.data->packageByName.size()) +
+                    " package lookup keys");
+  return true;
+}
+
+static void invalidateRepoIndexCache(const char *reason) {
+  std::lock_guard<std::mutex> lock(gRepoIndexCache.mutex);
+  if (!gRepoIndexCache.data) {
+    return;
+  }
+  gRepoIndexCache.data.reset();
+  apm::logger::info(std::string(kLogFileTag) +
+                    ": invalidated repo index cache" +
+                    (reason ? std::string(" after ") + reason : ""));
 }
 
 static std::vector<std::string> splitLines(const std::string &value) {
@@ -816,11 +957,9 @@ static std::string buildInfoResponseMessage(const std::string &name) {
     out << "\n";
   }
 
-  apm::repo::RepoIndexList indices;
+  std::shared_ptr<const CachedRepoData> repoData;
   std::string repoErr;
-  if (!apm::repo::loadRepoIndicesFromCache(
-          apm::config::getSourcesList(), apm::config::getListsDir(),
-          apm::config::getDefaultArch(), indices, &repoErr)) {
+  if (!loadCachedRepoIndices(repoData, &repoErr)) {
     out << "Repository info unavailable";
     if (!repoErr.empty())
       out << ": " << repoErr;
@@ -828,12 +967,9 @@ static std::string buildInfoResponseMessage(const std::string &name) {
   }
 
   const apm::repo::PackageEntry *cand = nullptr;
-  for (const auto &idx : indices) {
-    const auto *found = apm::repo::findPackage(idx.packages, name, "");
-    if (found) {
-      cand = found;
-      break;
-    }
+  auto candIt = repoData->packageByName.find(name);
+  if (candIt != repoData->packageByName.end()) {
+    cand = candIt->second;
   }
 
   if (!cand) {
@@ -885,11 +1021,9 @@ static bool buildSearchResponseMessage(const std::vector<std::string> &patternsI
     patterns.push_back(toLower(pattern));
   }
 
-  apm::repo::RepoIndexList indices;
+  std::shared_ptr<const CachedRepoData> repoData;
   std::string err;
-  if (!apm::repo::loadRepoIndicesFromCache(
-          apm::config::getSourcesList(), apm::config::getListsDir(),
-          apm::config::getDefaultArch(), indices, &err)) {
+  if (!loadCachedRepoIndices(repoData, &err)) {
     messageOut = "apm search: failed to load repo indices";
     if (!err.empty()) {
       messageOut += ": " + err;
@@ -901,45 +1035,42 @@ static bool buildSearchResponseMessage(const std::vector<std::string> &patternsI
   std::size_t matchCount = 0;
   std::ostringstream out;
 
-  for (const auto &idx : indices) {
-    for (const auto &pkg : idx.packages) {
-      std::string desc;
-      auto it = pkg.rawFields.find("Description");
-      if (it != pkg.rawFields.end()) {
-        desc = it->second;
-      }
-
-      std::string hay = toLower(pkg.packageName);
-      if (!desc.empty()) {
-        hay.push_back(' ');
-        hay += toLower(desc);
-      }
-
-      bool hit = false;
-      for (const auto &pattern : patterns) {
-        if (hay.find(pattern) != std::string::npos) {
-          hit = true;
-          break;
-        }
-      }
-
-      if (!hit || !seen.insert(pkg.packageName).second) {
-        continue;
-      }
-
-      ++matchCount;
-      out << pkg.packageName;
-      if (!pkg.version.empty()) {
-        out << " " << pkg.version;
-      }
-      if (!pkg.architecture.empty()) {
-        out << " [" << pkg.architecture << "]";
-      }
-      if (!desc.empty()) {
-        out << " - " << desc;
-      }
-      out << "\n";
+  for (const auto &entry : repoData->searchEntries) {
+    const auto *pkg = entry.pkg;
+    if (!pkg) {
+      continue;
     }
+
+    bool hit = false;
+    for (const auto &pattern : patterns) {
+      if (entry.haystack.find(pattern) != std::string::npos) {
+        hit = true;
+        break;
+      }
+    }
+
+    if (!hit || !seen.insert(pkg->packageName).second) {
+      continue;
+    }
+
+    std::string desc;
+    auto it = pkg->rawFields.find("Description");
+    if (it != pkg->rawFields.end()) {
+      desc = it->second;
+    }
+
+    ++matchCount;
+    out << pkg->packageName;
+    if (!pkg->version.empty()) {
+      out << " " << pkg->version;
+    }
+    if (!pkg->architecture.empty()) {
+      out << " [" << pkg->architecture << "]";
+    }
+    if (!desc.empty()) {
+      out << " - " << desc;
+    }
+    out << "\n";
   }
 
   if (matchCount == 0) {
@@ -1374,6 +1505,9 @@ void IpcServer::handleClient(int clientFd) {
   case RequestType::AddRepo: {
     apm::logger::info("IpcServer: AddRepo request received");
     resp.success = addRepoSourceFile(req.repoPath, resp.message);
+    if (resp.success) {
+      invalidateRepoIndexCache("repo source add");
+    }
     break;
   }
 
@@ -1386,6 +1520,9 @@ void IpcServer::handleClient(int clientFd) {
   case RequestType::RemoveRepo: {
     apm::logger::info("IpcServer: RemoveRepo request received");
     resp.success = removeRepoSourceFile(req.repoPath, resp.message);
+    if (resp.success) {
+      invalidateRepoIndexCache("repo source removal");
+    }
     break;
   }
 
@@ -1533,12 +1670,9 @@ void IpcServer::handleClient(int clientFd) {
   case RequestType::Upgrade: {
     apm::logger::info("IpcServer: Upgrade request received");
 
-    // Build repo indices (like for install)
-    apm::repo::RepoIndexList indices;
+    std::shared_ptr<const CachedRepoData> repoData;
     std::string err;
-    if (!apm::repo::loadRepoIndicesFromCache(
-            apm::config::getSourcesList(), apm::config::getListsDir(),
-            apm::config::getDefaultArch(), indices, &err)) {
+    if (!loadCachedRepoIndices(repoData, &err)) {
       resp.success = false;
       resp.message =
           err.empty() ? "Failed to load repository metadata (run 'apm update')"
@@ -1561,7 +1695,8 @@ void IpcServer::handleClient(int clientFd) {
     // Later we can read simulate/distUpgrade flags from req.rawFields
 
     apm::install::UpgradeResult ures;
-    if (!apm::install::upgradePackages(indices, targets, opts, ures)) {
+    if (!apm::install::upgradePackages(repoData->indices, targets, opts,
+                                       ures)) {
       resp.success = false;
       resp.message = ures.message;
       break;
@@ -1582,12 +1717,10 @@ void IpcServer::handleClient(int clientFd) {
     apm::logger::info("IpcServer: Install request for package: " +
                       req.packageName);
 
-    // 1) Build repo indices (.repo sources + Packages files)
-    apm::repo::RepoIndexList indices;
+    // 1) Load repo indices from the daemon cache.
+    std::shared_ptr<const CachedRepoData> repoData;
     std::string err;
-    if (!apm::repo::loadRepoIndicesFromCache(
-            apm::config::getSourcesList(), apm::config::getListsDir(),
-            apm::config::getDefaultArch(), indices, &err)) {
+    if (!loadCachedRepoIndices(repoData, &err)) {
       resp.success = false;
       resp.message =
           err.empty() ? "Failed to load repository metadata (run 'apm update')"
@@ -1636,8 +1769,8 @@ void IpcServer::handleClient(int clientFd) {
       sendResponseMessage(clientFd, evt);
     };
 
-    if (!apm::install::installWithDeps(indices, req.packageName, opts, res,
-                                       installProgressCb)) {
+    if (!apm::install::installWithDeps(repoData->indices, req.packageName,
+                                       opts, res, installProgressCb)) {
       resp.success = false;
       resp.message = res.message.empty() ? "Install failed" : res.message;
       break;
@@ -1797,6 +1930,7 @@ void IpcServer::handleClient(int clientFd) {
     bool ok = apm::repo::updateFromSourcesList(
         apm::config::getSourcesList(), apm::config::getListsDir(),
         apm::config::getDefaultArch(), &summary, &err, progressCb);
+    invalidateRepoIndexCache("repo update");
 
     if (ok) {
       resp.success = true;
@@ -1922,6 +2056,7 @@ void IpcServer::handleClient(int clientFd) {
       resp.success = true;
       resp.message =
           result.message.empty() ? "Factory reset completed." : result.message;
+      invalidateRepoIndexCache("factory reset");
     }
     break;
   }
@@ -1947,6 +2082,9 @@ void IpcServer::handleClient(int clientFd) {
       resp.success = true;
       resp.message =
           result.message.empty() ? "Selected caches cleared." : result.message;
+      if (selection.repoLists) {
+        invalidateRepoIndexCache("repo list cache wipe");
+      }
     }
     break;
   }

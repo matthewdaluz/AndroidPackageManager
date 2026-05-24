@@ -62,53 +62,81 @@ bool lookupShellGroup(gid_t &gidOut) {
   return true;
 }
 
-void normalizeShellReadableTree(const std::string &path) {
+struct ShellAccessContext {
+  bool haveShellGid = false;
+  gid_t shellGid = 0;
+};
+
+const ShellAccessContext &shellAccessContext() {
+  static const ShellAccessContext ctx = [] {
+    ShellAccessContext value;
+    value.haveShellGid =
+        !apm::config::isEmulatorMode() && lookupShellGroup(value.shellGid);
+    return value;
+  }();
+  return ctx;
+}
+
+mode_t shellReadableMode(mode_t rawMode, bool isDir) {
+  mode_t mode = rawMode & 07777;
+  if (mode == 0) {
+    mode = isDir ? 0755 : 0644;
+  }
+
+  if (isDir) {
+    mode |= S_IRGRP | S_IXGRP;
+  } else if ((mode & S_IRUSR) != 0) {
+    mode |= S_IRGRP;
+  }
+
+  if ((mode & S_IWUSR) != 0) {
+    mode |= S_IWGRP;
+  }
+  if (!isDir && (mode & S_IXUSR) != 0) {
+    mode |= S_IXGRP;
+  }
+  return mode;
+}
+
+void normalizeShellReadablePath(const std::string &path) {
   struct stat st{};
   if (::lstat(path.c_str(), &st) != 0) {
     return;
   }
-
-  gid_t shellGid = 0;
-  const bool haveShellGid =
-      !apm::config::isEmulatorMode() && lookupShellGroup(shellGid);
-
-  if (S_ISDIR(st.st_mode)) {
-    if (haveShellGid) {
-      ::chown(path.c_str(), 0, shellGid);
-    }
-
-    mode_t mode = st.st_mode & 07777;
-    mode |= S_IRGRP | S_IXGRP;
-    if ((mode & S_IWUSR) != 0) {
-      mode |= S_IWGRP;
-    }
-    ::chmod(path.c_str(), mode);
-
-    for (const auto &entry : apm::fs::listDir(path, true)) {
-      if (entry == "." || entry == "..") {
-        continue;
-      }
-      normalizeShellReadableTree(apm::fs::joinPath(path, entry));
-    }
+  if (!S_ISDIR(st.st_mode) && !S_ISREG(st.st_mode)) {
     return;
   }
 
-  if (S_ISREG(st.st_mode)) {
-    if (haveShellGid) {
-      ::chown(path.c_str(), 0, shellGid);
+  const auto &ctx = shellAccessContext();
+  if (ctx.haveShellGid) {
+    ::chown(path.c_str(), 0, ctx.shellGid);
+  }
+
+  ::chmod(path.c_str(), shellReadableMode(st.st_mode, S_ISDIR(st.st_mode)));
+}
+
+void normalizeShellReadableTree(const std::string &path) {
+  std::vector<std::string> pending{path};
+  while (!pending.empty()) {
+    std::string current = pending.back();
+    pending.pop_back();
+
+    struct stat st{};
+    if (::lstat(current.c_str(), &st) != 0) {
+      continue;
     }
 
-    mode_t mode = st.st_mode & 07777;
-    if ((mode & S_IRUSR) != 0) {
-      mode |= S_IRGRP;
+    normalizeShellReadablePath(current);
+    if (!S_ISDIR(st.st_mode)) {
+      continue;
     }
-    if ((mode & S_IWUSR) != 0) {
-      mode |= S_IWGRP;
+
+    for (const auto &entry : apm::fs::listDir(current, true)) {
+      if (entry == "." || entry == "..") {
+        continue;
+      }
+      pending.push_back(apm::fs::joinPath(current, entry));
     }
-    if ((mode & S_IXUSR) != 0) {
-      mode |= S_IXGRP;
-    }
-    ::chmod(path.c_str(), mode);
   }
 }
 

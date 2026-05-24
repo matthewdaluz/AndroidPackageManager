@@ -52,6 +52,8 @@ cc_binary {
     installable: true,
     srcs: [
         "src/apm/apm.cpp",
+        "src/apm/ipc_client.cpp",
+        "src/apm/transport.cpp",
         "src/apm/commands/apk_install.cpp",
         "src/apm/commands/list.cpp",
         "src/apm/commands/info.cpp",
@@ -59,6 +61,7 @@ cc_binary {
         "src/apmd/apk_installer.cpp",
         "src/apmd/export_path.cpp",
         "src/apmd/protocol.cpp",
+        "src/core/config.cpp",
         "src/core/control_parser.cpp",
         "src/core/deb_extractor.cpp",
         "src/core/repo_index.cpp",
@@ -73,8 +76,10 @@ cc_binary {
         "src/ams/module_info.cpp",
         "src/ams/module_manager.cpp",
         "src/util/crypto/sha256.cpp",
+        "src/util/crypto/md5.cpp",
         "src/util/crypto/gpg_verify.cpp",
         "src/util/fs.cpp",
+        "src/util/process_lock.cpp",
     ],
     local_include_dirs: [
         "src/apm/include",
@@ -94,6 +99,9 @@ cc_binary {
     srcs: [
         "src/apmd/apmd.cpp",
         "src/apmd/ipc_server.cpp",
+        "src/core/config.cpp",
+        "src/apm/transport.cpp",
+        "src/apm/ipc_client.cpp",
         "src/apmd/install_manager.cpp",
         "src/apmd/export_path.cpp",
         "src/apmd/apk_installer.cpp",
@@ -115,8 +123,10 @@ cc_binary {
         "src/ams/module_info.cpp",
         "src/ams/module_manager.cpp",
         "src/util/crypto/sha256.cpp",
+        "src/util/crypto/md5.cpp",
         "src/util/crypto/gpg_verify.cpp",
         "src/util/fs.cpp",
+        "src/util/process_lock.cpp",
     ],
     local_include_dirs: [
         "src/apm/include",
@@ -127,7 +137,7 @@ cc_binary {
         "src/util/crypto",
         "src/apm/commands/include",
     ],
-    init_rc: ["init.apmd.rc"],
+    init_rc: ["apm-flashable-new/system/etc/init/init.apmd.rc"],
 }
 
 cc_binary {
@@ -150,6 +160,7 @@ cc_binary {
         "src/util/crypto/gpg_verify.cpp",
         "src/util/crypto/md5.cpp",
         "src/util/fs.cpp",
+        "src/util/process_lock.cpp",
     ],
     local_include_dirs: [
         "src/amsd",
@@ -160,12 +171,5 @@ cc_binary {
         "src/util/include",
         "src/util/crypto",
     ],
-    init_rc: ["init.amsd.rc"],
-}
-
-prebuilt_etc {
-    name: "init.amsd.rc",
-    src: "init.amsd.rc",
-    sub_dir: "init",
-    filename: "init.amsd.rc",
+    init_rc: ["apm-flashable-new/system/etc/init/init.amsd.rc"],
 }
