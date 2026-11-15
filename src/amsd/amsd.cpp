@@ -1,14 +1,14 @@
 /*
  * APM - Android Package Manager
  *
- * RedHead Industries - Technologies Branch
- * Copyright (C) 2025 RedHead Industries
+ * Skidworks Open-Engineering - Software Branch
+ * Copyright (C) 2027 Skidworks Open-Engineering
  *
  * File: amsd.cpp
  * Purpose: Implement the AMS daemon entrypoint, including boot counter handling,
  *          safe mode detection, overlay application, and IPC server startup.
- * Last Modified: 2026-03-18 10:55:01.572069355 -0400.
- * Author: Matthew DaLuz - RedHead Founder
+ * Last Modified: November 15th, 2026. - 09:14 AM EST.
+ * Author: Matthew DaLuz - Skidworks Founder
  *
  * APM is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by

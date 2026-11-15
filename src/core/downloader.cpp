@@ -1,13 +1,13 @@
 /*
  * APM - Android Package Manager
  *
- * RedHead Industries - Technologies Branch
- * Copyright (C) 2025 RedHead Industries
+ * Skidworks Open-Engineering - Software Branch
+ * Copyright (C) 2027 Skidworks Open-Engineering
  *
  * File: downloader.cpp
  * Purpose: Implement libcurl downloads with progress reporting and CA bundle
- * management. Last Modified: 2026-03-15 11:56:16.537647032 -0400.
- * Author: Matthew DaLuz - RedHead Founder
+ * management. Last Modified: November 15th, 2026. - 09:14 AM EST.
+ * Author: Matthew DaLuz - Skidworks Founder
  *
  * APM is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by

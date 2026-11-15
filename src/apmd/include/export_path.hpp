@@ -1,13 +1,13 @@
 /*
  * APM - Android Package Manager
  *
- * RedHead Industries - Technologies Branch
- * Copyright (C) 2025 RedHead Industries
+ * Skidworks Open-Engineering - Software Branch
+ * Copyright (C) 2027 Skidworks Open-Engineering
  *
  * File: export_path.hpp
  * Purpose: Declare helper APIs for generating PATH export scripts and sourcing
- * them for newly installed commands. Last Modified: 2026-03-22 13:03:16.912873246 -0400.
- * Author: Matthew DaLuz - RedHead Founder
+ * them for newly installed commands. Last Modified: November 15th, 2026. - 09:14 AM EST.
+ * Author: Matthew DaLuz - Skidworks Founder
  *
  * APM is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by

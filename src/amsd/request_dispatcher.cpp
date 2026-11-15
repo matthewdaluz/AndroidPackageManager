@@ -7,14 +7,14 @@
 /*
  * APM - Android Package Manager
  *
- * RedHead Industries - Technologies Branch
- * Copyright (C) 2025 RedHead Industries
+ * Skidworks Open-Engineering - Software Branch
+ * Copyright (C) 2027 Skidworks Open-Engineering
  *
  * File: request_dispatcher.cpp
  * Purpose: Handle AMSD IPC requests for module lifecycle operations while
  *          enforcing session validation.
- * Last Modified: 2026-03-22 12:40:07.402606623 -0400.
- * Author: Matthew DaLuz - RedHead Founder
+ * Last Modified: November 15th, 2026. - 09:14 AM EST.
+ * Author: Matthew DaLuz - Skidworks Founder
  *
  * APM is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by

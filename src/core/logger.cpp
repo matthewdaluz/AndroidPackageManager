@@ -1,13 +1,13 @@
 /*
  * APM - Android Package Manager
  *
- * RedHead Industries - Technologies Branch
- * Copyright (C) 2025 RedHead Industries
+ * Skidworks Open-Engineering - Software Branch
+ * Copyright (C) 2027 Skidworks Open-Engineering
  *
  * File: logger.cpp
  * Purpose: Implement the file-backed logger and severity helpers.
- * Last Modified: 2026-03-18 10:55:01.568628991 -0400.
- * Author: Matthew DaLuz - RedHead Founder
+ * Last Modified: November 15th, 2026. - 09:14 AM EST.
+ * Author: Matthew DaLuz - Skidworks Founder
  *
  * APM is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by

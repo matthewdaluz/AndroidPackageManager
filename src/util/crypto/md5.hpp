@@ -3,7 +3,7 @@
  *
  * File: md5.hpp
  * Purpose: Provide a simple MD5 file hashing helper using BoringSSL.
- * Last Modified: 2026-03-15 11:56:16.542846254 -0400.
+ * Last Modified: November 15th, 2026. - 09:14 AM EST.
  */
 
 #pragma once

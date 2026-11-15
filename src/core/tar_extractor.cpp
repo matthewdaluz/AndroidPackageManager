@@ -1,13 +1,13 @@
 /*
  * APM - Android Package Manager
  *
- * RedHead Industries - Technologies Branch
- * Copyright (C) 2025 RedHead Industries
+ * Skidworks Open-Engineering - Software Branch
+ * Copyright (C) 2027 Skidworks Open-Engineering
  *
  * File: tar_extractor.cpp
  * Purpose: Implement tar extraction by shelling out to the system tar binary.
- * Last Modified: 2026-03-16 16:13:42.658749739 -0400.
- * Author: Matthew DaLuz - RedHead Founder
+ * Last Modified: November 15th, 2026. - 09:14 AM EST.
+ * Author: Matthew DaLuz - Skidworks Founder
  *
  * APM is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by

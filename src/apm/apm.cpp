@@ -1,14 +1,14 @@
 /*
  * APM - Android Package Manager
  *
- * RedHead Industries - Technologies Branch
- * Copyright (C) 2026 RedHead Industries
+ * Skidworks Open-Engineering - Software Branch
+ * Copyright (C) 2027 Skidworks Open-Engineering
  *
  * File: apm.cpp
  * Purpose: Implement the apm CLI, including local commands and IPC-backed
  * operations.
- * Last Modified: 2026-03-23 11:33:54.167465170 -0400.
- * Author: Matthew DaLuz - RedHead Founder
+ * Last Modified: November 15th, 2026. - 09:14 AM EST.
+ * Author: Matthew DaLuz - Skidworks Founder
  *
  * APM is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -70,7 +70,7 @@ static constexpr const char *kApmVersion = "2.0.5b - Open Beta";
 static constexpr const char *kApmBuildDate =
     "May 30th, 2026. - 8:50 AM Eastern Time.";
 static constexpr const char *kApmCopyright =
-    "Copyright (C) 2026 Skidworks (Formally RedHead Industries)";
+    "Copyright (C) 2027 Skidworks Open-Engineering";
 static constexpr const char *kApmLicense =
     "License: GNU GPL v3 or later (GPL-3.0-or-later)";
 static constexpr const char *kLogExportDir = "/storage/emulated/0";
