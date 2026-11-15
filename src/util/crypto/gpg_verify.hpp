@@ -45,15 +45,6 @@ bool verifyDetachedSignature(const std::string &dataPath,
                              std::string *errorMsg = nullptr,
                              std::string *fingerprintOut = nullptr);
 
-// Verify a clearsigned OpenPGP Release (InRelease) file. On success, returns
-// true and fills outCleartext with the decoded, dash-unescaped cleartext
-// body that was signed. The returned text uses '\n' newlines and is suitable
-// for feeding into parseReleaseText().
-bool verifyClearsignedRelease(const std::string &inReleasePath,
-                              const std::string &trustedKeysDir,
-                              std::string &outCleartext,
-                              std::string *errorMsg = nullptr);
-
 // Import a trusted ASCII-armored or binary public key into trustedKeysDir. The
 // key is validated to be an RSA V4 OpenPGP public key (2048–4096 bits). The
 // stored filename is the lowercase SHA256 fingerprint of the decoded key data

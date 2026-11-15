@@ -58,7 +58,7 @@ static inline void trim(std::string &s) {
   rtrim(s);
 }
 
-// Internal: core text parser used by both file and in-memory paths.
+// Internal parser for Release file contents.
 static bool parseReleaseCore(std::istream &in, const std::string &sourceLabel,
                              ReleaseInfo &out, std::string *errorMsg) {
   out.sha256.clear();
@@ -172,13 +172,6 @@ bool parseReleaseFile(const std::string &path, ReleaseInfo &out,
 
   std::istringstream in(content);
   return parseReleaseCore(in, path, out, errorMsg);
-}
-
-// Parse already-loaded Release content (e.g., from a clearsigned InRelease).
-bool parseReleaseText(const std::string &text, ReleaseInfo &out,
-                      std::string *errorMsg) {
-  std::istringstream in(text);
-  return parseReleaseCore(in, "<memory>", out, errorMsg);
 }
 
 // Find the SHA256 hash for a specific Packages path.

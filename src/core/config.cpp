@@ -73,8 +73,6 @@ void setEmulatorMode(bool enabled) { g_emulatorMode = enabled; }
 
 bool isEmulatorMode() { return g_emulatorMode; }
 
-std::string getEmulatorRoot() { return buildEmulatorPath(""); }
-
 std::string getApmRoot() {
   if (g_emulatorMode)
     return buildEmulatorPath("");
@@ -103,30 +101,6 @@ std::string getTermuxInstalledDir() {
   if (g_emulatorMode)
     return buildEmulatorPath("installed/termux/usr/.apm-installed");
   return "/data/local/tmp/apm/runtime/installed/termux/usr/.apm-installed";
-}
-
-std::string getCommandsPathHelper() {
-  if (g_emulatorMode)
-    return buildEmulatorPath("installed/commands/apm-path.sh");
-  return "/data/local/tmp/apm/runtime/installed/commands/apm-path.sh";
-}
-
-std::string getCommandsExportScript() {
-  if (g_emulatorMode)
-    return buildEmulatorPath("installed/commands/export-path.sh");
-  return "/data/local/tmp/apm/runtime/installed/commands/export-path.sh";
-}
-
-std::string getGlobalProfileFile() {
-  if (g_emulatorMode)
-    return buildEmulatorPath(".apm_profile");
-  return "/data/local/tmp/.apm_profile";
-}
-
-std::string getGlobalProfileSourcedMark() {
-  if (g_emulatorMode)
-    return buildEmulatorPath(".apm_profile.sourced");
-  return "/data/local/tmp/.apm_profile.sourced";
 }
 
 std::string getCacheDir() {
@@ -223,12 +197,6 @@ std::string getCommandIndexFile() {
   if (g_emulatorMode)
     return buildEmulatorPath("sandbox/state/command-index.json");
   return "/data/apm/sandbox/state/command-index.json";
-}
-
-std::string getSandboxPathEnvFile() {
-  if (g_emulatorMode)
-    return buildEmulatorPath("sandbox/env/apm-path.env");
-  return "/data/apm/sandbox/env/apm-path.env";
 }
 
 std::string getTermuxRoot() {

@@ -357,34 +357,21 @@ set(APM_CLIENT_SOURCES
     src/apm/ipc_client.cpp
     src/apm/transport.cpp
     src/core/config.cpp
-    src/apmd/apk_installer.cpp
     src/apmd/export_path.cpp
-    src/apm/commands/apk_install.cpp
-    src/apm/commands/list.cpp
-    src/apm/commands/info.cpp
     src/apm/commands/search.cpp
 
     src/apmd/protocol.cpp
 
     src/core/control_parser.cpp
     src/core/deb_extractor.cpp
-    src/core/repo_index.cpp
-    src/core/dependency.cpp
     src/core/logger.cpp
     src/core/tar_extractor.cpp
-    src/core/downloader.cpp
     src/core/status_db.cpp
     src/core/manual_package.cpp
-    src/core/release_parser.cpp
     src/core/security.cpp
-    src/ams/module_info.cpp
-    src/ams/module_manager.cpp
-    src/util/crypto/sha256.cpp
-    src/util/crypto/md5.cpp
     src/util/crypto/gpg_verify.cpp
 
     src/util/fs.cpp
-    src/util/process_lock.cpp
 )
 
 add_executable(apm ${APM_CLIENT_SOURCES})
@@ -392,18 +379,13 @@ add_executable(apm ${APM_CLIENT_SOURCES})
 target_include_directories(apm PRIVATE
     src/apm/include
     src/apmd/include
-    src/ams/include
     src/core/include
     src/util/include
     src/util/crypto
-    src/apm/commands/include
     include
 )
 
 target_link_libraries(apm PRIVATE
-    CURL::libcurl
-    ZLIB::ZLIB
-    ${OPENSSL_SSL_LIBRARY}
     ${OPENSSL_CRYPTO_LIBRARY}
 )
 
@@ -414,8 +396,6 @@ set(APM_DAEMON_SOURCES
     src/apmd/apmd.cpp
     src/apmd/ipc_server.cpp
     src/core/config.cpp
-    src/apm/transport.cpp
-    src/apm/ipc_client.cpp
     src/apmd/protocol.cpp
     src/apmd/install_manager.cpp
     src/apmd/export_path.cpp
@@ -450,12 +430,10 @@ add_executable(apmd ${APM_DAEMON_SOURCES})
 
 target_include_directories(apmd PRIVATE
     src/apmd/include
-  src/apm/include
     src/ams/include
     src/core/include
     src/util/include
     src/util/crypto
-    src/apm/commands/include
     include
 )
 
@@ -480,10 +458,6 @@ set(AMSD_DAEMON_SOURCES
     src/ams/module_info.cpp
     src/ams/module_manager.cpp
     src/util/fs.cpp
-    src/util/process_lock.cpp
-    src/util/crypto/sha256.cpp
-    src/util/crypto/md5.cpp
-    src/util/crypto/gpg_verify.cpp
 )
 
 add_executable(amsd ${AMSD_DAEMON_SOURCES})
@@ -494,14 +468,10 @@ target_include_directories(amsd PRIVATE
     src/ams/include
     src/core/include
     src/util/include
-    src/util/crypto
     include
 )
 
 target_link_libraries(amsd PRIVATE
-    CURL::libcurl
-    ZLIB::ZLIB
-    ${OPENSSL_SSL_LIBRARY}
     ${OPENSSL_CRYPTO_LIBRARY}
 )
 

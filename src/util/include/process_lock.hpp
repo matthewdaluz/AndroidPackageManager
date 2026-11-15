@@ -26,6 +26,7 @@
 
 #pragma once
 
+#include <sys/types.h>
 #include <string>
 
 namespace apm::lock {
@@ -43,9 +44,6 @@ public:
 
   // Release the lock
   void release();
-
-  // Check if lock is currently held by this instance
-  bool isHeld() const;
 
 private:
   std::string lockPath_;

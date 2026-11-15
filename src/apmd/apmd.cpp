@@ -35,7 +35,7 @@
 #include "process_lock.hpp"
 #include "status_db.hpp"
 
-#include <bits/chrono.h>
+#include <chrono>
 #include <cstddef>
 #include <fstream>
 #include <grp.h>
@@ -114,14 +114,6 @@ std::string parentDir(const std::string &path) {
     return {};
   }
   return path.substr(0, slash);
-}
-
-std::string remapPathPrefix(const std::string &path, const std::string &oldPrefix,
-                            const std::string &newPrefix) {
-  if (!hasPathPrefix(path, oldPrefix)) {
-    return path;
-  }
-  return newPrefix + path.substr(oldPrefix.size());
 }
 
 std::string remapAnyPrefix(

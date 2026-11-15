@@ -37,6 +37,7 @@
 #include "boringssl_client.hpp"
 #include "security.hpp"
 
+#include <cstdint>
 #include <string>
 #include <vector>
 

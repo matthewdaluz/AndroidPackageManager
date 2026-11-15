@@ -26,6 +26,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
@@ -34,7 +35,7 @@ namespace apm::crypto {
 class SHA256 {
 public:
   SHA256();
-  void update(const uint8_t *data, size_t len);
+  void update(const uint8_t *data, std::size_t len);
   void update(const std::string &data);
   std::string finalHex(); // returns lowercase hex string
 
@@ -44,7 +45,7 @@ private:
   uint64_t m_bitLen;
   uint32_t m_state[8];
   uint8_t m_buffer[64];
-  size_t m_bufferSize;
+  std::size_t m_bufferSize;
 };
 
 // Convenience helper to compute SHA256 of an entire file

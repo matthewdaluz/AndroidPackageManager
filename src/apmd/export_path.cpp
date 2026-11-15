@@ -473,18 +473,6 @@ std::string makeNamespacedCommand(const std::string &packageName,
   return packageName + "-" + commandName;
 }
 
-std::string joinList(const std::vector<std::string> &items,
-                     const std::string &delim) {
-  std::ostringstream out;
-  for (std::size_t i = 0; i < items.size(); ++i) {
-    if (i > 0) {
-      out << delim;
-    }
-    out << items[i];
-  }
-  return out.str();
-}
-
 bool readFileContains(const std::string &path, const std::string &needle) {
   std::string content;
   if (!apm::fs::readFile(path, content)) {
@@ -1020,24 +1008,6 @@ void collectHotloadSummary(const std::vector<ShimDecision> &decisions,
 } // namespace
 
 namespace apm::daemon::path {
-
-CommandCollisionResult
-resolve_command_collision(const std::string &packageName,
-                          const std::string &commandName,
-                          std::string &resolvedShimName) {
-  resolvedShimName.clear();
-
-  if (!isLikelyCommandName(packageName) || !isLikelyCommandName(commandName)) {
-    return CommandCollisionResult::Skipped;
-  }
-
-  if (commandExistsInSystemPaths(commandName)) {
-    return CommandCollisionResult::Skipped;
-  }
-
-  resolvedShimName = commandName;
-  return CommandCollisionResult::Canonical;
-}
 
 bool rebuild_command_index_and_shims(const std::string &triggerReason,
                                      CommandHotloadSummary *summary) {

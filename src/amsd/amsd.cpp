@@ -34,10 +34,8 @@
 #include "security_manager.hpp"
 
 #include <atomic>
-#include <bits/chrono.h>
 #include <cerrno>
 #include <chrono>
-#include <csignal>
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>

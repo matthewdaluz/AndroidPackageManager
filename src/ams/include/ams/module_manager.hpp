@@ -30,6 +30,7 @@
 #include "ams/module_info.hpp"
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <mutex>
@@ -80,8 +81,6 @@ public:
   static bool enterSafeMode(const std::string &path);
   static bool isSafeModeActive(const std::string &path);
   static bool clearSafeMode(const std::string &path);
-
-  bool isPartitionMounted(const std::string &mountPoint) const;
 
 private:
   bool loadModule(const std::string &name, ModuleInfo &info, ModuleState &state,

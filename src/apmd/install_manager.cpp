@@ -55,7 +55,6 @@
 #include <cctype>
 #include <cerrno>
 #include <cstring>
-#include <fstream>
 #include <grp.h>
 #include <sstream>
 #include <string>
@@ -122,19 +121,6 @@ static std::string normalizeHex(const std::string &hex) {
   }
   return out;
 }
-
-static inline void ltrimLocal(std::string &s) {
-  s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) {
-            return !std::isspace(ch);
-          }));
-}
-static inline void rtrimLocal(std::string &s) {
-  s.erase(std::find_if(s.rbegin(), s.rend(),
-                       [](unsigned char ch) { return !std::isspace(ch); })
-              .base(),
-          s.end());
-}
-static inline void trimLocal(std::string &s) { ltrimLocal(s); rtrimLocal(s); }
 
 static bool lookupShellGroup(gid_t &gidOut) {
   errno = 0;
@@ -440,8 +426,7 @@ static std::string makeSigUrl(const apm::repo::PackageEntry &pkg, const char *ex
 static bool ensureDebSignature(const apm::repo::PackageEntry &pkg,
                                const std::string &debPath,
                                std::string &sigPathOut,
-                               std::string *errorMsg,
-                               const InstallProgressCallback &progressCb) {
+                               std::string *errorMsg) {
   // Prefer .asc then .gpg
   std::string ascPath = makeSigLocalPath(debPath, ".asc");
   std::string gpgPath = makeSigLocalPath(debPath, ".gpg");
@@ -1870,7 +1855,7 @@ bool installWithDeps(const RepoIndexList &repoIndices,
         if (!verified) {
           std::string sigPath;
           std::string sigErr;
-          if (!ensureDebSignature(*pkg, debPath, sigPath, &sigErr, progressCb)) {
+          if (!ensureDebSignature(*pkg, debPath, sigPath, &sigErr)) {
             if (sigPolicy == apm::repo::DebSignaturePolicy::Required) {
               result.ok = false;
               result.message = "Missing .deb signature for " + pkg->packageName +

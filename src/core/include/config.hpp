@@ -41,9 +41,6 @@ void setEmulatorMode(bool enabled);
 // Check if emulator mode is currently active
 bool isEmulatorMode();
 
-// Get the emulator root directory ($HOME/APMEmulator/data/apm)
-std::string getEmulatorRoot();
-
 // ============================================================================
 // Runtime Path Getters (emulator-aware)
 // ============================================================================
@@ -53,10 +50,6 @@ std::string getInstalledDir();
 std::string getCommandsDir();
 std::string getDependenciesDir();
 std::string getTermuxInstalledDir();
-std::string getCommandsPathHelper();
-std::string getCommandsExportScript();
-std::string getGlobalProfileFile();
-std::string getGlobalProfileSourcedMark();
 std::string getCacheDir();
 std::string getListsDir();
 std::string getPkgsDir();
@@ -73,7 +66,6 @@ std::string getSandboxStateDir();
 std::string getSandboxEnvDir();
 std::string getSandboxMountsDir();
 std::string getCommandIndexFile();
-std::string getSandboxPathEnvFile();
 std::string getTermuxRoot();
 std::string getTermuxPrefix();
 std::string getTermuxEnvFile();

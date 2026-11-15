@@ -28,7 +28,6 @@
 
 #include <cstdint>
 #include <functional>
-#include <openssl/posix_time.h>
 #include <string>
 #include <vector>
 

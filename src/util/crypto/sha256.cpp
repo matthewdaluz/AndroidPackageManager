@@ -70,11 +70,11 @@ SHA256::SHA256() : m_bitLen(0), m_bufferSize(0) {
 
 // Absorb bytes into the SHA-256 state, processing 64-byte blocks as soon as
 // they are available.
-void SHA256::update(const uint8_t *data, size_t len) {
+void SHA256::update(const uint8_t *data, std::size_t len) {
   m_bitLen += static_cast<uint64_t>(len) * 8;
 
   while (len > 0) {
-    size_t toCopy = std::min(len, 64 - m_bufferSize);
+    std::size_t toCopy = std::min(len, 64 - m_bufferSize);
     std::memcpy(m_buffer + m_bufferSize, data, toCopy);
     m_bufferSize += toCopy;
     data += toCopy;
@@ -147,9 +147,9 @@ void SHA256::processBlock(const uint8_t *block) {
 // Finalize the hash and return the lowercase hexadecimal digest.
 std::string SHA256::finalHex() {
   uint8_t pad[64] = {0x80};
-  size_t padLen;
+  std::size_t padLen;
 
-  size_t mod = m_bufferSize % 64;
+  std::size_t mod = m_bufferSize % 64;
   if (mod < 56)
     padLen = 56 - mod;
   else
@@ -190,7 +190,7 @@ bool sha256File(const std::string &path, std::string &outHex,
     in.read(buf, sizeof(buf));
     std::streamsize n = in.gcount();
     if (n > 0)
-      ctx.update(reinterpret_cast<uint8_t *>(buf), size_t(n));
+      ctx.update(reinterpret_cast<uint8_t *>(buf), std::size_t(n));
   }
 
   if (!in.eof()) {

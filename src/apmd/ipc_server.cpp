@@ -39,7 +39,6 @@
 #include "status_db.hpp"
 
 #include <algorithm>
-#include <bits/sockaddr.h>
 #include <cctype>
 #include <cerrno>
 #include <chrono>
@@ -55,7 +54,6 @@
 #include <poll.h>
 #include <sstream>
 #include <string>
-#include <sys/poll.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>

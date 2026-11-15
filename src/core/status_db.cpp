@@ -411,40 +411,4 @@ bool isInstalled(const std::string &name, InstalledPackage *pkgOut,
   return true;
 }
 
-// Update the status DB entry for a package (creates or replaces existing
-// stanzas).
-bool recordInstalled(const InstalledPackage &pkg, std::string *errorMsg) {
-  InstalledDb db;
-  if (!loadStatus(db, errorMsg)) {
-    return false;
-  }
-
-  db[pkg.name] = pkg;
-  if (!writeStatus(db, errorMsg)) {
-    return false;
-  }
-
-  return true;
-}
-
-// Remove the package entry from the status DB.
-bool removeInstalled(const std::string &name, std::string *errorMsg) {
-  InstalledDb db;
-  if (!loadStatus(db, errorMsg)) {
-    return false;
-  }
-
-  auto it = db.find(name);
-  if (it == db.end()) {
-    return true; // not installed
-  }
-
-  db.erase(it);
-  if (!writeStatus(db, errorMsg)) {
-    return false;
-  }
-
-  return true;
-}
-
 } // namespace apm::status

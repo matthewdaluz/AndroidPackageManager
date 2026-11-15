@@ -28,7 +28,6 @@
 #include "logger.hpp"
 #include "protocol.hpp"
 
-#include <bits/sockaddr.h>
 #include <cerrno>
 #include <cstddef>
 #include <cstring>

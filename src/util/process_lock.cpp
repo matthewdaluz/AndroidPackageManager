@@ -185,6 +185,4 @@ void ProcessLock::release() {
   held_ = false;
 }
 
-bool ProcessLock::isHeld() const { return held_; }
-
 } // namespace apm::lock

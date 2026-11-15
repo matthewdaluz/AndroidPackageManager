@@ -32,7 +32,7 @@
 #include <cctype>
 #include <cstring>
 #include <sstream>
-#include <stdlib.h>
+#include <cstdlib>
 #include <string>
 #include <vector>
 

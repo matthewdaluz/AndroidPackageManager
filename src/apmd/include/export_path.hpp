@@ -42,15 +42,6 @@ struct CommandHotloadSummary {
   std::vector<std::string> collisionWarnings;
 };
 
-// Resolve a command name for shim creation:
-// - Canonical: use the command as-is.
-// - Namespaced: use "<package>-<command>".
-// - Skipped: do not create a shim.
-CommandCollisionResult
-resolve_command_collision(const std::string &packageName,
-                          const std::string &commandName,
-                          std::string &resolvedShimName);
-
 // Rebuild command index + shim set and refresh PATH source files/hooks.
 // Trigger should be a short reason string such as "install", "remove", etc.
 bool rebuild_command_index_and_shims(const std::string &triggerReason,

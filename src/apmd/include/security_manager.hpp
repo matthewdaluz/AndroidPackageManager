@@ -29,6 +29,8 @@
 #include "boringssl_client.hpp"
 #include "security.hpp"
 
+#include <cstddef>
+#include <cstdint>
 #include <string>
 #include <utility>
 #include <vector>

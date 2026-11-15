@@ -48,11 +48,6 @@ struct ReleaseInfo {
 bool parseReleaseFile(const std::string &path, ReleaseInfo &out,
                       std::string *errorMsg = nullptr);
 
-// Parse a Debian-style Release content (already loaded into memory) and
-// extract SHA256/MD5 sections. Returns true if at least one section found.
-bool parseReleaseText(const std::string &text, ReleaseInfo &out,
-                      std::string *errorMsg = nullptr);
-
 // Look up SHA256 hash for a given path (as listed in Release's SHA256 section).
 // Returns true and fills outHash on success; false if not found.
 bool findSha256ForPath(const ReleaseInfo &info, const std::string &name,

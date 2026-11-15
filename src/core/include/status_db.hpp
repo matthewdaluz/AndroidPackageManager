@@ -67,9 +67,4 @@ bool writeStatus(const InstalledDb &db, std::string *errorMsg = nullptr);
 bool isInstalled(const std::string &name, InstalledPackage *pkgOut = nullptr,
                  std::string *errorMsg = nullptr);
 
-bool recordInstalled(const InstalledPackage &pkg,
-                     std::string *errorMsg = nullptr);
-
-bool removeInstalled(const std::string &name, std::string *errorMsg = nullptr);
-
 } // namespace apm::status
