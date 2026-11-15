@@ -37,6 +37,28 @@ namespace apm::repo {
 enum class RepoFormat {
   Debian,
   Termux,
+  App,
+};
+
+struct AppAsset {
+  std::string name;
+  std::string url;
+  std::string sha256;
+  std::uint64_t size = 0;
+};
+
+struct AppRepoSource {
+  std::string id;
+  std::string name;
+  std::string description;
+  std::string owner;
+  std::string repository;
+  std::string tag;
+  std::string configHash;
+  std::vector<std::string> patterns;
+  std::vector<std::string> avoidKeywords;
+  bool useTags = true;
+  bool includePrereleases = false;
 };
 
 enum class RepoTrustPolicy {
@@ -65,6 +87,8 @@ struct PackageEntry {
   std::vector<std::string> depends;
   std::unordered_map<std::string, std::string> rawFields;
   bool isTermuxPackage = false;
+  bool isAppPackage = false;
+  std::vector<AppAsset> appAssets;
 
   // Repository metadata filled when we build indices
   std::string repoUri;       // e.g. https://deb.debian.org/debian
@@ -74,7 +98,7 @@ struct PackageEntry {
 
 using PackageList = std::vector<PackageEntry>;
 
-// One 'deb' source from a .repo file.
+// A Debian/Termux .repo source or a GitHub APK bundle from .apprepo.
 //
 // Example:
 //   Type=deb
@@ -95,6 +119,7 @@ struct RepoSource {
   bool isTermuxRepo = false;
   RepoTrustPolicy trustPolicy = RepoTrustPolicy::Default;
   DebSignaturePolicy debSignaturePolicy = DebSignaturePolicy::Disabled;
+  AppRepoSource app;
 };
 
 using RepoSourceList = std::vector<RepoSource>;
@@ -143,8 +168,8 @@ using RepoUpdateProgressCallback =
 // ---------------------------------------------------------
 
 // Load sources from either:
-//   - a single .repo file
-//   - a directory containing *.repo files
+//   - a single .repo or .apprepo file
+//   - a directory containing *.repo and *.apprepo files
 //
 // Ignores comments (#...) and blank lines.
 //

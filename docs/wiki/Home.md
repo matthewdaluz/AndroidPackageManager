@@ -10,6 +10,7 @@ This wiki tracks the current codebase for APM, `apmd`, `amsd`, and AMS.
 4. [Build and Deployment](Build-and-Deployment)
 5. [AMS Module Development](AMS-Module-Development)
 6. [Troubleshooting](Troubleshooting)
+7. [App repositories and the MicroG example](App-Repositories)
 
 ## Quick Facts
 

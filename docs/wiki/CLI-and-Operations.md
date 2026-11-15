@@ -10,8 +10,8 @@
 ### Package and repository operations
 
 - `apm update`
-- `apm add-repo <file.repo>`
-- `apm remove-repo <name|name.repo>`
+- `apm add-repo <file.repo|file.apprepo>`
+- `apm remove-repo <name|file.repo|file.apprepo>`
 - `apm install <pkg>`
 - `apm remove <pkg>`
 - `apm upgrade [pkgs...]`
@@ -28,6 +28,16 @@
 - `apm module-enable <name>`
 - `apm module-disable <name>`
 - `apm module-remove <name>`
+
+### App repository bundles
+
+- `apm app-install <id>`: stage all APKs in an app repository under `/system/app`
+- `apm app-install <id> --install-as-system`: prompt for system destination and privileged permissions
+- `apm app-info <id>`: inspect a cached app bundle
+- `apm app-remove <id>`: remove the staged bundle
+
+See [App repositories](App-Repositories.md) for the MicroG example, `.apprepo`
+format, permissions, update behavior, and reboot requirements.
 
 ### APK operations
 
@@ -71,6 +81,8 @@ These commands require a valid session:
 - `wipe-cache`
 - `module-*`
 - `apk-*`
+- `app-install`
+- `app-remove`
 - `log --clear`
 - `log --clear-all`
 
@@ -81,6 +93,7 @@ These do not:
 - `list`
 - `list-repos`
 - `info`
+- `app-info`
 - `search`
 - `log` follow/export
 - `version`

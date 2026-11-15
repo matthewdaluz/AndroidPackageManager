@@ -57,7 +57,9 @@ enum class RequestType {
   FactoryReset,
   WipeCache,
   DebugLogging,
-  LogClear
+  LogClear,
+  AppInstall,
+  AppRemove
 };
 
 struct Request {

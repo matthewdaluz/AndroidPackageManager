@@ -64,10 +64,16 @@ struct DownloadResult {
   std::string errorMsg;
 };
 
+struct DownloadOptions {
+  bool httpsOnly = false;
+  std::uint64_t maxBytes = 0; // zero keeps the existing unlimited behavior
+};
+
 // Download a file from URL into dest using libcurl while reporting progress.
 bool downloadFile(const std::string &url, const std::string &dest,
                   std::string *errorMsg = nullptr,
-                  TransferProgressCallback progressCb = {});
+                  TransferProgressCallback progressCb = {},
+                  DownloadOptions options = {});
 
 // Download multiple files in parallel with a cap on concurrent transfers.
 // Results are ordered to match the requests vector. Returns true only if every

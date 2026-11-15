@@ -473,7 +473,7 @@ static std::string determineRepoArch(const RepoIndexList &repoIndices) {
   std::string detected;
 
   for (const auto &idx : repoIndices) {
-    if (idx.arch.empty())
+    if (idx.source.format == apm::repo::RepoFormat::App || idx.arch.empty())
       continue;
 
     if (detected.empty()) {
@@ -1589,6 +1589,8 @@ bool installWithDeps(const RepoIndexList &repoIndices,
   repoPkgs.reserve(totalPkgs);
 
   for (const auto &idx : repoIndices) {
+    if (idx.source.format == apm::repo::RepoFormat::App)
+      continue;
     bool idxTermux = idx.source.isTermuxRepo ||
                      idx.source.format == apm::repo::RepoFormat::Termux;
     for (const auto &pkg : idx.packages) {
@@ -2330,6 +2332,8 @@ bool upgradePackages(const apm::repo::RepoIndexList &repoIndices,
     // Full upgrade: all installed packages
     toCheck.reserve(db.size());
     for (const auto &kv : db) {
+      if (kv.second.appPackage)
+        continue;
       toCheck.push_back(kv.first);
     }
   }
@@ -2353,6 +2357,8 @@ bool upgradePackages(const apm::repo::RepoIndexList &repoIndices,
   termuxCandidates.reserve(toCheck.size());
 
   for (const auto &idx : repoIndices) {
+    if (idx.source.format == apm::repo::RepoFormat::App)
+      continue;
     bool idxTermux = idx.source.isTermuxRepo ||
                      idx.source.format == apm::repo::RepoFormat::Termux;
 

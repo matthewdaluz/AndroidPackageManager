@@ -370,6 +370,8 @@ void discoverStatusCommands(std::vector<CommandCandidate> &out,
     }
 
     const auto &pkg = it->second;
+    if (pkg.appPackage)
+      continue;
     if (pkg.termuxPackage) {
       discoverTermuxPackageCommands(pkg, out, seenKeys);
       continue;

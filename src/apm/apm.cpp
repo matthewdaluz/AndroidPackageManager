@@ -1074,12 +1074,13 @@ static void attachSession(apm::ipc::Request &req,
 
 static bool requiresAuthSession(const std::string &cmd) {
   return cmd == "update" || cmd == "add-repo" || cmd == "remove-repo" ||
-         cmd == "install" || cmd == "remove" || cmd == "upgrade" ||
-         cmd == "autoremove" || cmd == "module-install" ||
-         cmd == "module-list" || cmd == "module-enable" ||
-         cmd == "module-disable" || cmd == "module-remove" ||
-         cmd == "apk-install" || cmd == "apk-uninstall" ||
-         cmd == "factory-reset" || cmd == "debuglogging";
+         cmd == "app-install" || cmd == "app-remove" || cmd == "install" ||
+         cmd == "remove" || cmd == "upgrade" || cmd == "autoremove" ||
+         cmd == "module-install" || cmd == "module-list" ||
+         cmd == "module-enable" || cmd == "module-disable" ||
+         cmd == "module-remove" || cmd == "apk-install" ||
+         cmd == "apk-uninstall" || cmd == "factory-reset" ||
+         cmd == "debuglogging";
 }
 
 static bool ensureManualSlotAvailable(const std::string &pkgName,
@@ -1480,15 +1481,17 @@ void printUsage() {
       << "\nCommands:\n"
       << "  ping                        Check connection to apmd\n"
       << "  update                      Update repository metadata\n"
-      << "  add-repo <file.repo>        Add a repository source file\n"
+      << "  add-repo <file.repo|file.apprepo> Add a repository source file\n"
       << "  list-repos                  List configured repository sources\n"
-      << "  remove-repo <name|name.repo> Remove a repository source file\n"
+      << "  remove-repo <name|file.repo|file.apprepo> Remove a repository "
+         "source file\n"
       << "  install <pkg>               Install a package from repo\n"
       << "  package-install <file>      Install a local .deb/.gz/.xz\n"
       << "  remove <pkg>                Remove an installed package\n"
       << "  upgrade [pkgs...]           Upgrade all or selected packages\n"
       << "  autoremove                  Remove unused auto-installed deps\n"
-      << "  debuglogging <true|false>   Enable or disable daemon debug logging\n"
+      << "  debuglogging <true|false>   Enable or disable daemon debug "
+         "logging\n"
       << "  factory-reset               Reset APM data and installed content\n"
       << "  wipe-cache [targets...]     Wipe selected APM/AMS cache buckets\n"
       << "  forgot-password             Recover access with security "
@@ -1499,6 +1502,11 @@ void printUsage() {
       << "  module-disable <name>       Disable an AMS module\n"
       << "  module-remove <name>        Remove an AMS module\n"
       << "\n"
+      << "  app-install <id> [--install-as-system]\n"
+      << "                              Stage an app repo bundle; flag prompts "
+         "for destination/permissions\n"
+      << "  app-remove <id>             Remove a staged app repo bundle\n"
+      << "  app-info <id>               Inspect an app repo bundle\n"
       << "  apk-install <apk> [--install-as-system]\n"
       << "                              Install APK (normal or system app)\n"
       << "  apk-uninstall <package>     Uninstall APK by package name\n"
@@ -1507,9 +1515,11 @@ void printUsage() {
       << "  info <pkg>                  Show detailed package information\n"
       << "  search <pattern>            Search available repo packages\n"
       << "  log [...]                   View, export, or clear logs\n"
-      << "  version                     Show APM version, build, and license info\n"
+      << "  version                     Show APM version, build, and license "
+         "info\n"
       << "  key-add <file.asc|.gpg>     Import a trusted public key\n"
-      << "  sig-cache show              Show cached .deb signature verifications\n"
+      << "  sig-cache show              Show cached .deb signature "
+         "verifications\n"
       << "  sig-cache clear             Clear the signature cache\n"
       << "\n"
       << "  help                        Show this help\n"
@@ -1747,8 +1757,13 @@ int cmdUpdate(const std::string &sessionToken) {
 
 // Ask the daemon to validate and install a .repo source file.
 int cmdAddRepo(const std::string &sessionToken, const std::string &path) {
-  if (path.size() < 5 || path.compare(path.size() - 5, 5, ".repo") != 0) {
-    std::cerr << "apm: add-repo requires a .repo file\n";
+  const auto suffix = [&](const std::string &ending) {
+    return path.size() >= ending.size() &&
+           path.compare(path.size() - ending.size(), ending.size(), ending) ==
+               0;
+  };
+  if (!suffix(".repo") && !suffix(".apprepo")) {
+    std::cerr << "apm: add-repo requires a .repo or .apprepo file\n";
     return 1;
   }
 
@@ -1828,7 +1843,8 @@ int cmdRemoveRepo(const std::string &sessionToken, const std::string &name) {
 }
 
 // Ask the daemon to install a package along with its dependencies.
-int cmdInstall(const std::string &sessionToken, const std::string &pkg) {
+int cmdInstall(const std::string &sessionToken, const std::string &pkg,
+               bool appRepo = false, bool systemOptions = false) {
   auto parsePackageList = [](const apm::ipc::Response &resp,
                              const std::string &field) {
     std::vector<std::string> pkgs;
@@ -1843,11 +1859,47 @@ int cmdInstall(const std::string &sessionToken, const std::string &pkg) {
   };
 
   apm::ipc::Request planReq;
-  planReq.type = apm::ipc::RequestType::Install;
+  planReq.type = appRepo ? apm::ipc::RequestType::AppInstall
+                         : apm::ipc::RequestType::Install;
   planReq.id = "install-plan-1";
   planReq.packageName = pkg;
   attachSession(planReq, sessionToken);
   planReq.rawFields["simulate"] = "1";
+  if (appRepo) {
+    planReq.rawFields["destination"] = "app";
+    if (systemOptions) {
+      std::cout
+          << "System app destination:\n  1. /system/app (standard system app)\n"
+             "  2. /system/priv-app (privileged system app)\n"
+             "Choose [1]: "
+          << std::flush;
+      std::string choice;
+      if (!std::getline(std::cin, choice)) {
+        std::cerr << "App installation cancelled.\n";
+        return 1;
+      }
+      if (choice == "2") {
+        planReq.rawFields["destination"] = "priv-app";
+        std::cout << "Privileged permissions to allow (comma-separated "
+                     "permission names; blank = none): "
+                  << std::flush;
+        std::string permissions;
+        if (!std::getline(std::cin, permissions)) {
+          std::cerr << "App installation cancelled.\n";
+          return 1;
+        }
+        const auto entries = splitTokens(permissions);
+        for (const auto &permission : entries) {
+          if (!planReq.rawFields["permissions"].empty())
+            planReq.rawFields["permissions"] += "\n";
+          planReq.rawFields["permissions"] += permission;
+        }
+      } else if (!choice.empty() && choice != "1") {
+        std::cerr << "Invalid destination selection.\n";
+        return 1;
+      }
+    }
+  }
 
   apm::ipc::Response planResp;
   std::string err;
@@ -1867,10 +1919,15 @@ int cmdInstall(const std::string &sessionToken, const std::string &pkg) {
   const auto planList = parsePackageList(planResp, "packages");
 
   if (planList.empty()) {
-    std::cout << "All dependencies already satisfied for '" << pkg << "'.\n";
+    if (appRepo)
+      std::cout << planResp.message << "\n";
+    else
+      std::cout << "All dependencies already satisfied for '" << pkg << "'.\n";
     return 0;
   }
 
+  if (appRepo)
+    std::cout << planResp.message << "\n\n";
   std::cout << "The following packages will be installed:\n";
   for (const auto &name : planList) {
     bool isRoot = (name == pkg);
@@ -1903,10 +1960,15 @@ int cmdInstall(const std::string &sessionToken, const std::string &pkg) {
   }
 
   apm::ipc::Request req;
-  req.type = apm::ipc::RequestType::Install;
+  req.type = planReq.type;
   req.id = "install-run-1";
   req.packageName = pkg;
   attachSession(req, sessionToken);
+  if (appRepo) {
+    req.rawFields = planReq.rawFields;
+    req.rawFields.erase("simulate");
+    req.rawFields["expected_plan"] = planResp.rawFields["plan"];
+  }
 
   apm::ipc::Response resp;
   err.clear();
@@ -2462,10 +2524,12 @@ int cmdListLocal() {
 }
 
 // Display local installation info plus candidate repo metadata for a package.
-int cmdInfoLocal(const std::string &name) {
+int cmdInfoLocal(const std::string &name, bool appRepo = false) {
   apm::ipc::Request req;
   req.type = apm::ipc::RequestType::Info;
   req.packageName = name;
+  if (appRepo)
+    req.rawFields["apprepo"] = "1";
 
   apm::ipc::Response resp;
   std::string err;
@@ -2826,7 +2890,7 @@ int main(int argc, char **argv) {
 
   if (cmd == "add-repo") {
     if (i >= argc) {
-      std::cerr << "apm: 'add-repo' requires a .repo file path\n";
+      std::cerr << "apm: 'add-repo' requires a .repo or .apprepo file path\n";
       return 1;
     }
     if (i + 1 != argc) {
@@ -2914,6 +2978,49 @@ int main(int argc, char **argv) {
       return 1;
     }
     return cmdRemove(sessionToken, argv[i]);
+  }
+
+  if (cmd == "app-info") {
+    if (i + 1 != argc) {
+      std::cerr << "Usage: apm app-info <id>\n";
+      return 1;
+    }
+    return cmdInfoLocal(argv[i], true);
+  }
+  if (cmd == "app-install") {
+    if (i >= argc) {
+      std::cerr << "Usage: apm app-install <id> [--install-as-system]\n";
+      return 1;
+    }
+    const std::string id = argv[i++];
+    bool options = false;
+    if (i < argc && std::string(argv[i]) == "--install-as-system") {
+      options = true;
+      ++i;
+    }
+    if (i != argc) {
+      std::cerr << "Usage: apm app-install <id> [--install-as-system]\n";
+      return 1;
+    }
+    return cmdInstall(sessionToken, id, true, options);
+  }
+  if (cmd == "app-remove") {
+    if (i + 1 != argc) {
+      std::cerr << "Usage: apm app-remove <id>\n";
+      return 1;
+    }
+    apm::ipc::Request request;
+    request.type = apm::ipc::RequestType::AppRemove;
+    request.packageName = argv[i];
+    attachSession(request, sessionToken);
+    apm::ipc::Response response;
+    std::string error;
+    if (!apm::ipc::sendRequestAuto(request, response, &error)) {
+      std::cerr << error << "\n";
+      return 1;
+    }
+    std::cout << response.message << "\n";
+    return response.success ? 0 : 1;
   }
 
   if (cmd == "apk-install") {

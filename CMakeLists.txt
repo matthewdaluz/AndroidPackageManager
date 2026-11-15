@@ -398,6 +398,8 @@ set(APM_DAEMON_SOURCES
     src/core/config.cpp
     src/apmd/protocol.cpp
     src/apmd/install_manager.cpp
+    src/apmd/app_installer.cpp
+    src/apmd/apk_metadata.cpp
     src/apmd/export_path.cpp
     src/apmd/apk_installer.cpp
     src/apmd/boringssl_client.cpp
@@ -406,6 +408,7 @@ set(APM_DAEMON_SOURCES
     src/core/control_parser.cpp
     src/core/deb_extractor.cpp
     src/core/repo_index.cpp
+    src/core/app_repo.cpp
     src/core/dependency.cpp
     src/core/logger.cpp
     src/core/tar_extractor.cpp
@@ -478,19 +481,59 @@ target_link_libraries(amsd PRIVATE
 if(APM_BUILD_TESTS)
   enable_testing()
 
-  add_executable(apm_tar_extractor_tests
-      tests/tar_extractor_tests.cpp
-      src/core/tar_extractor.cpp
+  # Some source distributions also carry the older tar regression suite.
+  if(EXISTS "${CMAKE_SOURCE_DIR}/tests/tar_extractor_tests.cpp")
+    add_executable(apm_tar_extractor_tests
+        tests/tar_extractor_tests.cpp
+        src/core/tar_extractor.cpp
+        src/core/config.cpp
+        src/core/logger.cpp
+        src/util/fs.cpp
+    )
+
+    target_include_directories(apm_tar_extractor_tests PRIVATE
+        src/core/include
+        src/util/include
+        include
+    )
+
+    add_test(NAME tar_extractor_tests COMMAND apm_tar_extractor_tests)
+  endif()
+
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_executable(apm_app_repo_tests
+      tests/app_repo_tests.cpp
+      src/core/app_repo.cpp
+      src/core/repo_index.cpp
+      src/core/control_parser.cpp
+      src/core/release_parser.cpp
+      src/core/status_db.cpp
+      src/core/security.cpp
       src/core/config.cpp
       src/core/logger.cpp
+      src/apmd/app_installer.cpp
+      src/apmd/apk_metadata.cpp
+      src/apmd/protocol.cpp
+      src/ams/module_info.cpp
       src/util/fs.cpp
+      src/util/crypto/sha256.cpp
+      src/util/crypto/md5.cpp
+      src/util/crypto/gpg_verify.cpp
   )
-
-  target_include_directories(apm_tar_extractor_tests PRIVATE
-      src/core/include
-      src/util/include
-      include
+  target_include_directories(apm_app_repo_tests PRIVATE
+      src/core/include src/apmd/include src/ams/include
+      src/util/include src/util/crypto
   )
+  target_link_libraries(apm_app_repo_tests PRIVATE ZLIB::ZLIB ${OPENSSL_CRYPTO_LIBRARY})
+  add_test(NAME app_repo_fixtures COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_SOURCE_DIR}/tests/generate_app_fixtures.py ${CMAKE_BINARY_DIR}/app-fixtures)
+  set_tests_properties(app_repo_fixtures PROPERTIES FIXTURES_SETUP app_repo_data)
+  add_test(NAME app_repo_tests COMMAND apm_app_repo_tests
+      ${CMAKE_BINARY_DIR}/app-fixtures ${CMAKE_SOURCE_DIR})
+  set_tests_properties(app_repo_tests PROPERTIES FIXTURES_REQUIRED app_repo_data)
+  if(APM_EMULATOR_MODE)
+    add_test(NAME app_cli_tests COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_SOURCE_DIR}/tests/app_cli_tests.py $<TARGET_FILE:apm>)
+  endif()
 
-  add_test(NAME tar_extractor_tests COMMAND apm_tar_extractor_tests)
 endif()

@@ -25,6 +25,7 @@
  */
 
 #include "repo_index.hpp"
+#include "app_repo.hpp"
 #include "config.hpp"
 #include "downloader.hpp"
 #include "fs.hpp"
@@ -47,8 +48,8 @@
 #include <string>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <unordered_map>
 #include <unistd.h>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 #include <zconf.h>
@@ -827,11 +828,30 @@ bool loadSourcesList(const std::string &path, RepoSourceList &out,
 
     auto files = apm::fs::listDir(path, false);
     for (const auto &name : files) {
-      if (!hasSuffix(name, ".repo"))
+      if (!hasSuffix(name, ".repo") && !hasSuffix(name, ".apprepo"))
         continue;
       std::string full = apm::fs::joinPath(path, name);
       std::string parseErr;
-      if (!parseSingleRepoFile(full, out, &parseErr)) {
+      bool parsed = false;
+      if (hasSuffix(name, ".apprepo")) {
+        RepoSource app;
+        parsed = apm::apprepo::parseSourceFile(full, app, &parseErr);
+        if (parsed) {
+          for (const auto &existing : out) {
+            if (existing.format == RepoFormat::App &&
+                existing.app.id == app.app.id) {
+              parsed = false;
+              parseErr = "Duplicate .apprepo ID: " + app.app.id;
+              break;
+            }
+          }
+          if (parsed)
+            out.push_back(std::move(app));
+        }
+      } else {
+        parsed = parseSingleRepoFile(full, out, &parseErr);
+      }
+      if (!parsed) {
         if (errorMsg) {
           *errorMsg = parseErr.empty() ? "Invalid .repo source: " + full
                                        : parseErr;
@@ -843,7 +863,7 @@ bool loadSourcesList(const std::string &path, RepoSourceList &out,
 
     if (!any) {
       if (errorMsg) {
-        *errorMsg = "No valid .repo sources in directory: " + path;
+        *errorMsg = "No valid .repo or .apprepo sources in directory: " + path;
       }
       apm::logger::warn("loadSourcesList: no valid .repo sources in dir " +
                         path);
@@ -855,9 +875,16 @@ bool loadSourcesList(const std::string &path, RepoSourceList &out,
     return true;
   }
 
+  if (hasSuffix(path, ".apprepo")) {
+    RepoSource app;
+    if (!apm::apprepo::parseSourceFile(path, app, errorMsg))
+      return false;
+    out.push_back(std::move(app));
+    return true;
+  }
   if (!hasSuffix(path, ".repo")) {
     if (errorMsg) {
-      *errorMsg = "Repo source must be a .repo file: " + path;
+      *errorMsg = "Repo source must be a .repo or .apprepo file: " + path;
     }
     return false;
   }
@@ -1309,8 +1336,20 @@ bool updateFromSourcesList(const std::string &sourcesPath,
   }
 
   size_t ok = 0;
+  std::string appErrors;
 
   for (const auto &src : sources) {
+    if (src.format == RepoFormat::App) {
+      std::string error;
+      if (apm::apprepo::update(src, listsDir, &error, progressCb))
+        ++ok;
+      else {
+        if (!appErrors.empty())
+          appErrors += "\n";
+        appErrors += src.app.id + ": " + error;
+      }
+      continue;
+    }
     const std::string archToUse = resolveRepoArch(src, defaultArch);
     auto makeDownloadCallback = [&](RepoUpdateStage stage,
                                     const std::string &desc,
@@ -1674,6 +1713,15 @@ bool updateFromSourcesList(const std::string &sourcesPath,
     }
   }
 
+  if (!appErrors.empty()) {
+    normalizeShellReadableRepoMetadata(sourcesPath, listsDir);
+    if (errorMsg)
+      *errorMsg = "App repository update failed:\n" + appErrors;
+    if (summaryMsg)
+      *summaryMsg = "Updated " + std::to_string(ok) +
+                    " index(es); app repository errors occurred";
+    return false;
+  }
   if (ok == 0) {
     normalizeShellReadableRepoMetadata(sourcesPath, listsDir);
     if (errorMsg) {
@@ -1708,6 +1756,15 @@ bool loadRepoIndicesFromCache(const std::string &sourcesPath,
   out.clear();
 
   for (const auto &src : sources) {
+    if (src.format == RepoFormat::App) {
+      RepoIndex index;
+      std::string error;
+      if (apm::apprepo::loadCached(src, listsDir, index, &error))
+        out.push_back(std::move(index));
+      else
+        apm::logger::warn("App repository cache: " + error);
+      continue;
+    }
     const std::string archToUse = resolveRepoArch(src, defaultArch);
 
     for (const auto &comp : src.components) {

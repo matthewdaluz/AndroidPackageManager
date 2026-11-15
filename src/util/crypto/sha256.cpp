@@ -146,6 +146,7 @@ void SHA256::processBlock(const uint8_t *block) {
 
 // Finalize the hash and return the lowercase hexadecimal digest.
 std::string SHA256::finalHex() {
+  const uint64_t messageBitLen = m_bitLen;
   uint8_t pad[64] = {0x80};
   std::size_t padLen;
 
@@ -159,7 +160,7 @@ std::string SHA256::finalHex() {
 
   uint8_t lenBytes[8];
   for (int i = 0; i < 8; i++) {
-    lenBytes[7 - i] = (m_bitLen >> (i * 8)) & 0xff;
+    lenBytes[7 - i] = (messageBitLen >> (i * 8)) & 0xff;
   }
   update(lenBytes, 8);
 

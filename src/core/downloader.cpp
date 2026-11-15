@@ -219,6 +219,25 @@ size_t writeCallback(void *ptr, size_t size, size_t nmemb, void *userdata) {
   return std::fwrite(ptr, size, nmemb, file);
 }
 
+struct LimitedOutput {
+  FILE *file;
+  std::uint64_t limit;
+  std::uint64_t written = 0;
+};
+
+size_t limitedWriteCallback(void *ptr, size_t size, size_t nmemb,
+                            void *userdata) {
+  auto &out = *static_cast<LimitedOutput *>(userdata);
+  if (size && nmemb > SIZE_MAX / size)
+    return 0;
+  const size_t bytes = size * nmemb;
+  if (out.limit && bytes > out.limit - out.written)
+    return 0;
+  const size_t written = std::fwrite(ptr, 1, bytes, out.file);
+  out.written += written;
+  return written;
+}
+
 struct CurlProgressContext {
   apm::net::TransferProgressCallback cb;
   std::string url;
@@ -320,7 +339,8 @@ namespace apm::net {
 // Download a URL to disk using libcurl with optional TLS bundle overrides and
 // streaming progress callbacks.
 bool downloadFile(const std::string &url, const std::string &dest,
-                  std::string *errorMsg, TransferProgressCallback progressCb) {
+                  std::string *errorMsg, TransferProgressCallback progressCb,
+                  DownloadOptions options) {
   if (url.empty() || dest.empty()) {
     if (errorMsg)
       *errorMsg = "URL or dest is empty";
@@ -353,8 +373,23 @@ bool downloadFile(const std::string &url, const std::string &dest,
   curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
   curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
   curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
-  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &writeCallback);
-  curl_easy_setopt(curl, CURLOPT_WRITEDATA, outFile);
+  LimitedOutput output{outFile, options.maxBytes};
+  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &limitedWriteCallback);
+  curl_easy_setopt(curl, CURLOPT_WRITEDATA, &output);
+  curl_easy_setopt(curl, CURLOPT_USERAGENT, "APM/2 apprepo");
+  if (options.httpsOnly) {
+#if LIBCURL_VERSION_NUM >= 0x075500
+    curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "https");
+    curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, "https");
+#else
+    curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS);
+    curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTPS);
+#endif
+    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 30L);
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1024L);
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 60L);
+  }
   ensureCurlCaBundle(curl);
 
   if (ctx.cb) {

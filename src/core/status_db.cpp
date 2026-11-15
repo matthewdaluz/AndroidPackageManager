@@ -271,6 +271,11 @@ bool loadStatusFile(const std::string &path, InstalledDb &out,
     pkg.repoDist = getField("Repo-Dist");
     pkg.repoComponent = getField("Repo-Component");
     pkg.installPrefix = getField("Install-Prefix");
+    pkg.appPackage = parseBool(getField("App-Package"));
+    pkg.appDestination = getField("App-Destination");
+    pkg.appPlan = getField("App-Plan");
+    pkg.appIds = splitAndTrim(getField("App-IDs"), ',');
+    pkg.appPermissions = splitAndTrim(getField("App-Permissions"), ',');
 
     std::string dependsRaw = getField("Depends");
     if (!dependsRaw.empty()) {
@@ -293,7 +298,8 @@ bool loadStatusFile(const std::string &path, InstalledDb &out,
       continue;
     }
 
-    out[pkg.name] = std::move(pkg);
+    const auto key = (pkg.appPackage ? "app:" : "") + pkg.name;
+    out[key] = std::move(pkg);
   }
 
   apm::logger::info("status_db: loaded " + std::to_string(out.size()) +
@@ -334,6 +340,16 @@ bool writeStatusFile(const std::string &path, const InstalledDb &db,
       out << "Repo-Component: " << pkg.repoComponent << "\n";
     if (!pkg.installPrefix.empty())
       out << "Install-Prefix: " << pkg.installPrefix << "\n";
+    if (pkg.appPackage) {
+      out << "App-Package: yes\nApp-Destination: " << pkg.appDestination
+          << "\nApp-Plan: " << pkg.appPlan << "\nApp-IDs: ";
+      for (const auto &id : pkg.appIds)
+        out << id << ",";
+      out << "\nApp-Permissions: ";
+      for (const auto &permission : pkg.appPermissions)
+        out << permission << ",";
+      out << "\n";
+    }
     if (pkg.termuxPackage) {
       out << "Termux-Package: yes\n";
     }

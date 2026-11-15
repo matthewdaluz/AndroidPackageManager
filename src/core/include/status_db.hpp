@@ -49,6 +49,12 @@ struct InstalledPackage {
   // Whether this package was auto-installed as a dependency
   bool autoInstalled = false;
 
+  bool appPackage = false;
+  std::string appDestination;
+  std::string appPlan;
+  std::vector<std::string> appIds;
+  std::vector<std::string> appPermissions;
+
   bool termuxPackage = false;
   std::string installPrefix;
 };

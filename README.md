@@ -294,3 +294,21 @@ Magisk packaging is deprecated and no longer maintained here.
 - `docs/wiki/AMS-Module-Development.md`
 - `docs/wiki/Troubleshooting.md`
 - `.deb-signature-verification-flow.md`
+
+### APK bundles from app repositories
+
+`.apprepo` files describe GitHub release APK bundles. For example:
+
+```sh
+apm add-repo /path/to/MicroG-Example.apprepo
+apm update
+apm app-info microg
+apm app-install microg
+# Prompt for /system/app or /system/priv-app and privileged permission choices:
+apm app-install microg --install-as-system
+```
+
+System app changes are staged through AMS and require a reboot. The example is
+in [examples/MicroG-Example.apprepo](examples/MicroG-Example.apprepo); see
+[App repositories](docs/wiki/App-Repositories.md) for configuration, permissions,
+updates, removal, and MicroG's ROM prerequisites.

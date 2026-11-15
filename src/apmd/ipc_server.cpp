@@ -26,11 +26,12 @@
 
 #include "include/ipc_server.hpp"
 #include "ams/module_manager.hpp"
+#include "app_installer.hpp"
 #include "config.hpp"
-#include "include/apk_installer.hpp"
 #include "export_path.hpp"
 #include "factory_reset.hpp"
 #include "fs.hpp"
+#include "include/apk_installer.hpp"
 #include "install_manager.hpp"
 #include "logger.hpp"
 #include "protocol.hpp"
@@ -399,6 +400,8 @@ struct CachedRepoData {
   apm::repo::RepoIndexList indices;
   std::unordered_map<std::string, const apm::repo::PackageEntry *>
       packageByName;
+  std::unordered_map<std::string, const apm::repo::PackageEntry *>
+      appPackageByName;
   std::vector<CachedRepoSearchEntry> searchEntries;
   std::string fingerprint;
 };
@@ -455,6 +458,7 @@ static void buildRepoLookupMaps(CachedRepoData &data) {
   }
 
   data.packageByName.reserve(packageCount);
+  data.appPackageByName.reserve(data.indices.size());
   data.searchEntries.reserve(packageCount);
 
   for (const auto &idx : data.indices) {
@@ -463,7 +467,8 @@ static void buildRepoLookupMaps(CachedRepoData &data) {
         continue;
       }
 
-      data.packageByName.emplace(pkg.packageName, &pkg);
+      (pkg.isAppPackage ? data.appPackageByName : data.packageByName)
+          .emplace(pkg.packageName, &pkg);
 
       std::string haystack = toLower(pkg.packageName);
       auto descIt = pkg.rawFields.find("Description");
@@ -510,11 +515,14 @@ static bool loadCachedRepoIndices(
   gRepoIndexCache.data = fresh;
   dataOut = std::move(fresh);
 
-  apm::logger::info(std::string(kLogFileTag) + ": cached " +
-                    std::to_string(gRepoIndexCache.data->indices.size()) +
-                    " repo index entries with " +
-                    std::to_string(gRepoIndexCache.data->packageByName.size()) +
-                    " package lookup keys");
+  apm::logger::info(
+      std::string(kLogFileTag) + ": cached " +
+      std::to_string(gRepoIndexCache.data->indices.size()) +
+      " repo index entries with " +
+      std::to_string(gRepoIndexCache.data->packageByName.size()) +
+      " package lookup keys and " +
+      std::to_string(gRepoIndexCache.data->appPackageByName.size()) +
+      " app bundles");
   return true;
 }
 
@@ -561,6 +569,8 @@ static bool hasSuffix(const std::string &value, const std::string &suffix) {
 
 static const char *repoFormatToString(apm::repo::RepoFormat format) {
   switch (format) {
+  case apm::repo::RepoFormat::App:
+    return "apprepo";
   case apm::repo::RepoFormat::Termux:
     return "termux";
   case apm::repo::RepoFormat::Debian:
@@ -612,21 +622,23 @@ static bool normalizeRepoSourceName(const std::string &input,
   }
 
   std::string name = input;
-  if (hasSuffix(name, ".repo")) {
-    if (name.size() <= 5) {
+  if (hasSuffix(name, ".repo") || hasSuffix(name, ".apprepo")) {
+    if (name.size() <= 5 || name == ".apprepo") {
       errorOut = "invalid repo source name: " + input;
       return false;
     }
   } else {
     if (name.find('.') != std::string::npos) {
-      errorOut = "repo source name must be a bare name or end with .repo";
+      errorOut =
+          "repo source name must be a bare name or end with .repo or .apprepo";
       return false;
     }
     name += ".repo";
   }
 
   if (name == "." || name == ".." || name.find('/') != std::string::npos ||
-      name.find('\\') != std::string::npos || !hasSuffix(name, ".repo") ||
+      name.find('\\') != std::string::npos ||
+      (!hasSuffix(name, ".repo") && !hasSuffix(name, ".apprepo")) ||
       name.size() <= 5) {
     errorOut = "invalid repo source name: " + input;
     return false;
@@ -734,9 +746,8 @@ static bool addRepoSourceFile(const std::string &sourcePath,
     messageOut = "repo path is missing";
     return false;
   }
-  if (sourcePath.size() < 5 ||
-      sourcePath.compare(sourcePath.size() - 5, 5, ".repo") != 0) {
-    messageOut = "repo source must be a .repo file";
+  if (!hasSuffix(sourcePath, ".repo") && !hasSuffix(sourcePath, ".apprepo")) {
+    messageOut = "repo source must be a .repo or .apprepo file";
     return false;
   }
   if (!apm::fs::isFile(sourcePath)) {
@@ -746,10 +757,10 @@ static bool addRepoSourceFile(const std::string &sourcePath,
   }
 
   const std::string name = baseName(sourcePath);
-  if (name.empty() || name.size() < 5 || name == "." || name == ".." ||
-      name.find('/') != std::string::npos ||
+  if (name.empty() || name[0] == '.' || name.size() < 5 || name == "." ||
+      name == ".." || name.find('/') != std::string::npos ||
       name.find('\\') != std::string::npos ||
-      name.compare(name.size() - 5, 5, ".repo") != 0) {
+      (!hasSuffix(name, ".repo") && !hasSuffix(name, ".apprepo"))) {
     messageOut = "invalid repo source filename";
     return false;
   }
@@ -758,11 +769,26 @@ static bool addRepoSourceFile(const std::string &sourcePath,
   std::string parseErr;
   if (!apm::repo::loadSourcesList(sourcePath, parsed, &parseErr) ||
       parsed.empty()) {
-    messageOut = parseErr.empty() ? "invalid .repo file" : parseErr;
+    messageOut = parseErr.empty() ? "invalid repository source file" : parseErr;
     return false;
   }
 
   const std::string sourcesDir = apm::config::getSourcesDir();
+  if (parsed.front().format == apm::repo::RepoFormat::App) {
+    for (const auto &entry : apm::fs::listDir(sourcesDir, false)) {
+      if (!hasSuffix(entry, ".apprepo"))
+        continue;
+      apm::repo::RepoSourceList existing;
+      if (apm::repo::loadSourcesList(apm::fs::joinPath(sourcesDir, entry),
+                                     existing, nullptr) &&
+          !existing.empty() &&
+          existing.front().app.id == parsed.front().app.id) {
+        messageOut = "An app repository with this ID already exists: " +
+                     parsed.front().app.id;
+        return false;
+      }
+    }
+  }
   if (!apm::fs::createDirs(sourcesDir, 0775)) {
     messageOut = "failed to create sources directory: " + sourcesDir;
     return false;
@@ -800,7 +826,7 @@ static bool buildRepoSourceListResponseMessage(std::string &messageOut) {
 
   std::vector<std::string> names;
   for (const auto &name : apm::fs::listDir(sourcesDir, false)) {
-    if (hasSuffix(name, ".repo")) {
+    if (hasSuffix(name, ".repo") || hasSuffix(name, ".apprepo")) {
       names.push_back(name);
     }
   }
@@ -833,6 +859,11 @@ static bool buildRepoSourceListResponseMessage(std::string &messageOut) {
 
     for (std::size_t i = 0; i < sources.size(); ++i) {
       const auto &src = sources[i];
+      if (src.format == apm::repo::RepoFormat::App) {
+        out << "  " << name << ": " << src.uri << " id=" << src.app.id
+            << " name=" << src.app.name << " format=apprepo\n";
+        continue;
+      }
       out << "  " << name;
       if (sources.size() > 1)
         out << "#" << (i + 1);
@@ -868,6 +899,19 @@ static bool removeRepoSourceFile(const std::string &repoName,
     return false;
   }
 
+  if (repoName.find('.') == std::string::npos) {
+    const auto appName = repoName + ".apprepo";
+    const bool deb = apm::fs::pathExists(
+        apm::fs::joinPath(apm::config::getSourcesDir(), name));
+    const bool app = apm::fs::pathExists(
+        apm::fs::joinPath(apm::config::getSourcesDir(), appName));
+    if (deb && app) {
+      messageOut = "Ambiguous repository name; include .repo or .apprepo";
+      return false;
+    }
+    if (app)
+      name = appName;
+  }
   const std::string path =
       apm::fs::joinPath(apm::config::getSourcesDir(), name);
   if (!apm::fs::pathExists(path)) {
@@ -921,6 +965,8 @@ static bool buildListResponseMessage(std::string &messageOut) {
     if (!pkg.architecture.empty()) {
       out << " [" << pkg.architecture << "]";
     }
+    if (pkg.appPackage)
+      out << " [apprepo, /system/" << pkg.appDestination << "]";
     if (pkg.autoInstalled) {
       out << " (auto)";
     }
@@ -934,17 +980,30 @@ static bool buildListResponseMessage(std::string &messageOut) {
   return true;
 }
 
-static std::string buildInfoResponseMessage(const std::string &name) {
+static std::string buildInfoResponseMessage(const std::string &name,
+                                            bool app = false) {
   std::ostringstream out;
   apm::status::InstalledPackage inst;
   std::string statusErr;
-  const bool isInstalled = apm::status::isInstalled(name, &inst, &statusErr);
+  bool isInstalled = false;
+  if (app) {
+    apm::status::InstalledDb db;
+    if (apm::status::loadStatus(db, &statusErr)) {
+      auto it = db.find(apm::apps::statusKey(name));
+      if (it != db.end()) {
+        inst = it->second;
+        isInstalled = true;
+      }
+    }
+  } else
+    isInstalled = apm::status::isInstalled(name, &inst, &statusErr);
 
   out << "Package: " << name << "\n";
   if (!statusErr.empty()) {
     out << "Installed info unavailable: " << statusErr << "\n\n";
   } else {
-    out << "Installed: " << (isInstalled ? "yes" : "no") << "\n";
+    out << (app ? "Staged: " : "Installed: ") << (isInstalled ? "yes" : "no")
+        << "\n";
     if (isInstalled) {
       if (!inst.version.empty())
         out << "Installed-Version: " << inst.version << "\n";
@@ -972,8 +1031,10 @@ static std::string buildInfoResponseMessage(const std::string &name) {
   }
 
   const apm::repo::PackageEntry *cand = nullptr;
-  auto candIt = repoData->packageByName.find(name);
-  if (candIt != repoData->packageByName.end()) {
+  const auto &candidates =
+      app ? repoData->appPackageByName : repoData->packageByName;
+  auto candIt = candidates.find(name);
+  if (candIt != candidates.end()) {
     cand = candIt->second;
   }
 
@@ -1054,7 +1115,9 @@ static bool buildSearchResponseMessage(const std::vector<std::string> &patternsI
       }
     }
 
-    if (!hit || !seen.insert(pkg->packageName).second) {
+    if (!hit ||
+        !seen.insert((pkg->isAppPackage ? "app:" : "") + pkg->packageName)
+             .second) {
       continue;
     }
 
@@ -1066,6 +1129,8 @@ static bool buildSearchResponseMessage(const std::vector<std::string> &patternsI
 
     ++matchCount;
     out << pkg->packageName;
+    if (pkg->isAppPackage)
+      out << " [apprepo: apm app-install " << pkg->packageName << "]";
     if (!pkg->version.empty()) {
       out << " " << pkg->version;
     }
@@ -1492,7 +1557,9 @@ void IpcServer::handleClient(int clientFd) {
       break;
     }
     resp.success = true;
-    resp.message = buildInfoResponseMessage(req.packageName);
+    resp.message = buildInfoResponseMessage(
+        req.packageName,
+        req.rawFields.count("apprepo") && req.rawFields.at("apprepo") == "1");
     break;
   }
 
@@ -1715,6 +1782,72 @@ void IpcServer::handleClient(int clientFd) {
   case RequestType::Ping: {
     resp.success = true;
     resp.message = "pong";
+    break;
+  }
+
+  case RequestType::AppRemove: {
+    resp.success = apm::apps::remove(req.packageName, resp.message);
+    break;
+  }
+  case RequestType::AppInstall: {
+    std::shared_ptr<const CachedRepoData> data;
+    std::string err;
+    if (!loadCachedRepoIndices(data, &err)) {
+      resp.success = false;
+      resp.message = err;
+      break;
+    }
+    auto candidate = data->appPackageByName.find(req.packageName);
+    if (candidate == data->appPackageByName.end()) {
+      resp.success = false;
+      resp.message = "App bundle not found: " + req.packageName +
+                     ". Add its .apprepo file and run 'apm update'.";
+      break;
+    }
+    apm::apps::InstallOptions options;
+    auto field = [&](const std::string &key) {
+      auto it = req.rawFields.find(key);
+      return it == req.rawFields.end() ? std::string{} : it->second;
+    };
+    if (!field("simulate").empty() &&
+        !parseBoolValue(field("simulate"), options.simulate)) {
+      resp.success = false;
+      resp.message = "Invalid simulate option";
+      break;
+    }
+    if (!field("destination").empty())
+      options.destination = field("destination");
+    options.permissions = splitLines(field("permissions"));
+    options.expectedPlan = field("expected_plan");
+    if (!options.simulate && options.expectedPlan.empty()) {
+      resp.success = false;
+      resp.message = "Review an app install plan before installing";
+      break;
+    }
+    apm::apps::InstallResult result;
+    auto progress = [&](const apm::install::InstallProgress &p) {
+      Response event;
+      event.id = req.id;
+      event.status = ResponseStatus::Progress;
+      event.rawFields = {
+          {"event", "install-download"},
+          {"package", p.packageName},
+          {"url", p.url},
+          {"destination", p.destination},
+          {"file", fileNameFromPath(p.destination)},
+          {"bytes", std::to_string(p.downloadedBytes)},
+          {"total", std::to_string(p.totalBytes)},
+          {"dl_speed", std::to_string(p.downloadSpeedBytesPerSec)},
+          {"finished", p.finished ? "1" : "0"}};
+      sendResponseMessage(clientFd, event);
+    };
+    resp.success =
+        apm::apps::install(*candidate->second, options, result, progress);
+    resp.message = result.message;
+    resp.rawFields["apprepo"] = "1";
+    resp.rawFields["plan"] = result.plan;
+    if (resp.success && result.changed)
+      resp.rawFields["packages"] = req.packageName;
     break;
   }
 
