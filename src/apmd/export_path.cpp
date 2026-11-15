@@ -33,8 +33,11 @@
 #include "manual_package.hpp"
 #include "status_db.hpp"
 
+#include <cstdio>
+#include <cstdlib>
 #include <grp.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 #include <algorithm>

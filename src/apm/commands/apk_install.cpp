@@ -26,9 +26,13 @@
  */
 
 #include "apk_install.hpp"
+#include "protocol.hpp"
 #include "transport.hpp"
 
+#include <cstddef>
 #include <iostream>
+#include <string>
+#include <vector>
 
 namespace apm::cli {
 

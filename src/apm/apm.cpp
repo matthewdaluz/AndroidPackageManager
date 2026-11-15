@@ -33,7 +33,7 @@
 #include "gpg_verify.hpp"
 #include "logger.hpp"
 #include "manual_package.hpp"
-#include "repo_index.hpp"
+#include "protocol.hpp"
 #include "search.hpp"
 #include "security.hpp"
 #include "status_db.hpp"
@@ -44,6 +44,7 @@
 #include <cctype>
 #include <cerrno>
 #include <chrono>
+#include <cstdio>
 #include <ctime>
 #include <cstdint>
 #include <cstdlib>
@@ -55,6 +56,7 @@
 #include <sstream>
 #include <string>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <thread>
 #include <unistd.h>
 #include <unordered_map>

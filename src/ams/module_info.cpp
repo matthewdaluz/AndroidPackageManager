@@ -26,7 +26,6 @@
 
 #include "ams/module_info.hpp"
 
-#include "config.hpp"
 #include "fs.hpp"
 
 #include <algorithm>
@@ -36,6 +35,7 @@
 #include <cstring>
 #include <iomanip>
 #include <sstream>
+#include <string>
 #include <unordered_map>
 
 namespace {

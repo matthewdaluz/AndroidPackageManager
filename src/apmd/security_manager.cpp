@@ -34,12 +34,17 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cerrno>
+#include <cstdint>
 #include <cstdlib>
 #include <iomanip>
+#include <ios>
+#include <openssl/digest.h>
 #include <sstream>
 #include <string>
 #include <sys/stat.h>
+#include <utility>
 #include <vector>
 
 #include <openssl/err.h>

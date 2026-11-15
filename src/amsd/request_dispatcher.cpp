@@ -33,10 +33,15 @@
 
 #include "request_dispatcher.hpp"
 
+#include "ams/module_manager.hpp"
 #include "logger.hpp"
+#include "protocol.hpp"
+#include "security_manager.hpp"
 
+#include <cstddef>
 #include <sstream>
-#include <utility>
+#include <string>
+#include <vector>
 
 namespace apm::amsd {
 

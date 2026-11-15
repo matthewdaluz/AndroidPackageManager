@@ -43,9 +43,12 @@
 #include "tar_extractor.hpp"
 #include "gpg_verify.hpp"
 
+#include <cstdio>
 #include <dirent.h>
 #include <fcntl.h>
+#include <iterator>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -57,6 +60,7 @@
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace apm::install {

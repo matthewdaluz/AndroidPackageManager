@@ -26,11 +26,15 @@
 
 #include "ipc_client.hpp"
 #include "logger.hpp"
+#include "protocol.hpp"
 
+#include <bits/sockaddr.h>
 #include <cerrno>
 #include <cstddef>
 #include <cstring>
+#include <string>
 #include <sys/socket.h>
+#include <sys/types.h>
 #include <sys/un.h>
 #include <unistd.h>
 

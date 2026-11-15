@@ -37,9 +37,11 @@
 #include <iostream>
 #include <mutex>
 #include <sstream>
+#include <string>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <utility>
 
 namespace apm::logger {
 

@@ -30,6 +30,7 @@
 #include "config.hpp"
 #include "logger.hpp"
 #include "protocol.hpp"
+#include "request_dispatcher.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -37,10 +38,13 @@
 #include <cstring>
 #include <grp.h>
 #include <limits>
+#include <mutex>
 #include <poll.h>
 #include <string>
+#include <sys/poll.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <sys/un.h>
 #include <thread>
 #include <unistd.h>

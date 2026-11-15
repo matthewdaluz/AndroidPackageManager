@@ -32,6 +32,8 @@
 #include <cctype>
 #include <cstring>
 #include <sstream>
+#include <stdlib.h>
+#include <string>
 #include <vector>
 
 #include <sys/types.h>

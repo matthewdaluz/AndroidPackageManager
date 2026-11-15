@@ -30,8 +30,10 @@
 #include <chrono>
 #include <cstring>
 #include <fstream>
+#include <ios>
 #include <signal.h>
 #include <sstream>
+#include <string>
 #include <sys/types.h>
 #include <unistd.h>
 

@@ -30,6 +30,9 @@
 #include <algorithm>
 #include <cctype>
 #include <sstream>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 namespace apm::control {
 

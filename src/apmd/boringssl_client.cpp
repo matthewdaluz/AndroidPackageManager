@@ -30,14 +30,20 @@
 #include "fs.hpp"
 #include "security.hpp"
 
+#include <cstddef>
+#include <cstdint>
 #include <memory>
+#include <openssl/cipher.h>
+#include <openssl/digest.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/rand.h>
 
+#include <string>
 #include <sys/stat.h>
 #include <utility>
+#include <vector>
 
 namespace apm::daemon {
 

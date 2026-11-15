@@ -34,9 +34,15 @@
 #include <array>
 #include <cctype>
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <fstream>
+#include <ios>
+#include <openssl/base64.h>
+#include <openssl/digest.h>
 #include <sstream>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include <openssl/base.h>

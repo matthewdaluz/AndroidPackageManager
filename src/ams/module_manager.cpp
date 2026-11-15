@@ -27,6 +27,7 @@
 
 #include "ams/module_manager.hpp"
 
+#include "ams/module_info.hpp"
 #include "config.hpp"
 #include "fs.hpp"
 #include "logger.hpp"
@@ -34,6 +35,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bits/chrono.h>
 #include <cerrno>
 #include <cctype>
 #include <chrono>
@@ -43,15 +45,19 @@
 #include <cstring>
 #include <fstream>
 #include <limits.h>
+#include <linux/limits.h>
 #include <map>
 #include <mutex>
 #include <set>
 #include <sstream>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string>
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <thread>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
 namespace {

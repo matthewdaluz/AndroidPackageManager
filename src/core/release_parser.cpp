@@ -33,7 +33,10 @@
 #include <cctype>
 #include <cerrno>
 #include <cstdlib>
+#include <istream>
 #include <sstream>
+#include <string>
+#include <utility>
 
 namespace apm::repo {
 

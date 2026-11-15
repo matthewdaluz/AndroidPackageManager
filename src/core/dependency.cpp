@@ -26,11 +26,14 @@
 
 #include "dependency.hpp"
 #include "logger.hpp"
+#include "repo_index.hpp"
 
 #include <functional>
 #include <sstream>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace apm::dep {
 

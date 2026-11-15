@@ -34,6 +34,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cerrno>
+#include <cstdint>
 #include <cstring>
 #include <limits>
 #include <sstream>

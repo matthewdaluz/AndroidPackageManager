@@ -25,6 +25,7 @@
  */
 
 #include "include/ipc_server.hpp"
+#include "ams/module_manager.hpp"
 #include "config.hpp"
 #include "include/apk_installer.hpp"
 #include "export_path.hpp"
@@ -34,9 +35,11 @@
 #include "logger.hpp"
 #include "protocol.hpp"
 #include "repo_index.hpp"
+#include "security.hpp"
 #include "status_db.hpp"
 
 #include <algorithm>
+#include <bits/sockaddr.h>
 #include <cctype>
 #include <cerrno>
 #include <chrono>
@@ -45,13 +48,17 @@
 #include <fcntl.h>
 #include <grp.h>
 #include <fstream>
+#include <ios>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <poll.h>
 #include <sstream>
 #include <string>
+#include <sys/poll.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <sys/un.h>
 #include <thread>
 #include <unordered_map>

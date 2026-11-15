@@ -26,9 +26,13 @@
 
 #include "sha256.hpp"
 
+#include <algorithm>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <ios>
+#include <string>
 
 namespace apm::crypto {
 

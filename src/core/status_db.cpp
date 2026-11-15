@@ -30,8 +30,11 @@
 #include "fs.hpp"
 #include "logger.hpp"
 
+#include <cstdio>
 #include <grp.h>
+#include <string>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -40,6 +43,7 @@
 #include <cstring>
 #include <sstream>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace apm::status {

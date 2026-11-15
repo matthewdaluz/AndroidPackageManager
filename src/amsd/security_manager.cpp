@@ -36,6 +36,9 @@
 #include "logger.hpp"
 #include "security.hpp"
 
+#include <cstdint>
+#include <ios>
+#include <openssl/digest.h>
 #include <openssl/err.h>
 #include <openssl/hmac.h>
 #include <openssl/sha.h>
@@ -43,6 +46,8 @@
 #include <array>
 #include <iomanip>
 #include <sstream>
+#include <string>
+#include <vector>
 
 namespace apm::amsd {
 

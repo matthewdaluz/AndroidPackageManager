@@ -34,11 +34,14 @@
 
 #include <cerrno>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <ios>
 #include <sstream>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string>
+#include <sys/types.h>
 #include <vector>
 
 #include <sys/stat.h>

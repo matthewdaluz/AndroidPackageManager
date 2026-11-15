@@ -35,8 +35,8 @@
 #include "process_lock.hpp"
 #include "status_db.hpp"
 
-#include <chrono>
-#include <cerrno>
+#include <bits/chrono.h>
+#include <cstddef>
 #include <fstream>
 #include <grp.h>
 #include <iostream>
@@ -46,6 +46,7 @@
 #include <sys/types.h>
 #include <thread>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
 namespace {

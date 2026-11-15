@@ -27,6 +27,8 @@
 #include "fs.hpp"
 
 #include <dirent.h>
+#include <ios>
+#include <string>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -36,6 +38,7 @@
 #include <cstring>
 #include <fstream>
 #include <sstream>
+#include <vector>
 
 namespace apm::fs {
 

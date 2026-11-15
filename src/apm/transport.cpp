@@ -28,6 +28,8 @@
 #include "config.hpp"
 #include "ipc_client.hpp"
 #include "logger.hpp"
+#include "protocol.hpp"
+#include <string>
 
 namespace apm::ipc {
 

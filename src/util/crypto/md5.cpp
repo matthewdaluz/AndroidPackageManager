@@ -8,10 +8,12 @@
 
 #include "md5.hpp"
 
+#include <cstdint>
 #include <openssl/md5.h>
 
 #include <array>
 #include <cstdio>
+#include <string>
 #include <vector>
 
 namespace apm::crypto {

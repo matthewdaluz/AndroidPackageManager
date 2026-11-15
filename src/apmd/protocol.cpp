@@ -29,7 +29,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstddef>
 #include <sstream>
+#include <string>
+#include <unordered_map>
 
 namespace apm::ipc {
 

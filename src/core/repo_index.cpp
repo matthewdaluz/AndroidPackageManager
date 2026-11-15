@@ -38,14 +38,20 @@
 #include <cctype>
 #include <cerrno>
 #include <chrono>
+#include <cstdint>
 #include <cstring>
 #include <fstream>
 #include <grp.h>
+#include <ios>
 #include <sstream>
+#include <string>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <unordered_map>
 #include <unistd.h>
+#include <utility>
 #include <vector>
+#include <zconf.h>
 #include <zlib.h>
 
 namespace apm::repo {
