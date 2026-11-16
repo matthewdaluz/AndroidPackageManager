@@ -2,8 +2,6 @@
 
 APM is a GPL-3.0-or-later package manager stack for Android. It combines an APT-like package workflow, a privileged daemon, an Android module system, APK staging helpers, and shell PATH hotload support.
 
-Current CLI version in source: `2.0.4b - Open Beta`
-
 ## Components
 
 - `apm`: CLI client. It handles local read-only commands, manual package installs, log viewing/export, trusted-key import, and IPC requests to the daemon.
@@ -104,7 +102,7 @@ Daemon-backed commands:
 
 - `apm ping`
 - `apm update`
-- `apm add-repo <file.repo>`
+- `apm add-repo <file.repo|file.apprepo>`
 - `apm list-repos`
 - `apm remove-repo <name|name.repo>`
 - `apm install <pkg>`
@@ -120,6 +118,9 @@ Daemon-backed commands:
 - `apm module-enable <name>`
 - `apm module-disable <name>`
 - `apm module-remove <name>`
+- `app-install <id> [--install-as-system]`
+- `app-remove <id>`
+- `app-info <id>`
 - `apm apk-install <apk> [--install-as-system]`
 - `apm apk-uninstall <package>`
 
@@ -180,7 +181,7 @@ Notes:
 sudo apt update
 sudo apt install -y \
   build-essential cmake pkg-config git \
-  ninja-build clang clangd
+  ninja-build clang clangd sdkmanager google-android-platform-tools-installer
 ```
 
 ### Fedora
@@ -188,14 +189,14 @@ sudo apt install -y \
 ```bash
 sudo dnf install -y \
   @development-tools cmake pkgconf-pkg-config git \
-  ninja-build clang clangd clang-tools-extra
+  ninja-build clang clangd clang-tools-extra sdkmanager android-tools
 ```
 
 ### Arch Linux
 
 ```bash
 sudo pacman -Sy --needed \
-  base-devel cmake pkgconf git ninja clang clangd
+  base-devel cmake pkgconf git ninja clang clangd sdkmanager adb fastboot
 ```
 
 ### Android SDK / NDK
@@ -206,9 +207,9 @@ Recommended SDK components:
 
 ```bash
 sdkmanager --install \
-  "build-tools;36.1.0" \
+  "build-tools;37.0.0" \
   "cmake;4.1.2" \
-  "ndk;r29"
+  "ndk;r30"
 ```
 
 ### BoringSSL Prebuilts
