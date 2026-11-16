@@ -47,6 +47,8 @@ cc_binary {
     name: "apm",
     defaults: ["apm_cc_defaults"],
     installable: true,
+    shared_libs: ["libz"],
+    static_libs: ["liblzma", "libzstd", "libbz"],
     srcs: [
         "src/apm/apm.cpp",
         "src/apm/ipc_client.cpp",
@@ -59,6 +61,7 @@ cc_binary {
         "src/core/deb_extractor.cpp",
         "src/core/logger.cpp",
         "src/core/tar_extractor.cpp",
+        "src/core/archive_decompressor.cpp",
         "src/core/status_db.cpp",
         "src/core/manual_package.cpp",
         "src/core/security.cpp",
@@ -78,6 +81,7 @@ cc_binary {
     name: "apmd",
     defaults: ["apm_cc_defaults"],
     installable: true,
+    static_libs: ["liblzma", "libzstd", "libbz"],
     shared_libs: [
         "libcurl",
         "libz",
@@ -103,6 +107,7 @@ cc_binary {
         "src/core/dependency.cpp",
         "src/core/logger.cpp",
         "src/core/tar_extractor.cpp",
+        "src/core/archive_decompressor.cpp",
         "src/core/downloader.cpp",
         "src/core/status_db.cpp",
         "src/core/manual_package.cpp",

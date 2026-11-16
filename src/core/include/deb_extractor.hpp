@@ -31,7 +31,7 @@
 namespace apm::deb {
 
 // Compression type used for the control/data tar members.
-enum class DebCompression { Unknown = 0, None, Gzip, Xz, Bzip2 };
+enum class DebCompression { Unknown = 0, None, Gzip, Xz, Bzip2, Lzma, Zstd };
 
 struct DebParts {
   // Full path to extracted control tarball (e.g.

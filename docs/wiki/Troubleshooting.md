@@ -61,6 +61,21 @@ Detached `.deb` verification:
 apm sig-cache clear
 ```
 
+## `.deb` control/data extraction fails
+
+APM reads the `.deb` ar container internally and decodes gzip, XZ, bzip2,
+legacy LZMA, and Zstandard members before invoking `tar`. Installing an external
+`ar` or `xz` command is unnecessary with current builds. Both `apm` and `apmd`
+must be rebuilt and deployed to use this extraction path; restart `apmd` after
+replacing it.
+
+If extraction still fails, the error includes tar's diagnostic output. Check
+that `tar` is available in the daemon's PATH, the download is complete, and
+`/data/apm/cache` has enough space for the decompressed member. Temporary tar
+files are removed on success and failure. Compressed members have an 8 GiB
+output limit and decoders have a 256 MiB memory/window limit. Unsafe archive
+paths, links, and device nodes are rejected before payload extraction.
+
 ## `package-install` fails
 
 For local `.deb` installs:

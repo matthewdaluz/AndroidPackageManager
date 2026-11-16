@@ -1,0 +1,3 @@
+Type=deb
+URL=https://packages.termux.dev/apt/termux-x11/
+Suites=x11,main

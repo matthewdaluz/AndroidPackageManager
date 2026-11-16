@@ -26,6 +26,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -33,6 +34,7 @@ namespace apm::tar {
 
 struct ExtractOptions {
   std::vector<std::string> allowedAbsoluteSymlinkTargetPrefixes;
+  std::uint64_t maxDecompressedBytes = 8ULL * 1024 * 1024 * 1024;
 };
 
 // Extract a tar archive (optionally compressed: .gz, .xz, .bz2, etc.)
@@ -47,7 +49,6 @@ bool extractTar(const std::string &tarPath, const std::string &destDir,
                 std::string *errorMsg = nullptr);
 
 bool extractTar(const std::string &tarPath, const std::string &destDir,
-                const ExtractOptions &options,
-                std::string *errorMsg = nullptr);
+                const ExtractOptions &options, std::string *errorMsg = nullptr);
 
 } // namespace apm::tar

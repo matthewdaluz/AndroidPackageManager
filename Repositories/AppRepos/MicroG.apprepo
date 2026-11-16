@@ -1,6 +1,6 @@
 ID="microg"
 Name="MicroG (System-Wide)"
-Description="Repository file to install MicroG system-wide via the GMSCore repository."
+Description="System-wide version of MicroG from the GMSCore repository on GitHub. (Select '1' on system app destination!)"
 URL=https://github.com/microg/GmsCore/releases/
 APKs="com.google.android.gms-*.apk,com.android.vending-*.apk"
 AvoidKeywords="asc,hw"

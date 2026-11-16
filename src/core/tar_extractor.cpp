@@ -25,17 +25,22 @@
  */
 
 #include "tar_extractor.hpp"
+#include "archive_decompressor.hpp"
+#include "config.hpp"
 #include "fs.hpp"
 #include "logger.hpp"
 
-#include <cerrno>
+#include <algorithm>
 #include <cctype>
+#include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <sstream>
-#include <cstdlib>
 #include <string>
 #include <vector>
 
+#include <poll.h>
+#include <signal.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -57,8 +62,7 @@ static std::string stripLeadingDotSlash(const std::string &path) {
 
 static bool appendSegments(const std::string &path, bool allowParent,
                            std::vector<std::string> &parts,
-                           std::string *errorMsg,
-                           const std::string &context) {
+                           std::string *errorMsg, const std::string &context) {
   size_t start = 0;
   while (start <= path.size()) {
     size_t end = path.find('/', start);
@@ -169,8 +173,7 @@ static bool validateAllowedAbsoluteSymlinkTarget(
 }
 
 static bool validateLinkTarget(const std::string &entryName,
-                               const std::string &rawTarget,
-                               char linkType,
+                               const std::string &rawTarget, char linkType,
                                const apm::tar::ExtractOptions &options,
                                std::string *errorMsg) {
   if (rawTarget.empty()) {
@@ -222,71 +225,114 @@ static bool validateLinkTarget(const std::string &entryName,
 }
 
 static bool runTarForOutput(const std::vector<std::string> &args,
-                            std::string &output, std::string *errorMsg) {
-  int pipefd[2];
-  if (::pipe(pipefd) != 0) {
-    if (errorMsg) {
+                            std::string &output, std::string *errorMsg,
+                            bool captureOutput = true) {
+  int stdoutPipe[2], stderrPipe[2];
+  if (::pipe(stdoutPipe) != 0) {
+    if (errorMsg)
       *errorMsg = "pipe() failed: " + std::string(std::strerror(errno));
-    }
     return false;
   }
-
-  pid_t pid = ::fork();
+  if (::pipe(stderrPipe) != 0) {
+    const auto saved = errno;
+    ::close(stdoutPipe[0]);
+    ::close(stdoutPipe[1]);
+    if (errorMsg)
+      *errorMsg = "pipe() failed: " + std::string(std::strerror(saved));
+    return false;
+  }
+  std::vector<char *> argv;
+  for (const auto &arg : args)
+    argv.push_back(const_cast<char *>(arg.c_str()));
+  argv.push_back(nullptr);
+  const pid_t pid = ::fork();
   if (pid < 0) {
-    if (errorMsg) {
-      *errorMsg = "fork() failed: " + std::string(std::strerror(errno));
-    }
-    ::close(pipefd[0]);
-    ::close(pipefd[1]);
+    const auto saved = errno;
+    for (int fd : {stdoutPipe[0], stdoutPipe[1], stderrPipe[0], stderrPipe[1]})
+      ::close(fd);
+    if (errorMsg)
+      *errorMsg = "fork() failed: " + std::string(std::strerror(saved));
     return false;
   }
-
   if (pid == 0) {
-    ::close(pipefd[0]);
-    if (::dup2(pipefd[1], STDOUT_FILENO) < 0) {
+    ::close(stdoutPipe[0]);
+    ::close(stderrPipe[0]);
+    if (::dup2(stdoutPipe[1], STDOUT_FILENO) < 0 ||
+        ::dup2(stderrPipe[1], STDERR_FILENO) < 0)
       _exit(127);
-    }
-    ::close(pipefd[1]);
-
-    std::vector<char *> argv;
-    argv.reserve(args.size() + 1);
-    for (const auto &arg : args) {
-      argv.push_back(const_cast<char *>(arg.c_str()));
-    }
-    argv.push_back(nullptr);
+    ::close(stdoutPipe[1]);
+    ::close(stderrPipe[1]);
     ::execvp(argv[0], argv.data());
+    const char message[] = "cannot execute tar; check that tar is installed "
+                           "and accessible in PATH\n";
+    const auto ignored = ::write(STDERR_FILENO, message, sizeof(message) - 1);
+    (void)ignored;
     _exit(127);
   }
-
-  ::close(pipefd[1]);
+  ::close(stdoutPipe[1]);
+  ::close(stderrPipe[1]);
   output.clear();
-  char buffer[4096];
-  ssize_t bytes = 0;
-  while ((bytes = ::read(pipefd[0], buffer, sizeof(buffer))) > 0) {
-    output.append(buffer, static_cast<size_t>(bytes));
-  }
-  ::close(pipefd[0]);
-
-  int status = 0;
-  if (::waitpid(pid, &status, 0) < 0) {
-    if (errorMsg) {
-      *errorMsg = "waitpid() failed: " + std::string(std::strerror(errno));
+  std::string diagnostic;
+  pollfd pipes[2] = {{stdoutPipe[0], POLLIN, 0}, {stderrPipe[0], POLLIN, 0}};
+  bool readError = false;
+  while (pipes[0].fd >= 0 || pipes[1].fd >= 0) {
+    if (::poll(pipes, 2, -1) < 0) {
+      if (errno == EINTR)
+        continue;
+      readError = true;
+      break;
     }
-    return false;
-  }
-
-  if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-    if (errorMsg) {
-      if (WIFEXITED(status)) {
-        *errorMsg =
-            "tar exited with status " + std::to_string(WEXITSTATUS(status));
-      } else {
-        *errorMsg = "tar terminated abnormally";
+    for (int i = 0; i < 2; ++i) {
+      if (pipes[i].fd < 0 || !pipes[i].revents)
+        continue;
+      char buffer[4096];
+      const auto size = ::read(pipes[i].fd, buffer, sizeof(buffer));
+      if (size > 0) {
+        if (i == 0 && captureOutput)
+          output.append(buffer, static_cast<std::size_t>(size));
+        else if (i == 1 && diagnostic.size() < 16384)
+          diagnostic.append(buffer, std::min(static_cast<std::size_t>(size),
+                                             16384 - diagnostic.size()));
+      } else if (size == 0) {
+        ::close(pipes[i].fd);
+        pipes[i].fd = -1;
+      } else if (errno != EINTR) {
+        readError = true;
+        break;
       }
     }
+    if (readError)
+      break;
+  }
+  for (auto &pipe : pipes)
+    if (pipe.fd >= 0)
+      ::close(pipe.fd);
+  if (readError)
+    ::kill(pid, SIGTERM);
+  int status = 0;
+  pid_t waited;
+  do {
+    waited = ::waitpid(pid, &status, 0);
+  } while (waited < 0 && errno == EINTR);
+  if (waited < 0 || readError) {
+    if (errorMsg)
+      *errorMsg = "Failed to read or wait for tar process";
     return false;
   }
-
+  if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+    if (errorMsg) {
+      while (!diagnostic.empty() &&
+             (diagnostic.back() == '\n' || diagnostic.back() == '\r'))
+        diagnostic.pop_back();
+      *errorMsg = "tar " + args[1] +
+                  (WIFEXITED(status) ? " exited with status " +
+                                           std::to_string(WEXITSTATUS(status))
+                                     : " terminated abnormally");
+      if (!diagnostic.empty())
+        *errorMsg += ": " + diagnostic;
+    }
+    return false;
+  }
   return true;
 }
 
@@ -366,62 +412,16 @@ static bool listTarEntryInfo(const std::string &tarPath,
 
 static bool execTar(const std::vector<std::string> &args,
                     std::string *errorMsg) {
-  pid_t pid = ::fork();
-  if (pid < 0) {
-    if (errorMsg) {
-      *errorMsg = "fork() failed in extractTar";
-    }
-    apm::logger::error("extractTar: fork() failed");
-    return false;
-  }
-
-  if (pid == 0) {
-    std::vector<char *> argv;
-    argv.reserve(args.size() + 1);
-    for (const auto &arg : args) {
-      argv.push_back(const_cast<char *>(arg.c_str()));
-    }
-    argv.push_back(nullptr);
-    ::execvp(argv[0], argv.data());
-    _exit(127);
-  }
-
-  int status = 0;
-  if (::waitpid(pid, &status, 0) < 0) {
-    if (errorMsg) {
-      *errorMsg = "waitpid() failed in extractTar";
-    }
-    apm::logger::error("extractTar: waitpid() failed");
-    return false;
-  }
-
-  if (WIFEXITED(status)) {
-    int code = WEXITSTATUS(status);
-    if (code == 0) {
-      apm::logger::debug("extractTar: tar exited with code 0");
-      return true;
-    }
-    if (errorMsg) {
-      *errorMsg = "tar exited with non-zero status: " + std::to_string(code);
-    }
-    apm::logger::error("extractTar: tar exited with status " +
-                       std::to_string(code));
-    return false;
-  }
-
-  if (errorMsg) {
-    *errorMsg = "tar process terminated abnormally";
-  }
-  apm::logger::error("extractTar: tar process terminated abnormally");
-  return false;
+  std::string ignored;
+  return runTarForOutput(args, ignored, errorMsg, false);
 }
 
 } // namespace
 
 namespace apm::tar {
 
-// Extract a tarball by forking the system `tar` binary. This keeps the build
-// lightweight across Android and Linux hosts.
+// Decode compression internally, then use system tar for archive validation
+// and extraction on Android and Linux hosts.
 bool extractTar(const std::string &tarPath, const std::string &destDir,
                 std::string *errorMsg) {
   return extractTar(tarPath, destDir, ExtractOptions{}, errorMsg);
@@ -452,8 +452,15 @@ bool extractTar(const std::string &tarPath, const std::string &destDir,
     return false;
   }
 
+  apm::archive::PreparedTar prepared;
+  if (!apm::archive::prepareTar(tarPath, apm::config::getCacheDir(),
+                                options.maxDecompressedBytes, prepared,
+                                errorMsg)) {
+    return false;
+  }
+
   std::vector<std::string> entries;
-  if (!listTarEntries(tarPath, entries, errorMsg)) {
+  if (!listTarEntries(prepared.path, entries, errorMsg)) {
     if (errorMsg && errorMsg->empty()) {
       *errorMsg = "Failed to list tar entries";
     }
@@ -462,7 +469,7 @@ bool extractTar(const std::string &tarPath, const std::string &destDir,
   }
 
   std::vector<TarEntryInfo> entryInfo;
-  if (!listTarEntryInfo(tarPath, entryInfo, errorMsg)) {
+  if (!listTarEntryInfo(prepared.path, entryInfo, errorMsg)) {
     if (errorMsg && errorMsg->empty()) {
       *errorMsg = "Failed to read tar entry metadata";
     }
@@ -484,7 +491,8 @@ bool extractTar(const std::string &tarPath, const std::string &destDir,
 
     // Some tar implementations include symbolic-link suffixes in -tf output:
     //   path/to/link -> ../target
-    // Strip these metadata suffixes so path validation only sees the entry path.
+    // Strip these metadata suffixes so path validation only sees the entry
+    // path.
     if (info.type == 'l' || info.type == 'h') {
       size_t arrow = entry.find(" -> ");
       if (arrow != std::string::npos) {
@@ -529,7 +537,7 @@ bool extractTar(const std::string &tarPath, const std::string &destDir,
 
   apm::logger::debug("extractTar: extracting " + tarPath + " -> " + destDir);
 
-  std::vector<std::string> args = {"tar", "-xf", tarPath, "-C", destDir};
+  std::vector<std::string> args = {"tar", "-xf", prepared.path, "-C", destDir};
   return execTar(args, errorMsg);
 }
 

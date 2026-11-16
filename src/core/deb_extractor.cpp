@@ -29,246 +29,188 @@
 #include "logger.hpp"
 
 #include <algorithm>
-#include <cerrno>
+#include <array>
+#include <charconv>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
-#include <ios>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace apm::deb {
-
-// -------------------------------------------------------------
-// Helpers
-// -------------------------------------------------------------
-
-static bool startsWith(const std::string &s, const std::string &prefix) {
-  if (s.size() < prefix.size())
-    return false;
-  return std::equal(prefix.begin(), prefix.end(), s.begin());
+namespace {
+struct StagingDirectory {
+  std::string path;
+  ~StagingDirectory() {
+    if (!path.empty())
+      apm::fs::removeDirRecursive(path);
+  }
+};
+std::string trimmed(std::string value) {
+  const auto first = value.find_first_not_of(' ');
+  return first == std::string::npos
+             ? std::string{}
+             : value.substr(first, value.find_last_not_of(' ') - first + 1);
 }
-
-static bool endsWith(const std::string &s, const std::string &suffix) {
-  if (s.size() < suffix.size())
+bool compression(const std::string &name, const std::string &base,
+                 DebCompression &out) {
+  if (name == base)
+    out = DebCompression::None;
+  else if (name == base + ".gz")
+    out = DebCompression::Gzip;
+  else if (name == base + ".xz")
+    out = DebCompression::Xz;
+  else if (name == base + ".bz2")
+    out = DebCompression::Bzip2;
+  else if (name == base + ".lzma")
+    out = DebCompression::Lzma;
+  else if (name == base + ".zst")
+    out = DebCompression::Zstd;
+  else
     return false;
-  return std::equal(suffix.rbegin(), suffix.rend(), s.rbegin());
-}
-
-static std::string trimRightSpaces(const std::string &s) {
-  std::string out = s;
-  while (!out.empty() && (out.back() == ' ' || out.back() == '\n')) {
-    out.pop_back();
-  }
-  return out;
-}
-
-static DebCompression detectCompressionFromName(const std::string &name) {
-  if (endsWith(name, ".gz"))
-    return DebCompression::Gzip;
-  if (endsWith(name, ".xz"))
-    return DebCompression::Xz;
-  if (endsWith(name, ".bz2"))
-    return DebCompression::Bzip2;
-  // If no known extension, assume "none" (rare for .deb, but possible).
-  return DebCompression::None;
-}
-
-// -------------------------------------------------------------
-// Core extraction
-// -------------------------------------------------------------
-
-// Parse an ar-formatted .deb, extract control.tar.* and data.tar.*, and track
-// the compression type for each member.
-bool extractDebArchive(const std::string &debPath, const std::string &outputDir,
-                       DebParts &outParts, std::string *errorMsg) {
-  outParts = DebParts{}; // reset
-
-  if (!apm::fs::pathExists(debPath)) {
-    if (errorMsg)
-      *errorMsg = "Deb file does not exist: " + debPath;
-    apm::logger::error("extractDebArchive: file not found: " + debPath);
-    return false;
-  }
-
-  // Make sure output dir exists
-  if (!apm::fs::createDirs(outputDir)) {
-    if (errorMsg)
-      *errorMsg = "Failed to create output directory: " + outputDir;
-    apm::logger::error("extractDebArchive: cannot create output dir: " +
-                       outputDir);
-    return false;
-  }
-
-  std::ifstream in(debPath, std::ios::in | std::ios::binary);
-  if (!in.is_open()) {
-    if (errorMsg)
-      *errorMsg = "Failed to open deb file: " + debPath;
-    apm::logger::error("extractDebArchive: cannot open: " + debPath);
-    return false;
-  }
-
-  // Verify global ar magic: "!<arch>\n"
-  char magic[8] = {};
-  in.read(magic, 8);
-  if (!in || std::memcmp(magic, "!<arch>\n", 8) != 0) {
-    if (errorMsg)
-      *errorMsg = "Invalid .deb: missing ar magic header";
-    apm::logger::error("extractDebArchive: invalid ar magic");
-    return false;
-  }
-
-  // Each file entry has a 60-byte header.
-  const std::size_t AR_HEADER_SIZE = 60;
-  char header[AR_HEADER_SIZE];
-
-  // We'll keep reading headers until EOF.
-  while (true) {
-    // Peek next byte; if EOF, break cleanly.
-    int c = in.peek();
-    if (c == EOF) {
-      break;
-    }
-
-    in.read(header, AR_HEADER_SIZE);
-    if (!in) {
-      // If we can't read a full header but not at EOF,
-      // it's a malformed archive.
-      if (!in.eof()) {
-        if (errorMsg)
-          *errorMsg = "Truncated ar header in .deb";
-        apm::logger::error("extractDebArchive: truncated ar header");
-        return false;
-      }
-      break;
-    }
-
-    // ar header layout:
-    // 0  - 15: file identifier
-    // 16 - 27: file modification timestamp
-    // 28 - 33: owner id
-    // 34 - 39: group id
-    // 40 - 47: file mode
-    // 48 - 57: file size in bytes
-    // 58 - 59: magic (0x60 0x0a) = "`\n"
-
-    // Check the header magic
-    if (header[58] != '`' || header[59] != '\n') {
-      if (errorMsg)
-        *errorMsg = "Invalid ar file member magic in .deb";
-      apm::logger::error("extractDebArchive: invalid member magic");
-      return false;
-    }
-
-    // Extract and clean up file name (16 bytes, space-padded)
-    std::string name(header, header + 16);
-    name = trimRightSpaces(name);
-
-    // Some ar implementations append a '/' to the name
-    if (!name.empty() && name.back() == '/') {
-      name.pop_back();
-    }
-
-    // Extract size (10 bytes, space-padded decimal)
-    std::string sizeStr(header + 48, header + 58);
-    sizeStr = trimRightSpaces(sizeStr);
-    std::size_t memberSize = 0;
-    errno = 0;
-    char *end = nullptr;
-    unsigned long parsed = std::strtoul(sizeStr.c_str(), &end, 10);
-    if (errno != 0 || end == sizeStr.c_str()) {
-      if (errorMsg)
-        *errorMsg = "Invalid member size in .deb";
-      apm::logger::error("extractDebArchive: invalid member size");
-      return false;
-    }
-    memberSize = static_cast<std::size_t>(parsed);
-
-    // Decide if we care about this member.
-    bool isControl = startsWith(name, "control.tar");
-    bool isData = startsWith(name, "data.tar");
-
-    std::string outPath;
-    std::ofstream outFile;
-
-    if (isControl || isData) {
-      outPath = apm::fs::joinPath(outputDir, name);
-
-      // Remember paths + compression types
-      if (isControl) {
-        outParts.controlTarPath = outPath;
-        outParts.controlCompression = detectCompressionFromName(name);
-        apm::logger::debug("Found control member: " + name);
-      } else if (isData) {
-        outParts.dataTarPath = outPath;
-        outParts.dataCompression = detectCompressionFromName(name);
-        apm::logger::debug("Found data member: " + name);
-      }
-
-      outFile.open(outPath, std::ios::out | std::ios::binary | std::ios::trunc);
-      if (!outFile.is_open()) {
-        if (errorMsg)
-          *errorMsg = "Failed to create output file: " + outPath;
-        apm::logger::error("extractDebArchive: cannot create: " + outPath);
-        return false;
-      }
-    }
-
-    // Stream member contents (or just skip if we don't care about it)
-    std::size_t remaining = memberSize;
-    const std::size_t BUF_SIZE = 8192;
-    char buffer[BUF_SIZE];
-
-    while (remaining > 0) {
-      std::size_t toRead = remaining < BUF_SIZE ? remaining : BUF_SIZE;
-      in.read(buffer, static_cast<std::streamsize>(toRead));
-      if (!in) {
-        if (errorMsg)
-          *errorMsg = "Truncated member data in .deb";
-        apm::logger::error("extractDebArchive: truncated member data");
-        return false;
-      }
-
-      if (outFile.is_open()) {
-        outFile.write(buffer, static_cast<std::streamsize>(toRead));
-        if (!outFile) {
-          if (errorMsg)
-            *errorMsg = "Failed to write file: " + outPath;
-          apm::logger::error("extractDebArchive: write failed: " + outPath);
-          return false;
-        }
-      }
-
-      remaining -= toRead;
-    }
-
-    if (outFile.is_open()) {
-      outFile.flush();
-      outFile.close();
-    }
-
-    // ar members are 2-byte aligned: if size is odd, there's a pad byte
-    if (memberSize % 2 != 0) {
-      char pad;
-      in.read(&pad, 1);
-      if (!in) {
-        if (errorMsg)
-          *errorMsg = "Truncated padding byte in .deb";
-        apm::logger::error("extractDebArchive: truncated pad byte");
-        return false;
-      }
-    }
-  }
-
-  // Basic validation: we expect at least control and data tar members
-  if (outParts.controlTarPath.empty()) {
-    apm::logger::warn("extractDebArchive: no control.tar.* member found");
-  }
-  if (outParts.dataTarPath.empty()) {
-    apm::logger::warn("extractDebArchive: no data.tar.* member found");
-  }
-
   return true;
 }
+} // namespace
 
+bool extractDebArchive(const std::string &debPath, const std::string &outputDir,
+                       DebParts &outParts, std::string *errorMsg) {
+  outParts = {};
+  auto fail = [&](const std::string &message) {
+    if (errorMsg)
+      *errorMsg = message;
+    apm::logger::error("extractDebArchive: " + message);
+    return false;
+  };
+  if (!apm::fs::isFile(debPath))
+    return fail("Deb file is not a regular file: " + debPath);
+  std::ifstream input(debPath, std::ios::binary);
+  if (!input)
+    return fail("Cannot open .deb: " + debPath);
+  input.seekg(0, std::ios::end);
+  const auto endPosition = input.tellg();
+  if (endPosition < 8)
+    return fail("Invalid .deb: missing ar magic header");
+  const auto length = static_cast<std::uint64_t>(endPosition);
+  input.seekg(0);
+  std::array<char, 8> magic{};
+  if (!input.read(magic.data(), magic.size()) ||
+      std::memcmp(magic.data(), "!<arch>\n", 8) != 0)
+    return fail("Invalid .deb: missing ar magic header");
+  if (!apm::fs::createDirs(outputDir))
+    return fail("Cannot create .deb output directory: " + outputDir);
+  const auto pattern = apm::fs::joinPath(outputDir, ".deb-XXXXXX");
+  std::vector<char> bytes(pattern.begin(), pattern.end());
+  bytes.push_back('\0');
+  char *created = ::mkdtemp(bytes.data());
+  if (!created)
+    return fail("Cannot create private .deb staging directory");
+  StagingDirectory staging{created};
+  std::uint64_t position = 8;
+  bool versionSeen = false, controlSeen = false, dataSeen = false;
+  std::string controlName, dataName;
+  DebParts parts;
+  while (position < length) {
+    std::array<char, 60> header{};
+    if (length - position < header.size() ||
+        !input.read(header.data(), header.size()))
+      return fail("Truncated ar member header in .deb");
+    position += header.size();
+    if (header[58] != '`' || header[59] != '\n')
+      return fail("Invalid ar member magic in .deb");
+    std::string name = trimmed(std::string(header.data(), 16));
+    if (!name.empty() && name.back() == '/')
+      name.pop_back();
+    const auto sizeText = trimmed(std::string(header.data() + 48, 10));
+    std::uint64_t size = 0;
+    const auto parsed = std::from_chars(
+        sizeText.data(), sizeText.data() + sizeText.size(), size);
+    if (sizeText.empty() || parsed.ec != std::errc{} ||
+        parsed.ptr != sizeText.data() + sizeText.size())
+      return fail("Invalid ar member size in .deb");
+    if (size > length - position || (size & 1) > length - position - size)
+      return fail("Truncated ar member data or padding in .deb");
+    if (!versionSeen) {
+      if (name != "debian-binary" || size > 4096)
+        return fail("Invalid .deb: first member must be debian-binary");
+      std::string version(static_cast<std::size_t>(size), '\0');
+      if (!input.read(version.data(), static_cast<std::streamsize>(size)))
+        return fail("Truncated debian-binary member");
+      const auto newline = version.find('\n');
+      const auto firstLine = version.substr(0, newline);
+      if (newline == std::string::npos || firstLine.size() < 3 ||
+          firstLine.compare(0, 2, "2.") != 0 ||
+          !std::all_of(firstLine.begin() + 2, firstLine.end(),
+                       [](unsigned char c) { return c >= '0' && c <= '9'; }))
+        return fail("Unsupported .deb format version (expected 2.x)");
+      versionSeen = true;
+    } else {
+      if (name == "debian-binary")
+        return fail("Duplicate debian-binary member");
+      DebCompression codec = DebCompression::Unknown;
+      const bool control = name.compare(0, 11, "control.tar") == 0;
+      const bool data = name.compare(0, 8, "data.tar") == 0;
+      if (control || data) {
+        if (!compression(name, control ? "control.tar" : "data.tar", codec))
+          return fail("Unsupported or unsafe .deb tar member: " + name);
+        if ((control && controlSeen) || (data && dataSeen))
+          return fail("Duplicate control/data member in .deb");
+        if (data && !controlSeen)
+          return fail("Invalid .deb: control.tar must precede data.tar");
+        const auto path = apm::fs::joinPath(staging.path, name);
+        std::ofstream output(path, std::ios::binary | std::ios::trunc);
+        if (!output)
+          return fail("Cannot write extracted member: " + name);
+        std::array<char, 65536> buffer{};
+        for (std::uint64_t left = size; left;) {
+          const auto count = static_cast<std::size_t>(
+              std::min<std::uint64_t>(left, buffer.size()));
+          if (!input.read(buffer.data(), static_cast<std::streamsize>(count)))
+            return fail("Truncated .deb member: " + name);
+          output.write(buffer.data(), static_cast<std::streamsize>(count));
+          if (!output)
+            return fail("Cannot write .deb member: " + name);
+          left -= count;
+        }
+        output.close();
+        if (!output)
+          return fail("Cannot finish writing .deb member: " + name);
+        if (control) {
+          controlSeen = true;
+          controlName = name;
+          parts.controlCompression = codec;
+        } else {
+          dataSeen = true;
+          dataName = name;
+          parts.dataCompression = codec;
+        }
+      } else {
+        input.seekg(static_cast<std::streamoff>(size), std::ios::cur);
+        if (!input)
+          return fail("Cannot skip .deb member: " + name);
+      }
+    }
+    position += size;
+    if (size & 1) {
+      char pad;
+      if (!input.get(pad))
+        return fail("Missing ar padding in .deb");
+      ++position;
+    }
+  }
+  if (!versionSeen || !controlSeen || !dataSeen)
+    return fail("Invalid .deb: debian-binary, control.tar and data.tar members "
+                "are required");
+  parts.controlTarPath = apm::fs::joinPath(outputDir, controlName);
+  parts.dataTarPath = apm::fs::joinPath(outputDir, dataName);
+  if (::rename(apm::fs::joinPath(staging.path, controlName).c_str(),
+               parts.controlTarPath.c_str()) != 0 ||
+      ::rename(apm::fs::joinPath(staging.path, dataName).c_str(),
+               parts.dataTarPath.c_str()) != 0)
+    return fail("Cannot publish extracted .deb members");
+  outParts = std::move(parts);
+  return true;
+}
 } // namespace apm::deb

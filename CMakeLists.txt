@@ -22,7 +22,7 @@
 # along with APM. If not, see <https://www.gnu.org/licenses/>.
 #
 
-cmake_minimum_required(VERSION 3.14)
+cmake_minimum_required(VERSION 3.24)
 project(APM)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 17)
@@ -149,6 +149,8 @@ if(NOT ZLIB_FOUND)
 else()
   message(STATUS "ZLIB found: ${ZLIB_VERSION}")
 endif()
+
+include(cmake/ArchiveCompression.cmake)
 
 function(apm_resolve_boringssl_libdir out_var)
   if(ANDROID)
@@ -366,6 +368,7 @@ set(APM_CLIENT_SOURCES
     src/core/deb_extractor.cpp
     src/core/logger.cpp
     src/core/tar_extractor.cpp
+    src/core/archive_decompressor.cpp
     src/core/status_db.cpp
     src/core/manual_package.cpp
     src/core/security.cpp
@@ -386,6 +389,7 @@ target_include_directories(apm PRIVATE
 )
 
 target_link_libraries(apm PRIVATE
+    apm_archive_codecs
     ${OPENSSL_CRYPTO_LIBRARY}
 )
 
@@ -412,6 +416,7 @@ set(APM_DAEMON_SOURCES
     src/core/dependency.cpp
     src/core/logger.cpp
     src/core/tar_extractor.cpp
+    src/core/archive_decompressor.cpp
     src/core/downloader.cpp
     src/core/status_db.cpp
     src/core/manual_package.cpp
@@ -442,6 +447,7 @@ target_include_directories(apmd PRIVATE
 
 
 target_link_libraries(apmd PRIVATE
+    apm_archive_codecs
     CURL::libcurl
     ZLIB::ZLIB
     ${OPENSSL_SSL_LIBRARY}
@@ -481,24 +487,24 @@ target_link_libraries(amsd PRIVATE
 if(APM_BUILD_TESTS)
   enable_testing()
 
-  # Some source distributions also carry the older tar regression suite.
-  if(EXISTS "${CMAKE_SOURCE_DIR}/tests/tar_extractor_tests.cpp")
-    add_executable(apm_tar_extractor_tests
-        tests/tar_extractor_tests.cpp
-        src/core/tar_extractor.cpp
-        src/core/config.cpp
-        src/core/logger.cpp
-        src/util/fs.cpp
-    )
+  add_executable(apm_tar_extractor_tests
+      tests/tar_extractor_tests.cpp
+      src/core/deb_extractor.cpp
+      src/core/tar_extractor.cpp
+      src/core/archive_decompressor.cpp
+      src/core/config.cpp
+      src/core/logger.cpp
+      src/util/fs.cpp
+  )
 
-    target_include_directories(apm_tar_extractor_tests PRIVATE
-        src/core/include
-        src/util/include
-        include
-    )
+  target_include_directories(apm_tar_extractor_tests PRIVATE
+      src/core/include
+      src/util/include
+      include
+  )
 
-    add_test(NAME tar_extractor_tests COMMAND apm_tar_extractor_tests)
-  endif()
+  target_link_libraries(apm_tar_extractor_tests PRIVATE apm_archive_codecs)
+  add_test(NAME tar_extractor_tests COMMAND apm_tar_extractor_tests)
 
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
   add_executable(apm_app_repo_tests

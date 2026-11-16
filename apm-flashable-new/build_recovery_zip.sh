@@ -151,6 +151,9 @@ sync_static_payload() {
 
   mkdir -p "${FLASHABLE_DIR}/system/bin"
   mkdir -p "${SELINUX_DST_DIR}"
+  mkdir -p "${FLASHABLE_DIR}/system/etc/apm"
+  cp "${PROJECT_ROOT}/THIRD_PARTY_NOTICES" "${FLASHABLE_DIR}/system/etc/apm/THIRD_PARTY_NOTICES"
+  chmod 0644 "${FLASHABLE_DIR}/system/etc/apm/THIRD_PARTY_NOTICES"
 
   chmod 0755 "${FLASHABLE_DIR}/system/bin/apm-sh-path" "${FLASHABLE_DIR}/system/bin/apm-bash-path"
 

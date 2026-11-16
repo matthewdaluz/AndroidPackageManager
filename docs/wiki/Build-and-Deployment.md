@@ -70,7 +70,18 @@ Required layout:
 - Host/emulator:
   - `prebuilt/boringssl/build-x86_64/` or `build-x86/`
 
-`CMakeLists.txt` also fetches/builds zlib when a system copy is not available.
+CMake 3.24 or newer is required. The first configure downloads hash-pinned XZ
+(liblzma), Zstandard, and bzip2 sources and builds their static libraries for the
+selected target. `CMakeLists.txt` also fetches/builds zlib when a system copy is
+not available. Offline builds can supply these sources through
+`FETCHCONTENT_SOURCE_DIR_APM_XZ`, `FETCHCONTENT_SOURCE_DIR_APM_ZSTD`, and
+`FETCHCONTENT_SOURCE_DIR_APM_BZIP2`.
+
+Archive extraction requires `tar` on the device, but does not require external
+`ar`, `xz`, `gzip`, `bzip2`, or `zstd` commands. Soong builds link the AOSP
+`liblzma`, `libzstd`, `libbz`, and `libz` modules.
+The archive codec license notices are in `THIRD_PARTY_NOTICES`; the recovery
+packager includes them under `/system/etc/apm/`.
 
 ## Android and Emulator Builds
 
