@@ -59,7 +59,8 @@ enum class RequestType {
   DebugLogging,
   LogClear,
   AppInstall,
-  AppRemove
+  AppRemove,
+  AppList
 };
 
 struct Request {

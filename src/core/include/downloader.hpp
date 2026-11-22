@@ -67,9 +67,10 @@ struct DownloadResult {
 struct DownloadOptions {
   bool httpsOnly = false;
   std::uint64_t maxBytes = 0; // zero keeps the existing unlimited behavior
+  std::string *responseBody = nullptr; // used with an empty destination
 };
 
-// Download a file from URL into dest using libcurl while reporting progress.
+// Download into dest, or into responseBody when dest is empty.
 bool downloadFile(const std::string &url, const std::string &dest,
                   std::string *errorMsg = nullptr,
                   TransferProgressCallback progressCb = {},

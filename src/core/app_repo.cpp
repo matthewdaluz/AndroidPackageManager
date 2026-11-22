@@ -440,13 +440,35 @@ bool parseSourceFile(const std::string &path, repo::RepoSource &out,
   }
 }
 
+namespace {
+std::string releaseApiBase(const repo::RepoSource &source) {
+  return "https://api.github.com/repos/" + source.app.owner + "/" +
+         source.app.repository + "/releases";
+}
+
+bool validTag(const std::string &tag) {
+  return !tag.empty() && tag.size() <= 128 && plainText(tag) &&
+         tag != "." && tag != ".." && tag.find(' ') == std::string::npos;
+}
+
+bool eligibleRelease(const Json &release, const repo::RepoSource &source) {
+  if (release.kind != Json::Kind::Object ||
+      release.get("draft").kind != Json::Kind::Bool ||
+      release.get("prerelease").kind != Json::Kind::Bool)
+    throw std::runtime_error("Invalid release flags in metadata");
+  const auto tag = release.get("tag_name").string();
+  return !release.get("draft").boolean() &&
+         (source.app.includePrereleases || !release.get("prerelease").boolean()) &&
+         !tag.empty() && (source.app.tag.empty() || tag == source.app.tag);
+}
+
+} // namespace
+
 std::string releaseApiUrl(const repo::RepoSource &source) {
-  const auto &app = source.app;
-  std::string base = "https://api.github.com/repos/" + app.owner + "/" +
-                     app.repository + "/releases";
-  if (!app.tag.empty())
-    return base + "/tags/" + encode(app.tag);
-  return base + (app.useTags ? "?per_page=100" : "/latest");
+  const auto base = releaseApiBase(source);
+  if (!source.app.tag.empty())
+    return base + "/tags/" + encode(source.app.tag);
+  return base + (source.app.useTags ? "?per_page=100" : "/latest");
 }
 std::string cachePath(const repo::RepoSource &source,
                       const std::string &listsDir) {
@@ -454,73 +476,39 @@ std::string cachePath(const repo::RepoSource &source,
                                     source.app.configHash + ".json");
 }
 
-bool parseReleaseMetadata(const std::string &data,
-                          const repo::RepoSource &source,
-                          repo::PackageEntry &out, std::string *error) {
-  out = {};
-  try {
-    const auto json = JsonReader(data).read();
-    const Json *release = nullptr;
-    auto eligible = [&](const Json &v) {
-      if (v.kind != Json::Kind::Object ||
-          v.get("draft").kind != Json::Kind::Bool ||
-          v.get("prerelease").kind != Json::Kind::Bool)
-        throw std::runtime_error("Invalid release flags in metadata");
-      return !v.get("draft").boolean() &&
-             (source.app.includePrereleases ||
-              !v.get("prerelease").boolean()) &&
-             !v.get("tag_name").string().empty() &&
-             (source.app.tag.empty() ||
-              v.get("tag_name").string() == source.app.tag);
-    };
-    if (json.kind == Json::Kind::Array) {
-      for (const auto &v : json.array) {
-        if (eligible(v) &&
-            (!release || v.get("published_at").string() >
-                             release->get("published_at").string()))
-          release = &v;
-      }
-    } else if (eligible(json))
-      release = &json;
-    if (!release)
-      throw std::runtime_error(
-          "No eligible published release (check Tag and IncludePrereleases)");
-    out.version = release->get("tag_name").string();
-    if (!plainText(out.version) || out.version.size() > 128)
-      throw std::runtime_error("Invalid release tag");
-    const auto &assets = release->get("assets");
-    if (assets.kind != Json::Kind::Array)
-      throw std::runtime_error("Release has no assets array");
-    const std::string allowedUrl = "https://github.com/" + source.app.owner +
-                                   "/" + source.app.repository +
-                                   "/releases/download/";
-    std::set<std::string> selected;
-    for (const auto &pattern : source.app.patterns) {
-      std::vector<const Json *> matches;
-      for (const auto &asset : assets.array) {
-        const auto name = asset.get("name").string();
-        const auto lowered = lower(name);
-        if (name.empty() || name.size() < 5 ||
-            name.substr(name.size() - 4) != ".apk" ||
-            ::fnmatch(pattern.c_str(), name.c_str(), 0) != 0)
-          continue;
-        if (std::any_of(source.app.avoidKeywords.begin(),
-                        source.app.avoidKeywords.end(), [&](const auto &word) {
-                          return lowered.find(word) != std::string::npos;
-                        }))
-          continue;
-        matches.push_back(&asset);
-      }
-      if (matches.size() != 1)
-        throw std::runtime_error("Release " + out.version +
-                                 ": expected exactly one APK for '" + pattern +
-                                 "', found " + std::to_string(matches.size()));
-      const auto &asset = *matches.front();
+namespace {
+repo::PackageEntry parseRelease(const Json &release,
+                                const repo::RepoSource &source) {
+  repo::PackageEntry out;
+  out.version = release.get("tag_name").string();
+  if (!validTag(out.version))
+    throw std::runtime_error("Invalid release tag");
+  const auto &assets = release.get("assets");
+  if (assets.kind != Json::Kind::Array)
+    throw std::runtime_error("Release has no assets array");
+  const std::string allowedUrl = "https://github.com/" + source.app.owner +
+                                 "/" + source.app.repository +
+                                 "/releases/download/";
+  std::set<std::string> selected;
+  for (const auto &pattern : source.app.patterns) {
+    for (const auto &asset : assets.array) {
+      const auto name = asset.get("name").string();
+      if (name.size() < 5 || name.substr(name.size() - 4) != ".apk" ||
+          ::fnmatch(pattern.c_str(), name.c_str(), 0) != 0 ||
+          selected.count(name))
+        continue;
+      const auto lowered = lower(name);
+      if (std::any_of(source.app.avoidKeywords.begin(),
+                      source.app.avoidKeywords.end(), [&](const auto &word) {
+                        return lowered.find(word) != std::string::npos;
+                      }))
+        continue;
+
       repo::AppAsset item;
-      item.name = asset.get("name").string();
+      item.name = name;
       item.url = asset.get("browser_download_url").string();
       auto digest = lower(asset.get("digest").string());
-      if (!plainText(item.name) ||
+      if (!plainText(item.name) || item.name != trim(item.name) ||
           item.name.find_first_of("/\\") != std::string::npos ||
           item.name.find("..") != std::string::npos || item.name.size() > 255)
         throw std::runtime_error("Unsafe APK asset name");
@@ -542,29 +530,117 @@ bool parseReleaseMetadata(const std::string &data,
           parsed.ptr != size.text.data() + size.text.size() || !item.size ||
           item.size > kApkLimit)
         throw std::runtime_error("Invalid APK asset size");
-      if (selected.insert(item.name).second)
-        out.appAssets.push_back(std::move(item));
+      selected.insert(item.name);
+      out.appAssets.push_back(std::move(item));
     }
-    out.packageName = source.app.id;
-    out.architecture = "all";
-    out.isAppPackage = true;
-    out.repoUri = source.uri;
-    out.repoComponent = "apps";
-    out.rawFields["Description"] = source.app.description.empty()
-                                       ? source.app.name
-                                       : source.app.description;
-    out.rawFields["Name"] = source.app.name;
-    out.rawFields["Type"] = "apprepo";
-    std::string names;
-    for (const auto &a : out.appAssets) {
-      if (!names.empty())
-        names += ", ";
-      names += a.name;
+  }
+  if (out.appAssets.empty())
+    throw std::runtime_error("Release " + out.version + " has no matching APKs");
+
+  out.packageName = source.app.id;
+  out.architecture = "all";
+  out.isAppPackage = true;
+  out.repoUri = source.uri;
+  out.repoComponent = "apps";
+  out.rawFields["Description"] = source.app.description.empty()
+                                     ? source.app.name
+                                     : source.app.description;
+  out.rawFields["Name"] = source.app.name;
+  out.rawFields["Type"] = "apprepo";
+  auto &names = out.rawFields["APKs"];
+  for (const auto &a : out.appAssets) {
+    if (!names.empty())
+      names += ", ";
+    names += a.name;
+  }
+  return out;
+}
+} // namespace
+
+bool parseReleaseMetadata(const std::string &data,
+                          const repo::RepoSource &source,
+                          repo::PackageEntry &out, std::string *error) {
+  out = {};
+  try {
+    const auto json = JsonReader(data).read();
+    const Json *release = nullptr;
+    if (json.kind == Json::Kind::Array) {
+      for (const auto &v : json.array) {
+        if (eligibleRelease(v, source) &&
+            (!release || v.get("published_at").string() >
+                             release->get("published_at").string()))
+          release = &v;
+      }
+    } else if (eligibleRelease(json, source)) {
+      release = &json;
     }
-    out.rawFields["APKs"] = names;
+    if (!release)
+      throw std::runtime_error(
+          "No eligible published release (check Tag and IncludePrereleases)");
+    out = parseRelease(*release, source);
     return true;
   } catch (const std::exception &e) {
-    out = {};
+    return fail(error, source.app.id + ": " + e.what());
+  }
+}
+
+bool fetchRelease(const repo::RepoSource &source, const std::string &tag,
+                  repo::PackageEntry &out,
+                  std::string *error) {
+  if (!validTag(tag))
+    return fail(error, "Invalid release tag");
+  if (!source.app.tag.empty() && tag != source.app.tag)
+    return fail(error, source.app.id + " is pinned to release " + source.app.tag);
+  std::string data, downloadError;
+  if (!net::downloadFile(releaseApiBase(source) + "/tags/" + encode(tag), {},
+                         &downloadError, {}, {true, kMetadataLimit, &data}))
+    return fail(error, "Cannot fetch release " + tag + " for " + source.app.id +
+                           ": " + downloadError);
+  auto requested = source;
+  requested.app.tag = tag;
+  return parseReleaseMetadata(data, requested, out, error);
+}
+
+bool listReleases(const repo::RepoSource &source, std::vector<std::string> &tags,
+                  std::string *error) {
+  tags.clear();
+  if (!source.app.tag.empty()) {
+    repo::PackageEntry release;
+    if (!fetchRelease(source, source.app.tag, release, error))
+      return false;
+    tags.push_back(release.version);
+    return true;
+  }
+
+  std::string data, downloadError;
+  if (!net::downloadFile(releaseApiBase(source) + "?per_page=100", {},
+                         &downloadError, {}, {true, kMetadataLimit, &data}))
+    return fail(error, "Cannot fetch releases for " + source.app.id + ": " +
+                           downloadError);
+  try {
+    const auto json = JsonReader(data).read();
+    if (json.kind != Json::Kind::Array)
+      throw std::runtime_error("Expected a release list");
+    std::vector<std::pair<std::string, std::string>> releases;
+    for (const auto &release : json.array) {
+      if (!eligibleRelease(release, source))
+        continue;
+      try {
+        auto entry = parseRelease(release, source);
+        releases.emplace_back(release.get("published_at").string(),
+                              std::move(entry.version));
+      } catch (const std::runtime_error &) {
+        // Releases without usable APK metadata cannot be installed.
+      }
+    }
+    std::stable_sort(releases.begin(), releases.end(),
+                     [](const auto &a, const auto &b) { return a.first > b.first; });
+    std::set<std::string> seen;
+    for (const auto &release : releases)
+      if (seen.insert(release.second).second)
+        tags.push_back(release.second);
+    return true;
+  } catch (const std::exception &e) {
     return fail(error, source.app.id + ": " + e.what());
   }
 }

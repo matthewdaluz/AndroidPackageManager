@@ -221,6 +221,7 @@ size_t writeCallback(void *ptr, size_t size, size_t nmemb, void *userdata) {
 
 struct LimitedOutput {
   FILE *file;
+  std::string *body;
   std::uint64_t limit;
   std::uint64_t written = 0;
 };
@@ -233,7 +234,16 @@ size_t limitedWriteCallback(void *ptr, size_t size, size_t nmemb,
   const size_t bytes = size * nmemb;
   if (out.limit && bytes > out.limit - out.written)
     return 0;
-  const size_t written = std::fwrite(ptr, 1, bytes, out.file);
+  size_t written = bytes;
+  if (out.body) {
+    try {
+      out.body->append(static_cast<const char *>(ptr), bytes);
+    } catch (...) {
+      return 0;
+    }
+  } else {
+    written = std::fwrite(ptr, 1, bytes, out.file);
+  }
   out.written += written;
   return written;
 }
@@ -341,18 +351,20 @@ namespace apm::net {
 bool downloadFile(const std::string &url, const std::string &dest,
                   std::string *errorMsg, TransferProgressCallback progressCb,
                   DownloadOptions options) {
-  if (url.empty() || dest.empty()) {
+  const bool toFile = !dest.empty();
+  if (url.empty() || toFile == (options.responseBody != nullptr)) {
     if (errorMsg)
-      *errorMsg = "URL or dest is empty";
-    apm::logger::error("downloadFile: URL or dest is empty");
+      *errorMsg = "A URL and exactly one download destination are required";
     return false;
   }
+  if (options.responseBody)
+    options.responseBody->clear();
 
   ensureCurlInitialized();
   ensurePsaInitialized();
 
   FILE *outFile = nullptr;
-  if (!prepareOutputFile(dest, outFile, errorMsg, "downloadFile")) {
+  if (toFile && !prepareOutputFile(dest, outFile, errorMsg, "downloadFile")) {
     return false;
   }
 
@@ -360,7 +372,8 @@ bool downloadFile(const std::string &url, const std::string &dest,
   if (!curl) {
     if (errorMsg)
       *errorMsg = "curl_easy_init() failed";
-    std::fclose(outFile);
+    if (outFile)
+      std::fclose(outFile);
     return false;
   }
 
@@ -373,7 +386,7 @@ bool downloadFile(const std::string &url, const std::string &dest,
   curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
   curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
   curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
-  LimitedOutput output{outFile, options.maxBytes};
+  LimitedOutput output{outFile, options.responseBody, options.maxBytes};
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &limitedWriteCallback);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA, &output);
   curl_easy_setopt(curl, CURLOPT_USERAGENT, "APM/2 apprepo");
@@ -406,7 +419,8 @@ bool downloadFile(const std::string &url, const std::string &dest,
   emitFinalProgress(ctx, success);
 
   curl_easy_cleanup(curl);
-  std::fclose(outFile);
+  if (outFile)
+    std::fclose(outFile);
 
   if (res != CURLE_OK) {
     if (errorMsg)
@@ -414,7 +428,10 @@ bool downloadFile(const std::string &url, const std::string &dest,
           "curl_easy_perform() failed: " + std::string(curl_easy_strerror(res));
     apm::logger::error("downloadFile: curl failed: " +
                        std::string(curl_easy_strerror(res)));
-    std::remove(dest.c_str());
+    if (toFile)
+      std::remove(dest.c_str());
+    else
+      options.responseBody->clear();
     return false;
   }
 

@@ -118,7 +118,7 @@ Daemon-backed commands:
 - `apm module-enable <name>`
 - `apm module-disable <name>`
 - `apm module-remove <name>`
-- `app-install <id> [--install-as-system]`
+- `apm app-install <id> [<release>|--select-release] [--install-as-system]`
 - `app-remove <id>`
 - `app-info <id>`
 - `apm apk-install <apk> [--install-as-system]`
@@ -126,6 +126,7 @@ Daemon-backed commands:
 
 Session-free daemon/local commands:
 
+- `apm app-list <id> [<release>]`
 - `apm list`
 - `apm list-repos`
 - `apm info <pkg>`
@@ -301,15 +302,16 @@ Magisk packaging is deprecated and no longer maintained here.
 `.apprepo` files describe GitHub release APK bundles. For example:
 
 ```sh
-apm add-repo /path/to/MicroG-Example.apprepo
+apm add-repo Repositories/AppRepos/MicroG.apprepo
 apm update
-apm app-info microg
-apm app-install microg
+apm app-list microg
+apm app-install microg --select-release
 # Prompt for /system/app or /system/priv-app and privileged permission choices:
 apm app-install microg --install-as-system
 ```
 
-System app changes are staged through AMS and require a reboot. The example is
-in [examples/MicroG-Example.apprepo](examples/MicroG-Example.apprepo); see
-[App repositories](docs/wiki/App-Repositories.md) for configuration, permissions,
-updates, removal, and MicroG's ROM prerequisites.
+Pass an exact release tag after the repository ID to list or install that version.
+During installation, enter one or more APK numbers separated by commas or
+spaces, or press Enter to select all. System app changes are staged through AMS
+and require a reboot. See [App repositories](docs/wiki/App-Repositories.md) for
+configuration, permissions, updates, removal, and MicroG's ROM prerequisites.

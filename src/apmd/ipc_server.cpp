@@ -27,6 +27,7 @@
 #include "include/ipc_server.hpp"
 #include "ams/module_manager.hpp"
 #include "app_installer.hpp"
+#include "app_repo.hpp"
 #include "config.hpp"
 #include "export_path.hpp"
 #include "factory_reset.hpp"
@@ -547,6 +548,35 @@ static std::vector<std::string> splitLines(const std::string &value) {
     }
   }
   return out;
+}
+
+static bool findAppRepoSource(const std::string &id,
+                              apm::repo::RepoSource &source,
+                              std::string &error) {
+  apm::repo::RepoSourceList sources;
+  if (!apm::repo::loadSourcesList(apm::config::getSourcesList(), sources, &error))
+    return false;
+  auto it = std::find_if(sources.begin(), sources.end(), [&](const auto &item) {
+    return item.format == apm::repo::RepoFormat::App && item.app.id == id;
+  });
+  if (it == sources.end()) {
+    error = "App repository not found: " + id;
+    return false;
+  }
+  source = std::move(*it);
+  return true;
+}
+
+static bool loadAppRelease(const apm::repo::RepoSource &source,
+                           const std::string &tag, apm::repo::PackageEntry &release,
+                           std::string &error) {
+  if (!tag.empty())
+    return apm::apprepo::fetchRelease(source, tag, release, &error);
+  apm::repo::RepoIndex index;
+  if (!apm::apprepo::loadCached(source, apm::config::getListsDir(), index, &error))
+    return false;
+  release = std::move(index.packages.front());
+  return true;
 }
 
 static std::string baseName(const std::string &path) {
@@ -1518,7 +1548,7 @@ void IpcServer::handleClient(int clientFd) {
                        req.id + "' type=" + typeToString(req.type));
   }
 
-  std::lock_guard<std::mutex> dispatchLock(m_dispatchMutex);
+  std::unique_lock<std::mutex> dispatchLock(m_dispatchMutex);
   Response resp;
   resp.id = req.id;
 
@@ -1526,7 +1556,7 @@ void IpcServer::handleClient(int clientFd) {
     return !(t == RequestType::Ping || t == RequestType::Authenticate ||
              t == RequestType::ForgotPassword || t == RequestType::List ||
              t == RequestType::Info || t == RequestType::Search ||
-             t == RequestType::ListRepos);
+             t == RequestType::ListRepos || t == RequestType::AppList);
   };
 
   if (requiresAuth(req.type)) {
@@ -1789,26 +1819,76 @@ void IpcServer::handleClient(int clientFd) {
     resp.success = apm::apps::remove(req.packageName, resp.message);
     break;
   }
+  case RequestType::AppList:
   case RequestType::AppInstall: {
-    std::shared_ptr<const CachedRepoData> data;
-    std::string err;
-    if (!loadCachedRepoIndices(data, &err)) {
-      resp.success = false;
-      resp.message = err;
-      break;
-    }
-    auto candidate = data->appPackageByName.find(req.packageName);
-    if (candidate == data->appPackageByName.end()) {
-      resp.success = false;
-      resp.message = "App bundle not found: " + req.packageName +
-                     ". Add its .apprepo file and run 'apm update'.";
-      break;
-    }
-    apm::apps::InstallOptions options;
     auto field = [&](const std::string &key) {
       auto it = req.rawFields.find(key);
       return it == req.rawFields.end() ? std::string{} : it->second;
     };
+    apm::repo::RepoSource source;
+    if (!findAppRepoSource(req.packageName, source, resp.message))
+      break;
+    if (req.type == RequestType::AppList)
+      dispatchLock.unlock();
+    if (req.type == RequestType::AppList && field("release_history") == "1") {
+      std::vector<std::string> tags;
+      resp.success = apm::apprepo::listReleases(source, tags, &resp.message);
+      if (resp.success)
+        resp.rawFields["releases"] = joinStrings(tags, "\n");
+      break;
+    }
+    const auto tag = field("release");
+    if (req.rawFields.count("release") && tag.empty()) {
+      resp.message = "Invalid release tag";
+      break;
+    }
+    apm::repo::PackageEntry release;
+    if (!loadAppRelease(source, tag, release, resp.message))
+      break;
+
+    if (req.type == RequestType::AppList) {
+      std::vector<std::string> names;
+      std::ostringstream out;
+      out << "APK assets for " << release.packageName << " " << release.version
+          << ":\n";
+      for (const auto &asset : release.appAssets) {
+        names.push_back(asset.name);
+        out << "  " << names.size() << ". " << asset.name << " (" << asset.size
+            << " bytes)\n";
+      }
+      resp.success = true;
+      resp.message = out.str();
+      resp.rawFields["apks"] = joinStrings(names, "\n");
+      resp.rawFields["release"] = release.version;
+      break;
+    }
+
+    const auto expectedRelease = field("expected_release");
+    if (!expectedRelease.empty() && expectedRelease != release.version) {
+      resp.message = "The cached release changed. Run app-install again.";
+      break;
+    }
+    if (req.rawFields.count("apks")) {
+      const auto names = splitLines(field("apks"));
+      std::unordered_set<std::string> chosen(names.begin(), names.end());
+      if (chosen.empty() || chosen.size() != names.size()) {
+        resp.message = "Select one or more distinct APKs";
+        break;
+      }
+      auto &assets = release.appAssets;
+      assets.erase(std::remove_if(assets.begin(), assets.end(),
+                                  [&](const auto &asset) {
+                                    return !chosen.count(asset.name);
+                                  }),
+                   assets.end());
+      if (assets.size() != chosen.size()) {
+        resp.message =
+            "A selected APK is unavailable in release " + release.version;
+        break;
+      }
+    }
+
+    apm::apps::InstallOptions options;
     if (!field("simulate").empty() &&
         !parseBoolValue(field("simulate"), options.simulate)) {
       resp.success = false;
@@ -1842,7 +1922,7 @@ void IpcServer::handleClient(int clientFd) {
       sendResponseMessage(clientFd, event);
     };
     resp.success =
-        apm::apps::install(*candidate->second, options, result, progress);
+        apm::apps::install(release, options, result, progress);
     resp.message = result.message;
     resp.rawFields["apprepo"] = "1";
     resp.rawFields["plan"] = result.plan;

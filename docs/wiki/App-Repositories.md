@@ -1,13 +1,13 @@
 # App repositories
 
 An `.apprepo` file describes an APK bundle published as GitHub release assets.
-The bundle's `ID` is used by `apm app-install`, `apm app-info`, and
-`apm app-remove`. Debian and Termux packages continue to use `apm install`.
+The bundle's `ID` is used by `apm app-list`, `apm app-install`,
+`apm app-info`, and `apm app-remove`. Debian and Termux packages continue to use `apm install`.
 App and Debian package IDs have separate installed-state namespaces.
 
 ## MicroG example
 
-The complete example is in [`examples/MicroG-Example.apprepo`](../../examples/MicroG-Example.apprepo):
+The complete example is in [`Repositories/AppRepos/MicroG.apprepo`](../../Repositories/AppRepos/MicroG.apprepo):
 
 ```ini
 ID="microg"
@@ -20,17 +20,29 @@ UseTags=true
 ```
 
 ```sh
-apm add-repo /path/to/MicroG-Example.apprepo
+apm add-repo Repositories/AppRepos/MicroG.apprepo
 apm update
 apm search microg
 apm app-info microg
-apm app-install microg
+apm app-list microg
+apm app-install microg --select-release
 ```
 
-`app-install` displays the selected release, asset filenames, byte sizes, and
-system destination, then asks for confirmation. Its default destination is
-`/system/app`. Every selected APK must come from the same release. For this
-example, the `-hw` variants and detached signature files are excluded.
+`apm app-list <id> <release>` lists the matching APK filenames and byte sizes
+for an exact GitHub release tag. Omit the tag to see a menu drawn from up to
+100 recent releases. Enter a menu number or type an exact tag, including a tag
+outside the menu. A release pinned with `Tag` is the only version available for
+that repository. Explicit tag lookups and the picker fetch metadata from GitHub
+and work as soon as the repository is added.
+
+`apm app-install <id> <release>` installs from a specific tag. Use
+`--select-release` in place of the tag to open the same release picker. An
+invocation with just the ID uses the cached release from `apm update`. If
+there are multiple APKs, enter their numbers separated by commas or spaces
+(such as `1,3`), or press Enter to select all. Review the selected release,
+APKs, and destination before confirming. The default destination is
+`/system/app`. For the MicroG example, the `-hw` variants and detached
+signature files are excluded.
 
 Installing the APKs provides the system app payload. MicroG functionality also
 depends on the ROM's signature-spoofing support, permissions, and compatibility
@@ -84,9 +96,10 @@ Unknown keys, duplicate keys, malformed booleans, and duplicate app IDs are erro
 | `Tag` | Optional exact release tag to pin; takes precedence over release discovery. |
 | `IncludePrereleases` | `false` by default. Set `true` to allow prereleases with `UseTags=true` or an explicit `Tag`. Draft releases are always excluded. |
 
-Each pattern must match exactly one APK after filtering. Ambiguous matches or a
-missing component fail the update; APM does not silently pick an older complete
-release. Overlapping patterns selecting the same asset are deduplicated.
+An APK is offered if it matches any configured pattern and passes the keyword
+filter. Overlapping patterns list the same asset once. A release needs at least
+one matching APK. If the default release has no matching APKs, the update fails
+and the previously cached release remains available.
 
 GitHub must provide a SHA256 digest and a positive size for every selected asset.
 APM verifies both against the downloaded file before publishing any module
@@ -117,8 +130,11 @@ without the flag selects the default `/system/app` destination. An unchanged
 release and identical options produce an already-staged result.
 `apm upgrade` remains a Debian/Termux operation.
 
-All APKs are downloaded, checked, and parsed before replacing the bundle's
-module. Failed downloads or validation leave the previous module intact.
+All selected APKs are downloaded, checked, and parsed before replacing the
+bundle's module. A new selection replaces the staged set for that repository,
+so previously staged APKs omitted from the selection are removed on reboot.
+Select at most one APK per Android package when a release offers variants.
+Failed downloads or validation leave the previous module intact.
 Module replacement and installed-state updates roll back on write errors.
 The confirmed plan is checked again before installation so a changed release or
 options cannot be applied under an earlier confirmation. Existing unrelated
@@ -129,7 +145,7 @@ Android package ID.
 
 ```sh
 apm app-remove microg
-apm remove-repo MicroG-Example.apprepo
+apm remove-repo MicroG.apprepo
 ```
 
 `app-remove` removes the staged AMS module and app bundle record. Reboot to apply

@@ -31,8 +31,8 @@
 
 ### App repository bundles
 
-- `apm app-install <id>`: stage all APKs in an app repository under `/system/app`
-- `apm app-install <id> --install-as-system`: prompt for system destination and privileged permissions
+- `apm app-list <id> [<release>]` lists APKs and sizes for a release. Omit the tag to open the release picker.
+- `apm app-install <id> [<release>|--select-release] [--install-as-system]` prompts for one or more APKs to stage. It uses the cached default release when neither a tag nor the picker flag is supplied. The system flag opens the destination and permissions prompts.
 - `apm app-info <id>`: inspect a cached app bundle
 - `apm app-remove <id>`: remove the staged bundle
 
@@ -94,6 +94,7 @@ These do not:
 - `list-repos`
 - `info`
 - `app-info`
+- `app-list`
 - `search`
 - `log` follow/export
 - `version`

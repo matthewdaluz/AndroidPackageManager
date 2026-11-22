@@ -43,6 +43,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cerrno>
+#include <charconv>
 #include <chrono>
 #include <cstdio>
 #include <ctime>
@@ -1502,9 +1503,9 @@ void printUsage() {
       << "  module-disable <name>       Disable an AMS module\n"
       << "  module-remove <name>        Remove an AMS module\n"
       << "\n"
-      << "  app-install <id> [--install-as-system]\n"
-      << "                              Stage an app repo bundle; flag prompts "
-         "for destination/permissions\n"
+      << "  app-list <id> [<release>]   List release APKs (omit tag to choose)\n"
+      << "  app-install <id> [<release>|--select-release] [--install-as-system]\n"
+      << "                              Choose APKs to stage from an app repo\n"
       << "  app-remove <id>             Remove a staged app repo bundle\n"
       << "  app-info <id>               Inspect an app repo bundle\n"
       << "  apk-install <apk> [--install-as-system]\n"
@@ -1842,9 +1843,136 @@ int cmdRemoveRepo(const std::string &sessionToken, const std::string &name) {
   return 0;
 }
 
+static bool requestAppList(const std::string &id, const std::string &release,
+                           bool history, apm::ipc::Response &response) {
+  apm::ipc::Request request;
+  request.type = apm::ipc::RequestType::AppList;
+  request.packageName = id;
+  if (history)
+    request.rawFields["release_history"] = "1";
+  if (!release.empty())
+    request.rawFields["release"] = release;
+  std::string error;
+  if (!apm::ipc::sendRequestAuto(request, response, &error)) {
+    std::cerr << "apm: " << error << "\n";
+    return false;
+  }
+  if (!response.success) {
+    std::cerr << "apm: " << response.message << "\n";
+    return false;
+  }
+  return true;
+}
+
+static std::vector<std::string> appListEntries(const apm::ipc::Response &response,
+                                                const std::string &field) {
+  const auto values = response.rawFields.find(field);
+  if (values == response.rawFields.end())
+    return {};
+  std::vector<std::string> entries;
+  std::istringstream in(values->second);
+  std::string line;
+  while (std::getline(in, line))
+    entries.push_back(line);
+  return entries;
+}
+
+static std::size_t selectionNumber(const std::string &input, std::size_t max) {
+  std::size_t number = 0;
+  const auto *end = input.data() + input.size();
+  const auto parsed = std::from_chars(input.data(), end, number);
+  if (parsed.ec != std::errc{} || parsed.ptr != end || number > max)
+    return 0;
+  return number;
+}
+
+static bool chooseAppRelease(const std::string &id, std::string &release) {
+  apm::ipc::Response response;
+  if (!requestAppList(id, {}, true, response))
+    return false;
+  const auto tags = appListEntries(response, "releases");
+  if (tags.empty())
+    std::cout << "No recent releases with matching APKs.\n";
+  else
+    std::cout << "Releases for " << id << ":\n";
+  for (std::size_t i = 0; i < tags.size(); ++i)
+    std::cout << "  " << i + 1 << ". " << tags[i] << "\n";
+  std::cout << "Enter a release number or exact tag: " << std::flush;
+  if (!std::getline(std::cin, release) || release.empty()) {
+    std::cerr << "Release selection cancelled.\n";
+    return false;
+  }
+  if (std::find(tags.begin(), tags.end(), release) == tags.end()) {
+    const auto number = selectionNumber(release, tags.size());
+    if (number)
+      release = tags[number - 1];
+  }
+  return true;
+}
+
+static int cmdAppList(const std::string &id, std::string release) {
+  if (release.empty() && !chooseAppRelease(id, release))
+    return 1;
+  apm::ipc::Response response;
+  if (!requestAppList(id, release, false, response))
+    return 1;
+  std::cout << response.message << "\n";
+  return 0;
+}
+
+static bool chooseAppAssets(const std::string &id, const std::string &release,
+                            apm::ipc::Request &plan) {
+  apm::ipc::Response response;
+  if (!requestAppList(id, release, false, response))
+    return false;
+  const auto names = appListEntries(response, "apks");
+  if (names.empty()) {
+    std::cerr << "No APKs available to install.\n";
+    return false;
+  }
+  std::vector<bool> selected(names.size(), true);
+  if (names.size() > 1) {
+    std::cout << response.message
+              << "\nChoose APK numbers (comma or space separated, Enter for all): "
+              << std::flush;
+    std::string choice;
+    if (!std::getline(std::cin, choice)) {
+      std::cerr << "APK selection cancelled.\n";
+      return false;
+    }
+    if (!choice.empty() && choice != "all") {
+      std::fill(selected.begin(), selected.end(), false);
+      const auto tokens = splitTokens(choice);
+      if (tokens.empty()) {
+        std::cerr << "Select at least one APK.\n";
+        return false;
+      }
+      for (const auto &token : tokens) {
+        const auto number = selectionNumber(token, names.size());
+        if (!number) {
+          std::cerr << "Invalid APK number: " << token << "\n";
+          return false;
+        }
+        selected[number - 1] = true;
+      }
+    }
+  }
+  plan.rawFields["expected_release"] = response.rawFields["release"];
+  auto &chosen = plan.rawFields["apks"];
+  for (std::size_t i = 0; i < names.size(); ++i) {
+    if (!selected[i])
+      continue;
+    if (!chosen.empty())
+      chosen += '\n';
+    chosen += names[i];
+  }
+  return true;
+}
+
 // Ask the daemon to install a package along with its dependencies.
 int cmdInstall(const std::string &sessionToken, const std::string &pkg,
-               bool appRepo = false, bool systemOptions = false) {
+               bool appRepo = false, bool systemOptions = false,
+               const std::string &release = {}) {
   auto parsePackageList = [](const apm::ipc::Response &resp,
                              const std::string &field) {
     std::vector<std::string> pkgs;
@@ -1866,6 +1994,10 @@ int cmdInstall(const std::string &sessionToken, const std::string &pkg,
   attachSession(planReq, sessionToken);
   planReq.rawFields["simulate"] = "1";
   if (appRepo) {
+    if (!chooseAppAssets(pkg, release, planReq))
+      return 1;
+    if (!release.empty())
+      planReq.rawFields["release"] = release;
     planReq.rawFields["destination"] = "app";
     if (systemOptions) {
       std::cout
@@ -2987,22 +3119,42 @@ int main(int argc, char **argv) {
     }
     return cmdInfoLocal(argv[i], true);
   }
+  if (cmd == "app-list") {
+    if (i >= argc || i + 2 < argc ||
+        (i + 1 < argc && (!*argv[i + 1] ||
+                           std::string(argv[i + 1]).rfind("--", 0) == 0))) {
+      std::cerr << "Usage: apm app-list <id> [<release>]\n";
+      return 1;
+    }
+    return cmdAppList(argv[i], i + 1 < argc ? argv[i + 1] : "");
+  }
   if (cmd == "app-install") {
-    if (i >= argc) {
-      std::cerr << "Usage: apm app-install <id> [--install-as-system]\n";
+    const auto usage = [] {
+      std::cerr << "Usage: apm app-install <id> [<release>|--select-release] "
+                   "[--install-as-system]\n";
       return 1;
-    }
+    };
+    if (i >= argc)
+      return usage();
     const std::string id = argv[i++];
-    bool options = false;
-    if (i < argc && std::string(argv[i]) == "--install-as-system") {
-      options = true;
-      ++i;
+    std::string release;
+    bool selectRelease = false;
+    bool systemOptions = false;
+    while (i < argc) {
+      const std::string arg = argv[i++];
+      if (arg == "--install-as-system" && !systemOptions)
+        systemOptions = true;
+      else if (arg == "--select-release" && !selectRelease && release.empty())
+        selectRelease = true;
+      else if (!arg.empty() && arg.rfind("--", 0) != 0 && release.empty() &&
+               !selectRelease)
+        release = arg;
+      else
+        return usage();
     }
-    if (i != argc) {
-      std::cerr << "Usage: apm app-install <id> [--install-as-system]\n";
+    if (selectRelease && !chooseAppRelease(id, release))
       return 1;
-    }
-    return cmdInstall(sessionToken, id, true, options);
+    return cmdInstall(sessionToken, id, true, systemOptions, release);
   }
   if (cmd == "app-remove") {
     if (i + 1 != argc) {

@@ -5,6 +5,7 @@
 
 #include "repo_index.hpp"
 #include <string>
+#include <vector>
 
 namespace apm::apprepo {
 
@@ -21,6 +22,11 @@ bool parseReleaseMetadata(const std::string &json,
                           const repo::RepoSource &source,
                           repo::PackageEntry &out,
                           std::string *errorMsg = nullptr);
+bool fetchRelease(const repo::RepoSource &source, const std::string &tag,
+                  repo::PackageEntry &out,
+                  std::string *errorMsg = nullptr);
+bool listReleases(const repo::RepoSource &source, std::vector<std::string> &tags,
+                  std::string *errorMsg = nullptr);
 bool update(const repo::RepoSource &source, const std::string &listsDir,
             std::string *errorMsg = nullptr,
             repo::RepoUpdateProgressCallback progressCb = {});

@@ -220,6 +220,8 @@ RequestType parseType(const std::string &sRaw) {
     return RequestType::Autoremove;
   if (s == "UPGRADE")
     return RequestType::Upgrade;
+  if (s == "APP_LIST")
+    return RequestType::AppList;
   if (s == "APP_INSTALL")
     return RequestType::AppInstall;
   if (s == "APP_REMOVE")
@@ -281,6 +283,8 @@ std::string typeToString(RequestType t) {
     return "AUTOREMOVE";
   case RequestType::Upgrade:
     return "UPGRADE";
+  case RequestType::AppList:
+    return "APP_LIST";
   case RequestType::AppInstall:
     return "APP_INSTALL";
   case RequestType::AppRemove:
@@ -361,7 +365,7 @@ bool parseRequest(const std::string &raw, Request &out, std::string *errorMsg) {
   // Commands that require packageName
   // Install/Remove use packageName
   if (out.type == RequestType::Install || out.type == RequestType::Remove ||
-      out.type == RequestType::AppInstall ||
+      out.type == RequestType::AppList || out.type == RequestType::AppInstall ||
       out.type == RequestType::AppRemove ||
       out.type == RequestType::ApkUninstall || out.type == RequestType::Info) {
 
