@@ -299,7 +299,9 @@ Magisk packaging is deprecated and no longer maintained here.
 
 ### APK bundles from app repositories
 
-`.apprepo` files describe GitHub release APK bundles. For example:
+`.apprepo` files describe APK bundles from GitHub and GitLab.com releases.
+Use the MicroG example for GitHub or [FDroid.apprepo](Repositories/AppRepos/FDroid.apprepo)
+for GitLab.com.
 
 ```sh
 apm add-repo Repositories/AppRepos/MicroG.apprepo

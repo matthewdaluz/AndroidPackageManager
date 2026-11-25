@@ -1,6 +1,6 @@
 # App repositories
 
-An `.apprepo` file describes an APK bundle published as GitHub release assets.
+An `.apprepo` file describes an APK bundle published through GitHub or GitLab.com releases.
 The bundle's `ID` is used by `apm app-list`, `apm app-install`,
 `apm app-info`, and `apm app-remove`. Debian and Termux packages continue to use `apm install`.
 App and Debian package IDs have separate installed-state namespaces.
@@ -29,10 +29,10 @@ apm app-install microg --select-release
 ```
 
 `apm app-list <id> <release>` lists the matching APK filenames and byte sizes
-for an exact GitHub release tag. Omit the tag to see a menu drawn from up to
+for an exact release tag. Omit the tag to see a menu drawn from up to
 100 recent releases. Enter a menu number or type an exact tag, including a tag
 outside the menu. A release pinned with `Tag` is the only version available for
-that repository. Explicit tag lookups and the picker fetch metadata from GitHub
+that repository. Explicit tag lookups and the picker fetch metadata from the provider
 and work as soon as the repository is added.
 
 `apm app-install <id> <release>` installs from a specific tag. Use
@@ -49,6 +49,26 @@ depends on the ROM's signature-spoofing support, permissions, and compatibility
 with existing Google packages. APM does not patch the framework or replace
 existing Google system apps. Follow the project's [installation instructions](https://github.com/microg/GmsCore/wiki/Installation)
 and check MicroG's self-check after reboot.
+
+## F-Droid example
+
+[`Repositories/AppRepos/FDroid.apprepo`](../../Repositories/AppRepos/FDroid.apprepo)
+uses the [F-Droid client releases](https://gitlab.com/fdroid/fdroidclient/-/releases).
+
+```sh
+apm add-repo Repositories/AppRepos/FDroid.apprepo
+apm update
+apm app-list fdroid
+apm app-install fdroid --select-release
+```
+
+GitLab.com projects must publish matching APKs as release links to the same
+project's public Generic Package Registry. This includes project package-file
+download links, which require the package version to match the release tag, and
+Generic Package Registry API download URLs with the URL-encoded project path
+and their own package version.
+APM looks up the file's size and SHA256 when updating or selecting a specific
+release. The picker uses the release links to populate the menu.
 
 ## Destination and permissions prompt
 
@@ -89,24 +109,23 @@ Unknown keys, duplicate keys, malformed booleans, and duplicate app IDs are erro
 | `ID` | Required bundle ID, 1–64 characters: lowercase letters, numbers, dots and hyphens; starts with a letter or number; no `..`. |
 | `Name` | Required display name. |
 | `Description` | Optional search/description text. |
-| `URL` | Required `https://github.com/OWNER/REPO/releases/` URL. Other providers are not supported yet. |
+| `URL` | Required `https://github.com/OWNER/REPO/releases` or `https://gitlab.com/NAMESPACE/PROJECT/-/releases` URL. GitLab.com supports nested namespaces. A trailing slash is optional. |
 | `APKs` | Required comma-separated APK filename patterns. `*` and `?` wildcards are supported; paths are forbidden. |
 | `AvoidKeywords` | Optional comma-separated, case-insensitive substrings to exclude from APK filenames. |
-| `UseTags` | `true` by default: inspect up to 100 published releases and choose the most recently published eligible release by tag. `false`: use GitHub's latest stable release endpoint. Git tags without release assets are not installable. |
+| `UseTags` | `true` by default: inspect up to 100 releases and choose the most recently published eligible release by tag. `false`: use the provider's latest release endpoint. Git tags without release assets are not installable. |
 | `Tag` | Optional exact release tag to pin; takes precedence over release discovery. |
-| `IncludePrereleases` | `false` by default. Set `true` to allow prereleases with `UseTags=true` or an explicit `Tag`. Draft releases are always excluded. |
+| `IncludePrereleases` | GitHub only. Defaults to `false`. Set `true` to allow prereleases with `UseTags=true` or an explicit `Tag`. GitHub drafts and upcoming GitLab releases are excluded. GitLab's API treats published prerelease tags like other published releases. |
 
 An APK is offered if it matches any configured pattern and passes the keyword
 filter. Overlapping patterns list the same asset once. A release needs at least
 one matching APK. If the default release has no matching APKs, the update fails
 and the previously cached release remains available.
 
-GitHub must provide a SHA256 digest and a positive size for every selected asset.
+The provider must supply a SHA256 digest and a positive size for every selected asset.
 APM verifies both against the downloaded file before publishing any module
-changes. These digests come from the configured GitHub repository over HTTPS;
-they are not independent publisher signature verification. HTTPS is enforced
-through redirects. Metadata is limited to 16 MiB and each APK to 1 GiB.
-Unauthenticated GitHub API rate limits apply; retry a failed update later.
+changes. APM obtains these digests from the configured project over HTTPS,
+including through redirects. Metadata is limited to 16 MiB and each APK to 1 GiB.
+Providers apply their unauthenticated API rate limits.
 
 ## Installation and updates
 

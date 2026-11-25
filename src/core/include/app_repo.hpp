@@ -16,8 +16,7 @@ std::string releaseApiUrl(const repo::RepoSource &source);
 std::string cachePath(const repo::RepoSource &source,
                       const std::string &listsDir);
 
-// Also used for cached metadata: all asset names, URLs and digests are
-// validated.
+// Validate cached asset names, URLs and digests without accessing the network.
 bool parseReleaseMetadata(const std::string &json,
                           const repo::RepoSource &source,
                           repo::PackageEntry &out,

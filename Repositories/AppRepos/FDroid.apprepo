@@ -1,0 +1,5 @@
+ID="fdroid"
+Name="F-Droid"
+Description="F-Droid client from the official GitLab project."
+URL=https://gitlab.com/fdroid/fdroidclient/-/releases
+APKs="org.fdroid.fdroid_*.apk"

@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <fnmatch.h>
+#include <iomanip>
 #include <map>
 #include <set>
 #include <sstream>
@@ -27,6 +28,8 @@ namespace apm::apprepo {
 namespace {
 constexpr std::uint64_t kMetadataLimit = 16 * 1024 * 1024;
 constexpr std::uint64_t kApkLimit = 1024ULL * 1024 * 1024;
+constexpr char kGitHub[] = "https://github.com/";
+constexpr char kGitLab[] = "https://gitlab.com/";
 
 bool fail(std::string *error, const std::string &message) {
   if (error)
@@ -84,8 +87,8 @@ std::string encode(const std::string &value) {
   return out;
 }
 
-// A bounded JSON reader for GitHub metadata. Numbers retain their text so asset
-// sizes are never rounded through a floating-point representation.
+// A bounded JSON reader for release metadata. Numbers retain their text so
+// asset sizes are never rounded through a floating-point representation.
 struct Json {
   enum class Kind {
     Null,
@@ -333,6 +336,45 @@ bool readMetadataFile(const std::string &path, std::string &data,
   return fs::readFile(path, data) ||
          fail(error, "Cannot read app metadata: " + path);
 }
+
+bool safePathPart(const std::string &part) {
+  return !part.empty() && part != "." && part != ".." &&
+         std::all_of(part.begin(), part.end(), [](unsigned char c) {
+           return std::isalnum(c) || c == '-' || c == '_' || c == '.';
+         });
+}
+
+void parseReleaseUrl(const std::string &url, repo::AppRepoSource &app) {
+  const bool gitLab = url.rfind(kGitLab, 0) == 0;
+  if (!gitLab && url.rfind(kGitHub, 0) != 0)
+    throw std::runtime_error(
+        "URL must be an HTTPS GitHub or GitLab.com releases URL");
+  const auto prefixSize = gitLab ? sizeof(kGitLab) - 1 : sizeof(kGitHub) - 1;
+  const std::string suffix = gitLab ? "/-/releases" : "/releases";
+  if (url.size() <= prefixSize + suffix.size() ||
+      url.compare(url.size() - suffix.size(), suffix.size(), suffix) != 0)
+    throw std::runtime_error("Expected a project releases URL ending in " +
+                             suffix);
+  const auto path =
+      url.substr(prefixSize, url.size() - prefixSize - suffix.size());
+  const auto slash = path.rfind('/');
+  if (slash == std::string::npos || (!gitLab && path.find('/') != slash))
+    throw std::runtime_error(
+        "Releases URL must include a namespace and project");
+  for (std::size_t start = 0;;) {
+    const auto end = path.find('/', start);
+    const auto part = path.substr(start, end - start);
+    if (!safePathPart(part) || (gitLab && part == "-"))
+      throw std::runtime_error("Invalid project path in releases URL");
+    if (end == std::string::npos)
+      break;
+    start = end + 1;
+  }
+  app.provider =
+      gitLab ? repo::AppRepoProvider::GitLab : repo::AppRepoProvider::GitHub;
+  app.owner = path.substr(0, slash);
+  app.repository = path.substr(slash + 1);
+}
 } // namespace
 
 bool parseSourceFile(const std::string &path, repo::RepoSource &out,
@@ -381,26 +423,7 @@ bool parseSourceFile(const std::string &path, repo::RepoSource &out,
     std::string url = fields["url"];
     while (!url.empty() && url.back() == '/')
       url.pop_back();
-    const std::string prefix = "https://github.com/";
-    if (url.compare(0, prefix.size(), prefix) != 0)
-      throw std::runtime_error("URL must be an HTTPS GitHub releases URL");
-    const auto parts = url.substr(prefix.size());
-    auto slash = parts.find('/');
-    auto releases =
-        parts.find("/releases", slash == std::string::npos ? 0 : slash + 1);
-    if (slash == std::string::npos || releases == std::string::npos ||
-        parts.substr(releases) != "/releases")
-      throw std::runtime_error(
-          "URL must have the form https://github.com/OWNER/REPO/releases/");
-    app.owner = parts.substr(0, slash);
-    app.repository = parts.substr(slash + 1, releases - slash - 1);
-    for (const auto *v : {&app.owner, &app.repository}) {
-      if (v->empty() || *v == "." || *v == ".." ||
-          !std::all_of(v->begin(), v->end(), [](unsigned char c) {
-            return std::isalnum(c) || c == '-' || c == '_' || c == '.';
-          }))
-        throw std::runtime_error("Invalid GitHub owner or repository");
-    }
+    parseReleaseUrl(url, app);
     app.patterns = split(fields["apks"]);
     if (app.patterns.empty() || app.patterns.size() > 32)
       throw std::runtime_error("APKs must list 1-32 filename patterns");
@@ -424,7 +447,8 @@ bool parseSourceFile(const std::string &path, repo::RepoSource &out,
     app.useTags = boolean("usetags", true);
     app.includePrereleases = boolean("includeprereleases", false);
     app.tag = fields["tag"];
-    if (app.includePrereleases && !app.useTags && app.tag.empty())
+    if (app.provider == repo::AppRepoProvider::GitHub &&
+        app.includePrereleases && !app.useTags && app.tag.empty())
       throw std::runtime_error(
           "IncludePrereleases requires UseTags=true or an explicit Tag");
     crypto::SHA256 hash;
@@ -441,9 +465,26 @@ bool parseSourceFile(const std::string &path, repo::RepoSource &out,
 }
 
 namespace {
+bool isGitLab(const repo::RepoSource &source) {
+  return source.app.provider == repo::AppRepoProvider::GitLab;
+}
+
+std::string gitLabProjectApi(const repo::RepoSource &source) {
+  return "https://gitlab.com/api/v4/projects/" +
+         encode(source.app.owner + "/" + source.app.repository);
+}
+
 std::string releaseApiBase(const repo::RepoSource &source) {
+  if (isGitLab(source))
+    return gitLabProjectApi(source) + "/releases";
   return "https://api.github.com/repos/" + source.app.owner + "/" +
          source.app.repository + "/releases";
+}
+
+std::string taggedReleaseApi(const repo::RepoSource &source,
+                             const std::string &tag) {
+  return releaseApiBase(source) + (isGitLab(source) ? "/" : "/tags/") +
+         encode(tag);
 }
 
 bool validTag(const std::string &tag) {
@@ -452,23 +493,39 @@ bool validTag(const std::string &tag) {
 }
 
 bool eligibleRelease(const Json &release, const repo::RepoSource &source) {
-  if (release.kind != Json::Kind::Object ||
-      release.get("draft").kind != Json::Kind::Bool ||
-      release.get("prerelease").kind != Json::Kind::Bool)
-    throw std::runtime_error("Invalid release flags in metadata");
+  if (release.kind != Json::Kind::Object)
+    throw std::runtime_error("Expected a release object");
   const auto tag = release.get("tag_name").string();
-  return !release.get("draft").boolean() &&
-         (source.app.includePrereleases || !release.get("prerelease").boolean()) &&
-         !tag.empty() && (source.app.tag.empty() || tag == source.app.tag);
+  if (isGitLab(source)) {
+    if (release.get("upcoming_release").kind != Json::Kind::Bool)
+      throw std::runtime_error("Invalid GitLab release status");
+    if (release.get("upcoming_release").boolean())
+      return false;
+  } else {
+    if (release.get("draft").kind != Json::Kind::Bool ||
+        release.get("prerelease").kind != Json::Kind::Bool)
+      throw std::runtime_error("Invalid release flags in metadata");
+    if (release.get("draft").boolean() ||
+        (!source.app.includePrereleases && release.get("prerelease").boolean()))
+      return false;
+  }
+  return !tag.empty() && (source.app.tag.empty() || tag == source.app.tag);
+}
+
+std::string releaseDate(const Json &release, const repo::RepoSource &source) {
+  return release.get(isGitLab(source) ? "released_at" : "published_at")
+      .string();
 }
 
 } // namespace
 
 std::string releaseApiUrl(const repo::RepoSource &source) {
-  const auto base = releaseApiBase(source);
   if (!source.app.tag.empty())
-    return base + "/tags/" + encode(source.app.tag);
-  return base + (source.app.useTags ? "?per_page=100" : "/latest");
+    return taggedReleaseApi(source, source.app.tag);
+  const auto base = releaseApiBase(source);
+  if (source.app.useTags)
+    return base + "?per_page=100";
+  return base + (isGitLab(source) ? "/permalink/latest" : "/latest");
 }
 std::string cachePath(const repo::RepoSource &source,
                       const std::string &listsDir) {
@@ -477,21 +534,156 @@ std::string cachePath(const repo::RepoSource &source,
 }
 
 namespace {
+enum class ReleaseMetadata { Cache, Api, History };
+
+bool positiveId(const std::string &id) {
+  return !id.empty() && id.front() != '0' &&
+         id.find_first_not_of("0123456789") == std::string::npos;
+}
+
+struct GitLabAssetPath {
+  std::string version;
+  std::string packageName;
+  std::string fileId;
+};
+
+GitLabAssetPath gitLabAssetPath(const repo::RepoSource &source,
+                                const repo::AppAsset &asset,
+                                const std::string &tag) {
+  const auto prefix = kGitLab + source.app.owner + "/" + source.app.repository +
+                      "/-/package_files/";
+  const std::string suffix = "/download";
+  if (asset.url.rfind(prefix, 0) == 0 &&
+      asset.url.size() > prefix.size() + suffix.size() &&
+      asset.url.compare(asset.url.size() - suffix.size(), suffix.size(),
+                        suffix) == 0) {
+    const auto id = asset.url.substr(
+        prefix.size(), asset.url.size() - prefix.size() - suffix.size());
+    if (positiveId(id))
+      return {tag, {}, id};
+  }
+
+  const auto generic = gitLabProjectApi(source) + "/packages/generic/";
+  if (asset.url.rfind(generic, 0) == 0) {
+    const auto nameEnd = asset.url.find('/', generic.size());
+    const auto versionEnd = asset.url.find_last_of('/');
+    if (nameEnd != std::string::npos && nameEnd < versionEnd &&
+        asset.url.substr(versionEnd + 1) == encode(asset.name)) {
+      auto name = asset.url.substr(generic.size(), nameEnd - generic.size());
+      auto version = asset.url.substr(nameEnd + 1, versionEnd - nameEnd - 1);
+      if (safePathPart(name) && safePathPart(version))
+        return {version, name, {}};
+    }
+  }
+  throw std::runtime_error(
+      "APK must link to a package file in the configured GitLab project: " +
+      asset.name);
+}
+
+void setAssetIntegrity(repo::AppAsset &item, std::string digest,
+                       const Json &size) {
+  if (digest.size() != 64 ||
+      !std::all_of(digest.begin(), digest.end(),
+                   [](unsigned char c) { return std::isxdigit(c); }))
+    throw std::runtime_error("APK asset requires a SHA256 digest: " +
+                             item.name);
+  item.sha256 = lower(std::move(digest));
+  const auto parsed = std::from_chars(
+      size.text.data(), size.text.data() + size.text.size(), item.size);
+  if (size.kind != Json::Kind::Number || parsed.ec != std::errc{} ||
+      parsed.ptr != size.text.data() + size.text.size() || !item.size ||
+      item.size > kApkLimit)
+    throw std::runtime_error("Invalid APK asset size");
+}
+
+const std::vector<Json> &requireArray(const Json &json, const char *message) {
+  if (json.kind != Json::Kind::Array)
+    throw std::runtime_error(message);
+  return json.array;
+}
+
+Json fetchRegistryList(const std::string &url) {
+  std::string data, error;
+  if (!net::downloadFile(url, {}, &error, {}, {true, kMetadataLimit, &data}))
+    throw std::runtime_error("Cannot fetch GitLab package metadata: " + error);
+  return JsonReader(data).read();
+}
+
+void resolveGitLabAssets(const repo::RepoSource &source,
+                         repo::PackageEntry &entry) {
+  const auto projectApi = gitLabProjectApi(source);
+  std::map<std::string,
+           std::vector<std::pair<repo::AppAsset *, GitLabAssetPath>>>
+      byVersion;
+  for (auto &asset : entry.appAssets) {
+    auto path = gitLabAssetPath(source, asset, entry.version);
+    byVersion[path.version].emplace_back(&asset, std::move(path));
+  }
+  for (const auto &[version, assets] : byVersion) {
+    const auto packages = fetchRegistryList(
+        projectApi +
+        "/packages?package_type=generic&per_page=100&package_version=" +
+        encode(version));
+    for (const auto &package :
+         requireArray(packages, "Expected a GitLab package list")) {
+      const auto &id = package.get("id");
+      const auto name = package.get("name").string();
+      if (id.kind != Json::Kind::Number || !positiveId(id.text) ||
+          package.get("version").string() != version ||
+          std::none_of(assets.begin(), assets.end(), [&](const auto &asset) {
+            const auto &[item, path] = asset;
+            return path.packageName.empty() ? item->sha256.empty()
+                                            : path.packageName == name;
+          }))
+        continue;
+      const auto files = fetchRegistryList(projectApi + "/packages/" + id.text +
+                                           "/package_files?per_page=100");
+      for (const auto &file :
+           requireArray(files, "Expected a GitLab package file list")) {
+        for (const auto &[item, path] : assets) {
+          const auto &fileId = file.get("id");
+          const bool matches = path.fileId.empty()
+                                   ? path.packageName == name
+                                   : fileId.kind == Json::Kind::Number &&
+                                         fileId.text == path.fileId;
+          if (!matches || file.get("file_name").string() != item->name)
+            continue;
+          repo::AppAsset verified;
+          verified.name = item->name;
+          setAssetIntegrity(verified, file.get("file_sha256").string(),
+                            file.get("size"));
+          if (!item->sha256.empty() &&
+              (item->sha256 != verified.sha256 || item->size != verified.size))
+            throw std::runtime_error("Conflicting GitLab package metadata: " +
+                                     item->name);
+          item->sha256 = std::move(verified.sha256);
+          item->size = verified.size;
+        }
+      }
+    }
+  }
+  for (const auto &item : entry.appAssets)
+    if (item.sha256.empty())
+      throw std::runtime_error("Cannot find GitLab package file metadata for " +
+                               item.name);
+}
+
 repo::PackageEntry parseRelease(const Json &release,
-                                const repo::RepoSource &source) {
+                                const repo::RepoSource &source,
+                                ReleaseMetadata metadata) {
   repo::PackageEntry out;
   out.version = release.get("tag_name").string();
   if (!validTag(out.version))
     throw std::runtime_error("Invalid release tag");
+  const bool gitLab = isGitLab(source);
   const auto &assets = release.get("assets");
-  if (assets.kind != Json::Kind::Array)
-    throw std::runtime_error("Release has no assets array");
-  const std::string allowedUrl = "https://github.com/" + source.app.owner +
-                                 "/" + source.app.repository +
-                                 "/releases/download/";
+  const auto &files = requireArray(gitLab ? assets.get("links") : assets,
+                                   "Release has no assets array");
+  const std::string allowedUrl = kGitHub + source.app.owner + "/" +
+                                 source.app.repository + "/releases/download/";
   std::set<std::string> selected;
   for (const auto &pattern : source.app.patterns) {
-    for (const auto &asset : assets.array) {
+    for (const auto &asset : files) {
       const auto name = asset.get("name").string();
       if (name.size() < 5 || name.substr(name.size() - 4) != ".apk" ||
           ::fnmatch(pattern.c_str(), name.c_str(), 0) != 0 ||
@@ -506,36 +698,35 @@ repo::PackageEntry parseRelease(const Json &release,
 
       repo::AppAsset item;
       item.name = name;
-      item.url = asset.get("browser_download_url").string();
-      auto digest = lower(asset.get("digest").string());
+      item.url = asset.get(gitLab ? "url" : "browser_download_url").string();
       if (!plainText(item.name) || item.name != trim(item.name) ||
           item.name.find_first_of("/\\") != std::string::npos ||
           item.name.find("..") != std::string::npos || item.name.size() > 255)
         throw std::runtime_error("Unsafe APK asset name");
-      if (!plainText(item.url) ||
-          item.url.compare(0, allowedUrl.size(), allowedUrl) != 0 ||
-          item.url.find("/../") != std::string::npos)
-        throw std::runtime_error(
-            "APK download URL must belong to the configured GitHub repository");
-      if (digest.size() != 71 || digest.compare(0, 7, "sha256:") != 0 ||
-          !std::all_of(digest.begin() + 7, digest.end(),
-                       [](unsigned char c) { return std::isxdigit(c); }))
-        throw std::runtime_error(
-            "APK asset requires a SHA256 digest from GitHub: " + item.name);
-      item.sha256 = digest.substr(7);
-      const auto &size = asset.get("size");
-      const auto parsed = std::from_chars(
-          size.text.data(), size.text.data() + size.text.size(), item.size);
-      if (size.kind != Json::Kind::Number || parsed.ec != std::errc{} ||
-          parsed.ptr != size.text.data() + size.text.size() || !item.size ||
-          item.size > kApkLimit)
-        throw std::runtime_error("Invalid APK asset size");
+      if (gitLab) {
+        gitLabAssetPath(source, item, out.version);
+        if (metadata == ReleaseMetadata::Cache)
+          setAssetIntegrity(item, asset.get("sha256").string(),
+                            asset.get("size"));
+      } else {
+        if (!plainText(item.url) || item.url.rfind(allowedUrl, 0) != 0 ||
+            item.url.find("/../") != std::string::npos)
+          throw std::runtime_error("APK download URL must belong to the "
+                                   "configured GitHub repository");
+        auto digest = lower(asset.get("digest").string());
+        if (digest.rfind("sha256:", 0) != 0)
+          throw std::runtime_error(
+              "APK asset requires a SHA256 digest from GitHub: " + item.name);
+        setAssetIntegrity(item, digest.substr(7), asset.get("size"));
+      }
       selected.insert(item.name);
       out.appAssets.push_back(std::move(item));
     }
   }
   if (out.appAssets.empty())
     throw std::runtime_error("Release " + out.version + " has no matching APKs");
+  if (gitLab && metadata == ReleaseMetadata::Api)
+    resolveGitLabAssets(source, out);
 
   out.packageName = source.app.id;
   out.architecture = "all";
@@ -555,11 +746,10 @@ repo::PackageEntry parseRelease(const Json &release,
   }
   return out;
 }
-} // namespace
 
-bool parseReleaseMetadata(const std::string &data,
-                          const repo::RepoSource &source,
-                          repo::PackageEntry &out, std::string *error) {
+bool readRelease(const std::string &data, const repo::RepoSource &source,
+                 repo::PackageEntry &out, std::string *error,
+                 ReleaseMetadata metadata) {
   out = {};
   try {
     const auto json = JsonReader(data).read();
@@ -567,8 +757,8 @@ bool parseReleaseMetadata(const std::string &data,
     if (json.kind == Json::Kind::Array) {
       for (const auto &v : json.array) {
         if (eligibleRelease(v, source) &&
-            (!release || v.get("published_at").string() >
-                             release->get("published_at").string()))
+            (!release ||
+             releaseDate(v, source) > releaseDate(*release, source)))
           release = &v;
       }
     } else if (eligibleRelease(json, source)) {
@@ -577,11 +767,35 @@ bool parseReleaseMetadata(const std::string &data,
     if (!release)
       throw std::runtime_error(
           "No eligible published release (check Tag and IncludePrereleases)");
-    out = parseRelease(*release, source);
+    out = parseRelease(*release, source, metadata);
     return true;
   } catch (const std::exception &e) {
     return fail(error, source.app.id + ": " + e.what());
   }
+}
+
+std::string gitLabCache(const repo::PackageEntry &entry) {
+  // Tags, filenames and URLs have already been checked for control characters.
+  std::ostringstream out;
+  out << "{\"tag_name\":" << std::quoted(entry.version)
+      << ",\"upcoming_release\":false,\"assets\":{\"links\":[";
+  const char *separator = "";
+  for (const auto &item : entry.appAssets) {
+    out << separator << "{\"name\":" << std::quoted(item.name)
+        << ",\"url\":" << std::quoted(item.url)
+        << ",\"sha256\":" << std::quoted(item.sha256)
+        << ",\"size\":" << item.size << '}';
+    separator = ",";
+  }
+  out << "]}}";
+  return out.str();
+}
+} // namespace
+
+bool parseReleaseMetadata(const std::string &data,
+                          const repo::RepoSource &source,
+                          repo::PackageEntry &out, std::string *error) {
+  return readRelease(data, source, out, error, ReleaseMetadata::Cache);
 }
 
 bool fetchRelease(const repo::RepoSource &source, const std::string &tag,
@@ -592,13 +806,13 @@ bool fetchRelease(const repo::RepoSource &source, const std::string &tag,
   if (!source.app.tag.empty() && tag != source.app.tag)
     return fail(error, source.app.id + " is pinned to release " + source.app.tag);
   std::string data, downloadError;
-  if (!net::downloadFile(releaseApiBase(source) + "/tags/" + encode(tag), {},
-                         &downloadError, {}, {true, kMetadataLimit, &data}))
+  if (!net::downloadFile(taggedReleaseApi(source, tag), {}, &downloadError, {},
+                         {true, kMetadataLimit, &data}))
     return fail(error, "Cannot fetch release " + tag + " for " + source.app.id +
                            ": " + downloadError);
   auto requested = source;
   requested.app.tag = tag;
-  return parseReleaseMetadata(data, requested, out, error);
+  return readRelease(data, requested, out, error, ReleaseMetadata::Api);
 }
 
 bool listReleases(const repo::RepoSource &source, std::vector<std::string> &tags,
@@ -626,8 +840,8 @@ bool listReleases(const repo::RepoSource &source, std::vector<std::string> &tags
       if (!eligibleRelease(release, source))
         continue;
       try {
-        auto entry = parseRelease(release, source);
-        releases.emplace_back(release.get("published_at").string(),
+        auto entry = parseRelease(release, source, ReleaseMetadata::History);
+        releases.emplace_back(releaseDate(release, source),
                               std::move(entry.version));
       } catch (const std::runtime_error &) {
         // Releases without usable APK metadata cannot be installed.
@@ -674,9 +888,17 @@ bool update(const repo::RepoSource &source, const std::string &listsDir,
   std::string data;
   repo::PackageEntry entry;
   if (!readMetadataFile(temporary, data, error) ||
-      !parseReleaseMetadata(data, source, entry, error)) {
+      !readRelease(data, source, entry, error, ReleaseMetadata::Api)) {
     fs::removeFile(temporary);
     return false;
+  }
+  if (isGitLab(source)) {
+    const auto cache = gitLabCache(entry);
+    if (!fs::writeFile(temporary, cache) ||
+        !fs::readFile(temporary, data) || data != cache) {
+      fs::removeFile(temporary);
+      return fail(error, "Cannot write GitLab app metadata cache");
+    }
   }
   if (::chmod(temporary.c_str(), 0644) != 0 ||
       ::rename(temporary.c_str(), dest.c_str()) != 0) {

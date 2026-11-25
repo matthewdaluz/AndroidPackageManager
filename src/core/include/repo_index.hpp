@@ -47,6 +47,8 @@ struct AppAsset {
   std::uint64_t size = 0;
 };
 
+enum class AppRepoProvider { GitHub, GitLab };
+
 struct AppRepoSource {
   std::string id;
   std::string name;
@@ -59,6 +61,7 @@ struct AppRepoSource {
   std::vector<std::string> avoidKeywords;
   bool useTags = true;
   bool includePrereleases = false;
+  AppRepoProvider provider = AppRepoProvider::GitHub;
 };
 
 enum class RepoTrustPolicy {
@@ -98,7 +101,7 @@ struct PackageEntry {
 
 using PackageList = std::vector<PackageEntry>;
 
-// A Debian/Termux .repo source or a GitHub APK bundle from .apprepo.
+// A Debian/Termux .repo source or an APK bundle from .apprepo.
 //
 // Example:
 //   Type=deb
